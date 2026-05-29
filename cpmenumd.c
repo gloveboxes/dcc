@@ -1,5 +1,5 @@
 /*
-    This app tests cp/m 68k file system enumeration.
+    This app tests cp/m file system enumeration.
     It also tests the memory allocator and qsort for fun.
     x_functions exist because the C runtime doesn't provide the normal versions.
 */
@@ -7,17 +7,14 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include <qsort.c>
+#include <stdbool.h>
+#include <stdlib.h>
 
 // until separate compilation is a thing, include dependencies
+#include <qsort.c>
 #include <string.c>
 
-extern char * malloc( int cb );
 extern int bdos(int fn, int dearg);
-
-typedef uint8_t bool;
-#define false 0
-#define true 1
 
 #ifdef _DCC_
 #define CPM80

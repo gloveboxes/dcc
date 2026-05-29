@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #define allocs 66 /* dcc runs with 73 and fails at 74 */
 

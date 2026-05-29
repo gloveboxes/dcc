@@ -36,6 +36,10 @@ m80.com and l80.com are part of the M80 Assembler product from Microsoft. I didn
 
 The compiler accepts some syntax from later C standards including declaring variables where you like and initializing them with complex expressions. Only 4-byte floats are supported; 8-byte doubles are not. I'm almost certain more arcane C expressions/features aren't implemented (yet), but the test cases have pretty good coverage. Only a small subset of the C runtime is implemented in DCCRTL.MAC, but the samples implement a bunch more that you can copy/paste where needed.
 
+## memory layout
+
+Memory layout is what you would expect; CP/M loads .COM files in just one way. BSS begins just after the loaded image. The app assumes sp is set to the highest free byte by the loader. DCCRTL.MAC defines DEFAULT_STACK as 512. The heap used by malloc() uses RAM between the end of BSS and the bottom of the stack. If you need to adjust the heap and stack sizes you can change that one constant to slide the barrier. There are no runtime checks that prevent the stack from smashing the heap; you have to be careful that DEFAULT_STACK works for your app.
+
 ## Benchmarks
 
 I ran a subset of the test apps to measure performance of the compiler relative to other compilers. Most of the compilers in the table below are era-appropriate, from the 1970's and 1980's. The ZCC compilers are from 2025. I chose the best CP/M compilers I could find for the comparison. My sister repo [cpm_compilers](https://github.com/davidly/cpm_compilers) has a more complete set along with runtimes for some of these performance benchmarks.
@@ -47,8 +51,8 @@ Generally, dcc compares very well with all other compilers that target CP/M, esp
   - sieve.c: This is the classic from BYTE magazine in 1983. It measures loop and array performance.
   - e.c: This computes the first 192 digits of e. It measures integer division and mod operations as well as loop and array performance.
   - tm.c: Test Malloc. This is C-only and measures performance of the allocator as well as memset. Many of the C compilers for CP/M can't run it because they don't have an allocator or don't implement free().
-  - ttt.c: Proves you can't win at tic-tac-toe if the opponent is competent. Tests function call performance as well as loop and array performance. Always remember it took WOPR 72 seconds to solve this problem from the 1983 movie War Games. A 2Mhz 8080 in 1974 could solve this in less than 3 seconds.
-  - pihex.c: Computes PI in base 16. This is C-only and some of the compilers can't build or run it due to a variety of bugs. It measures floating point performance. I spent 45 minutes trying to get the two forms of ZCC to build and run it, ran into many compiler and C runtime bugs, and gave up. HiSoft v4.11 has a C runtime bug where if you cast 3.963512 to an int it gives you 4. After I worked around that and other bugs it ran really well.
+  - ttt.c: Proves you can't win at tic-tac-toe if the opponent is competent. Tests function call performance as well as loop and array performance. Always remember it took WOPR 72 seconds to solve this problem in the 1983 movie War Games. A 2Mhz 8080 in 1974 could solve this in less than 3 seconds. Movie magic.
+  - pihex.c: Computes PI in base 16. This is C-only and some of the compilers can't build or run it due to a variety of bugs. It measures floating point performance. I spent 45 minutes trying to get the two forms of ZCC to build and run it, ran into many compiler and C runtime bugs, and gave up. HiSoft v4.11 has a C runtime bug where if you cast 3.963512 to an int it gives you 4. After I worked around that and other bugs code from that compiler ran really well -- several times faster than dcc.
 
 Benchmark times are in milliseconds on a 4Mhz Z80. CP/M file sizes are rounded up to the next multiple of 128 bytes due to how the file system works.
 

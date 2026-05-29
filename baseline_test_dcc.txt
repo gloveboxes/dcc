@@ -3047,7 +3047,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ May 29 2026
-__TIME__ 11:10:29
+__TIME__ 16:01:04
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3562,3 +3562,11 @@ PASS: 4b. Deferred Stringify
 ALL COMBINED PREPROCESSOR TESTS PASSED WITH GREAT SUCCESS!
 test trwold
 trwold completed with great success
+test tlimits
+Starting C89 Limits Validation...
+
+Test 1: char (8-bit) limits... PASSED
+Test 2: 2-byte (16-bit) short limits... PASSED
+Test 3: 4-byte (32-bit) long limits... PASSED
+
+Results: 3/3 tests passed.

@@ -4,16 +4,8 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <stdlib.h>
-
-typedef int bool;
-
-#define false 0
-#define true 1
-#define INT_MAX 32767
-
-extern long ftell();
-
-extern int errno;
+#include <stdbool.h>
+#include <errno.h>
 
 char acbuf[ 128 ];
 char bigacbuf[ 512 ];

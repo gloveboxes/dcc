@@ -1,8 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
-
-typedef char bool;
+#include <stdbool.h>
 
 void test_do_while_behavior(void);
 

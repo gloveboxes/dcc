@@ -3,8 +3,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
-
-extern int errno;
+#include <errno.h>
 
 long portable_filelen( FILE * fp )
 {

@@ -4,8 +4,6 @@
 #include <errno.h>
 #include <fcntl.h>
 
-extern int errno;
-
 void show_error( char * str )
 {
     printf( "error: %s, errno: %d\n", str, errno );

@@ -4,8 +4,7 @@
 #include <stdint.h>
 #include <math.h>
 #include <float.h>
-
-typedef char bool;
+#include <stdbool.h>
 
 void i8cmp( int8_t a, int8_t b )
 {

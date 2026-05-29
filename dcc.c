@@ -99,6 +99,7 @@
 #define TOK_LONG       299
 #define TOK_FLOAT      311
 #define TOK_FLOATLIT   312
+#define TOK_SHORT      315
 #define TOK_WSTR       314
 #define TOK_SWITCH     300
 #define TOK_CASE       301
@@ -1100,6 +1101,7 @@ static void skip_ws_and_comments(void)
 static int keyword_kind(const char *s)
 {
     if (!strcmp(s, "int")) return TOK_INT;
+    if (!strcmp(s, "short")) return TOK_SHORT;
     if (!strcmp(s, "long")) return TOK_LONG;
     if (!strcmp(s, "float")) return TOK_FLOAT;
     if (!strcmp(s, "char")) return TOK_CHAR;
@@ -1737,6 +1739,55 @@ static int macro_value_is_float_literal(const char *s)
     return *p == 0;
 }
 
+
+static int macro_number_should_expand_textually(const char *s)
+{
+    const char *p;
+    unsigned long v;
+    int saw_digit;
+
+    p = s;
+    while (*p && isspace((unsigned char)*p))
+        p++;
+
+    if (*p == '+' || *p == '-')
+        p++;
+
+    saw_digit = 0;
+    if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+        p += 2;
+        while (isxdigit((unsigned char)*p)) {
+            saw_digit = 1;
+            p++;
+        }
+    } else {
+        while (isdigit((unsigned char)*p)) {
+            saw_digit = 1;
+            p++;
+        }
+    }
+
+    if (!saw_digit)
+        return 0;
+
+    /*
+     * Any explicit long suffix must remain text so the normal integer
+     * literal lexer preserves long type.  Also keep values above 16 bits
+     * textual; otherwise define_number_value() truncates object-like numeric
+     * macros to the target int width.  That broke LONG_MAX/LONG_MIN.
+     */
+    if (*p == 'l' || *p == 'L')
+        return 1;
+    if (*p == 'u' || *p == 'U') {
+        p++;
+        if (*p == 'l' || *p == 'L')
+            return 1;
+    }
+
+    v = strtoul(s, NULL, 0);
+    return v > 0xffffUL;
+}
+
 static int define_number_value(const char *name, long *out, int depth)
 {
     int di;
@@ -1925,6 +1976,12 @@ static void next_token(void)
                     return;
                 }
 
+                if (macro_number_should_expand_textually(rv)) {
+                    replace_source_range(tok_start_pos, posi, rv);
+                    next_token();
+                    return;
+                }
+
                 if (define_number_value(tok.text, &dv, 0)) {
                     tok.kind = TOK_NUM;
                     tok.val = dv;
@@ -2023,6 +2080,8 @@ static void next_token(void)
             int c2 = getc_src();
             if (c2 == 'l' || c2 == 'L') g_tok_long_suffix = 1;
         }
+        if (v > 0xffffL)
+            g_tok_long_suffix = 1;
 
         tok.kind = TOK_NUM;
         tok.val = v;
@@ -2498,6 +2557,10 @@ static int parse_base_type(void)
     if (tok.kind == TOK_INT) {
         t |= TYPE_INT;
         next_token();
+    } else if (tok.kind == TOK_SHORT) {
+        t |= TYPE_INT;
+        next_token();
+        if (tok.kind == TOK_INT) next_token(); /* short int */
     } else if (tok.kind == TOK_LONG) {
         t |= TYPE_LONG;
         next_token();
@@ -2670,7 +2733,7 @@ static int parse_const_int_expr(void)
 
 static int starts_type(void)
 {
-    return tok.kind == TOK_INT || tok.kind == TOK_LONG || tok.kind == TOK_FLOAT || tok.kind == TOK_CHAR || tok.kind == TOK_VOID ||
+    return tok.kind == TOK_INT || tok.kind == TOK_LONG || tok.kind == TOK_SHORT || tok.kind == TOK_FLOAT || tok.kind == TOK_CHAR || tok.kind == TOK_VOID ||
            tok.kind == TOK_UNSIGNED || tok.kind == TOK_SIGNED || tok.kind == TOK_CONST || tok.kind == TOK_VOLATILE ||
            tok.kind == TOK_EXTERN || tok.kind == TOK_STATIC || tok.kind == TOK_REGISTER || tok.kind == TOK_AUTO ||
            tok.kind == TOK_INLINE ||

@@ -27,12 +27,9 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #define N 8 // largest board size to solve
-
-typedef uint8_t bool;
-#define true 1
-#define false 0
 
 unsigned long solutions = 0;
 bool board[N][N];

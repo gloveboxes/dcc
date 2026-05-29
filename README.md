@@ -43,4 +43,6 @@ I built the compiler using AI. I wanted to use Claude and ChatGPT on something r
 
 Why dcc? All compilers from that era were K&R since the first ANSI C standard was C89 (1989). I wanted a compiler with modern syntax for CP/M. I was also curious how hard it would be to generate better code than the older compilers. It's  easier than ever to code for old machines, and I think that's pretty cool.
 
+Benchmark times are in milliseconds on a 4Mhz Z80. CP/M file sizes are rounded up to the next 128 bytes due to how the file system works.
+
 <img width="3089" height="1180" alt="table" src="https://github.com/user-attachments/assets/c9d1b132-10f6-4aa9-8887-2cf03a25727a" />

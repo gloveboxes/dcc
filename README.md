@@ -8,7 +8,7 @@ A separate app dccpeep.c is a peephole optimizer that rewrites portions of .MAC 
 
 DCCRTL.MAC is the dcc C Runtime Library. It's written in Z80 assembly for size and performance. It has the entrypoint start for apps that initializes the heap (for malloc/free) and command-line arguments so main's argc and argv work. It implements a small subset of the C89 C runtime including floating point.
 
-dccrtlstrip.c is an app that examines the code if your .c file and strips portions of the DCCRTL.MAC C runtime so only the parts needed are linked into the .COM file. It's not necessary to run this program for your app to work. But the resulting .COM file may be smaller if you do.
+dccrtlstrip.c is an app that examines the code of your .c file and strips portions of the DCCRTL.MAC C runtime so only the parts needed are linked into the .COM file. It's not necessary to run this program for your app to work. But the resulting .COM file may be smaller if you do.
 
 The 3 compiler apps dcc, dccpeep, and dccrtlstrip all build and run on Windows, Linux, and MacOS. They are too big to run on CP/M. Use m.bat or m.sh to build these apps using msvc and gcc respectively.
 
@@ -18,7 +18,7 @@ ma.bat and ma.sh are scripts to build your app. Run "ma foo" (or "ma.sh foo" on 
 
 runall.bat and runall.sh compile and run all 90+ test cases both optimized and unoptimized. The output of that run is compared with baseline_test_dcc.txt to check for regressions.
 
-Apps must all fit in one .C for now. That file can include .H files. You can also include .C files from your main .C file to help keep code more organized if you want.
+Apps must all fit in one .C file for now. That file can include .H files. You can also include .C files from your main .C file to help keep code more organized if you want.
 
 The test apps validate compiler correctness and performance. Some test apps are small and exercise a single compiler feature. Others are larger; tchess.c plays chess (not very well) and with the -c argument can play against itself. 
 
@@ -26,7 +26,7 @@ Linux typically is configured to have case-sensitive filenames. CP/M files are u
 
 ## Emulators
 
-I use my [ntvcm](https://github.com/davidly/ntvcm) CP/M 2.2 emulator (it's in a sister repo) to run m80.com, l80.com, and apps built with dcc. The CPM emulator works equally well; all test build and pass with that emulator. I haven't run other emulators but I suspect they'll all just work. The compiler and runtime don't push emulator compatibility limits.
+I use my [ntvcm](https://github.com/davidly/ntvcm) CP/M 2.2 emulator to run m80.com, l80.com, and apps built with dcc. The widely-used CPM emulator works equally well; all test build and pass with that emulator. I haven't run other emulators but I suspect they'll all just work. The compiler and runtime don't push emulator compatibility limits.
 
 ## M80 and L80
 
@@ -42,9 +42,9 @@ Memory layout is what you would expect; CP/M loads .COM files in just one way. B
 
 ## Benchmarks
 
-I ran a subset of the test apps to measure performance of the compiler relative to other compilers. Most of the compilers in the table below are era-appropriate, from the 1970's and 1980's. The ZCC compilers are from 2025. I chose the best CP/M compilers I could find for the comparison. My sister repo [cpm_compilers](https://github.com/davidly/cpm_compilers) has a more complete set along with runtimes for some of these performance benchmarks.
+I ran a subset of the test apps to measure performance of the compiler relative to other compilers. Most of the compilers in the table below are era-appropriate, from the 1970's and 1980's. The ZCC/Z88DK compilers are from 2025. I chose the best CP/M compilers I could find for the comparison. My repo [cpm_compilers](https://github.com/davidly/cpm_compilers) has a more complete set along with runtimes for some of these performance benchmarks.
 
-Generally, dcc compares very well with all other compilers that target CP/M, especially when the dccpeep optimizer is used. But even when the optimizer isn't used dcc only loses a few benchmarks. My assembly implementations of some of the benchmarks still beat all compilers. Binary size is also competitive with other compilers. It's not always best but it's always close. ZCC is very good at code generation but occasionally hard to work with.
+Generally, dcc compares very well with all other compilers that target CP/M, especially when the dccpeep optimizer is used. Even when the optimizer isn't used dcc only loses a few benchmarks. My assembly implementations of some of the benchmarks (asmsieve.mac, asme.mac, asmttt.mac) still beat all compilers. Binary size is also competitive with other compilers. It's not always best but it's always close. ZCC is very good at code generation but occasionally hard to work with.
 
 ### The benchmarks:
 

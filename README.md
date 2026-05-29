@@ -25,6 +25,8 @@ I use my ntvcm CP/M 2.2 emulator (it's in a sister repo) to run m80.com, l80.com
 
 m80.com and l80.com are part of the M80 Assembler product from Microsoft. I didn't write them. They are included in this repo to ease development, but they can be found in dozens of locations on the internet.
 
+The compiler accepts some syntax from later C standards including declaring variables where you like and initializing them with complex expressions. Only 4-byte floats are supported; 8-byte doubles are not. I'm almost certain more arcane C expressions/features aren't implemented (yet), but the test cases have pretty good coverage. Only a small subset of the C runtime is implemented in DCCRTL.MAC, but the samples implement a bunch more that you can copy/paste where needed.
+
 I ran a subset of the test apps to measure performance of the compiler relative to other compilers. Most of the compilers in the table below are era-appropriate, from the 1970's and 1980's. The ZCC compilers are from 2025. I chose the best CP/M compilers I could find for the comparison. My sister repo cpm_compilers has a more complete set along with runtimes for some of these performance benchmarks.
 
 Generally, dcc compares very well with all other compilers that target CP/M, especially when the dccpeep optimizer is used. But even when the optimizer isn't used dcc only loses a few benchmarks. My assembly implementations of some of the benchmarks still beat all compilers. Binary size is also competitive with other compilers. It's not always best but it's always close. ZCC is very good at code generation but occasionally hard to work with.

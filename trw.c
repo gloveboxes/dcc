@@ -187,6 +187,7 @@ void run_test(int size)
     }
 
     close(fd);
+    unlink( "trw.dat" );
 
     printf("size %d passed\n", size);
 }

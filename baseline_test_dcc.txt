@@ -3046,8 +3046,8 @@ argv[ 4 ]: 'DDDD'
 argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
-__DATE__ May 28 2026
-__TIME__ 17:00:10
+__DATE__ May 29 2026
+__TIME__ 11:10:29
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3560,3 +3560,5 @@ PASS: 4b. Deferred Stringify
 
 ----------------------------------------
 ALL COMBINED PREPROCESSOR TESTS PASSED WITH GREAT SUCCESS!
+test trwold
+trwold completed with great success

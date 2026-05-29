@@ -1933,6 +1933,8 @@ static void next_token(void)
                 }
 
                 if (is_ident_start((unsigned char)*rv)) {
+                    const char *rv0;
+                    rv0 = rv;
                     ri = 0;
                     while (is_ident_char((unsigned char)*rv) && ri < 63)
                         repl[ri++] = *rv++;
@@ -1940,11 +1942,31 @@ static void next_token(void)
                     while (*rv && isspace((unsigned char)*rv))
                         rv++;
                     if (*rv == 0) {
-                        strncpy(tok.text, repl, sizeof(tok.text) - 1);
-                        tok.text[sizeof(tok.text) - 1] = 0;
+                        /*
+                         * Expand object-like aliases textually too.  This lets
+                         * chained macros and keyword-like macros go back through
+                         * the normal lexer instead of becoming a dead identifier.
+                         */
+                        replace_source_range(tok_start_pos, posi, rv0);
+                        next_token();
+                        return;
                     }
                 }
-                tok.kind = keyword_kind(tok.text);
+
+                /*
+                 * General object-like macro replacement.  Older dcc only
+                 * handled numeric macros and single identifiers, so macros such
+                 * as:
+                 *
+                 *     #define BUF_SIZE ( sizeof( buf ) )
+                 *     #define FLAG     ( O_CREAT | O_RDWR )
+                 *
+                 * were left as undefined identifiers.  Reinsert the replacement
+                 * text and lex it normally.
+                 */
+                replace_source_range(tok_start_pos, posi, rv);
+                next_token();
+                return;
             }
         } else {
             tok.kind = keyword_kind(tok.text);

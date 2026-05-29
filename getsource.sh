@@ -1,0 +1,1 @@
+cp /mnt/c/users/david/onedrive/ntvcm/dcc/* .

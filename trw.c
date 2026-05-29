@@ -76,28 +76,24 @@ void check_buf(int size, int v)
     }
 }
 
-void must_seek(int fd, int off, char *where)
+void must_seek(int fd, long off, char *where)
 {
-    int result;
-
-    result = lseek(fd, off, 0);
+    long result = lseek(fd, off, 0);
 
     if (result != off) {
-        printf("seek result=%d off=%d\n", result, off);
+        printf("seek result=%d off=%ld\n", result, off);
         fail(where);
     }
 }
 
 void run_test(int size)
 {
-    int fd;
-    int i;
     int result;
-    int off;
+    long i, off;
 
     printf("testing size %d\n", size);
 
-    fd = open("trw.dat", O_CREAT | O_RDWR | O_TRUNC, 0);
+    int fd = open("trw.dat", O_CREAT | O_RDWR | O_TRUNC, 0);
     if (fd < 0)
         fail("create");
 

@@ -2759,17 +2759,23 @@ _lseek:
         ld      ix,0
         add     ix,sp
         call    __chkfd
-        jp      c,lsbad         ; lsend block makes lsbad too far for jr
-        ld      a,(ix+8)        ; whence low byte
+        jp      c,lsbad
+
+        ; long lseek(int fd, long offset, int whence)
+        ; ix+4/5   fd
+        ; ix+6..9  offset, low word then high word
+        ; ix+10/11 whence
+        ld      a,(ix+10)
         or      a
         jr      z,lsset
         cp      1
         jr      z,lscur
         cp      2
         jr      z,lsend
-        jr      lsbad
+        jp      lsbad
+
 lsset:
-        ; set 32-bit offset from 16-bit argument; high word = 0
+        ; Set current offset from full 32-bit argument.
         call    __offp
         ld      a,(ix+6)
         ld      (hl),a
@@ -2777,13 +2783,15 @@ lsset:
         ld      a,(ix+7)
         ld      (hl),a
         inc     hl
-        xor     a
+        ld      a,(ix+8)
         ld      (hl),a
         inc     hl
+        ld      a,(ix+9)
         ld      (hl),a
         jr      lsret
+
 lscur:
-        ; add signedness-agnostic 16-bit delta to low word, carry into byte 2.
+        ; Add full 32-bit delta to current offset.
         call    __offp
         ld      a,(hl)
         add     a,(ix+6)
@@ -2794,45 +2802,50 @@ lscur:
         ld      (hl),a
         inc     hl
         ld      a,(hl)
-        adc     a,0
+        adc     a,(ix+8)
         ld      (hl),a
         inc     hl
         ld      a,(hl)
-        adc     a,0
+        adc     a,(ix+9)
         ld      (hl),a
+        jr      lsret
+
 lsret:
-        ; return low 16 bits
+        ; Return full 32-bit offset in DE:HL.
         call    __offp
-        ld      e,(hl)
+        ld      e,(hl)          ; byte 0
         inc     hl
-        ld      d,(hl)
-        ex      de,hl
+        ld      d,(hl)          ; byte 1
+        inc     hl
+        push    de              ; low word
+        ld      e,(hl)          ; byte 2
+        inc     hl
+        ld      d,(hl)          ; byte 3
+        pop     hl              ; HL = low word, DE = high word
         pop     ix
         ret
-lsend:
-        ; SEEK_END: use BDOS fn 35 (compute file size) to get size in 128-byte records,
-        ; then convert to byte offset: byte_offset = records * 128 + delta.
-        ; BDOS fn 35 fills FCB.r0/r1 (FCB+33/34) with the 16-bit record count.
-        ld      a,(__slot)
-        call    __fcbp          ; HL = FCB base for this slot
-        ex      de,hl           ; DE = FCB pointer (BDOS arg)
-        ld      c,35            ; BDOS fn 35: compute file size
-        call    5               ; FCB.r0/r1 := record count
 
-        ; Read record count from FCB+33/34
+lsend:
+        ; SEEK_END: use BDOS fn 35 to get size in 128-byte records,
+        ; then convert to byte offset and add full 32-bit delta.
         ld      a,(__slot)
-        call    __fcbp          ; HL = FCB base
+        call    __fcbp
+        ex      de,hl
+        ld      c,35
+        call    5
+
+        ld      a,(__slot)
+        call    __fcbp
         ld      de,33
-        add     hl,de           ; HL -> FCB+33 (r0 = low byte of record count)
+        add     hl,de
         ld      c,(hl)
         inc     hl
         ld      b,(hl)          ; BC = 16-bit record count
 
-        ; Compute BC * 128 as a 24-bit result using 7 left shifts.
-        ; carry bits from HL are accumulated into A (= result byte 2).
+        ; BC * 128 -> A:HL, where A is byte 2 and byte 3 is zero.
         ld      l,c
-        ld      h,b             ; HL = record count
-        xor     a               ; A = high byte accumulator
+        ld      h,b
+        xor     a
         add     hl,hl
         rla
         add     hl,hl
@@ -2846,36 +2859,46 @@ lsend:
         add     hl,hl
         rla
         add     hl,hl
-        rla                     ; HL = (record_count*128) low 16 bits, A = byte 2
+        rla
 
-        ; Add delta (ix+6/7) — usually 0 for fseek(fp, 0, SEEK_END)
+        ; Add offset low word.
         ld      e,(ix+6)
         ld      d,(ix+7)
         add     hl,de
-        adc     a,0             ; propagate carry into high byte
 
-        ; Save result before __offp clobbers registers
-        ld      b,a             ; B = byte 2 of result
-        push    hl              ; save low word
+        ; Add offset high bytes plus carry from low word.
+        ld      e,a
+        ld      a,e
+        adc     a,(ix+8)
+        ld      b,a             ; result byte 2
 
-        call    __offp          ; HL -> __fdoff[slot]
+        ld      a,0
+        adc     a,(ix+9)
+        ld      c,a             ; result byte 3
 
-        pop     de              ; DE = low word of byte offset
-        ld      (hl),e          ; byte 0
+        push    bc
+        push    hl
+
+        call    __offp
+
+        pop     de              ; low word
+        ld      (hl),e
         inc     hl
-        ld      (hl),d          ; byte 1
+        ld      (hl),d
         inc     hl
-        ld      (hl),b          ; byte 2
+        pop     bc
+        ld      (hl),b
         inc     hl
-        xor     a
-        ld      (hl),a          ; byte 3 = 0
+        ld      (hl),c
         jr      lsret
 
 lsbad:
         call    __ioerr
         ld      hl,0ffffh
+        ld      de,0ffffh
         pop     ix
         ret
+
 
 _fsync:
 _fdatasync:
@@ -4926,24 +4949,56 @@ _fseek:
         push    ix
         ld      ix,0
         add     ix,sp
+
+        ; int fseek(FILE *fp, long offset, int whence)
+        ; ix+4/5   fp/fd
+        ; ix+6..9  offset, low word then high word
+        ; ix+10/11 whence
+        ;
+        ; Call long lseek(int fd, long offset, int whence).
         ld      l,(ix+10)
         ld      h,(ix+11)
-        push    hl                      ; whence (long offset occupies ix+6..9, so whence is at ix+10)
+        push    hl                      ; whence
+
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        push    hl                      ; offset high word
+
         ld      l,(ix+6)
         ld      h,(ix+7)
         push    hl                      ; offset low word
+
         ld      l,(ix+4)
         ld      h,(ix+5)
-        push    hl                      ; fp
+        push    hl                      ; fp/fd
+
         call    _lseek
-        ex      de,hl
-        ld      hl,6
+
+        ; Pop 8 bytes of arguments.
+        push    de
+        push    hl
+        ld      hl,8
         add     hl,sp
         ld      sp,hl
-        ex      de,hl                   ; HL = new position or 0FFFFh
+        pop     hl
+        pop     de
+
+        ; lseek failure is -1L == DE:HL all ones.
         ld      a,h
-        cp      0FFh
-        jr      z,fseek_bad
+        cp      0ffh
+        jr      nz,fseek_ok_clear
+        ld      a,l
+        cp      0ffh
+        jr      nz,fseek_ok_clear
+        ld      a,d
+        cp      0ffh
+        jr      nz,fseek_ok_clear
+        ld      a,e
+        cp      0ffh
+        jr      nz,fseek_ok_clear
+        jr      fseek_bad
+
+fseek_ok_clear:
         ; clear EOF flag
         ld      a,(ix+4)
         sub     FIRSTFD
@@ -4961,6 +5016,7 @@ fseek_bad:
         ld      hl,0FFFFh
         pop     ix
         ret
+
 
 ; ============================================================
 ; _ftell(fp)  →  returns current file position (low 16 bits).
@@ -4990,6 +5046,7 @@ _ftell:
         ret
 ftell_bad:
         ld      hl,0FFFFh
+        ld      de,0FFFFh
         pop     ix
         ret
 

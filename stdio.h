@@ -3,6 +3,8 @@
 #ifndef _STDIO_H
 #define _STDIO_H
 
+#include <stddef.h>
+
 typedef int FILE;
 
 #define NULL    0

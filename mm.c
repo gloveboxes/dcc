@@ -14,7 +14,7 @@
 #define m 20 /* columns in A and rows in B (must be identical) */
 #define n 20 /* columns in B and resulting matrix C */
 
-#define ftype uint32_t
+typedef float ftype;
 
 ftype Summ;
 ftype A[ l ] [ m ];
@@ -26,7 +26,7 @@ void filla()
     int i, j;
     for ( i = 0; i < l; i++ )
         for ( j = 0; j < m; j++ )
-            A[ i ][ j ] = i + j + 2;
+            A[ i ][ j ] = (ftype) ( i + j + 2 );
 }
 
 void fillb()
@@ -107,7 +107,7 @@ void fsummit()
 
 int main( int argc, char * argv[] )
 {
-    Summ = 0;
+    Summ = 0.0;
 
     filla();
     fillb();
@@ -117,13 +117,14 @@ int main( int argc, char * argv[] )
     fmatmult();
     fsummit();
 
-    if ( 465880 != Summ )
+    if ( 465880.0 != Summ )
     {
         printf( "incorrect Summ for fast version\n" );
         exit( 1 );
     }
 
-    Summ = 0;
+    printf( "summ is : %f\n", Summ );
+    Summ = 0.0;
 
     filla();
     fillb();
@@ -132,13 +133,14 @@ int main( int argc, char * argv[] )
     matmult();
     summit();
 
-    if ( 465880 != Summ )
+    if ( 465880.0 != Summ )
     {
         printf( "incorrect Summ for normal version\n" );
         exit( 1 );
     }
 
-    printf( "summ is : %lu\n", Summ );
+    printf( "summ is : %f\n", Summ );
+//    printf( "summ is : %lu\n", Summ );
     return 0;
 }
 

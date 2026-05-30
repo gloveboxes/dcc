@@ -466,7 +466,8 @@ tlong done
 test tpi
 314159265358979323846264338327950288419716939937510582097494459230781640628620899862803482534211706798214808651328230664709384460955058223172535
 test mm
-summ is : 465880
+summ is : 465880.000000
+summ is : 465880.000000
 test tm
 success
 test tfio
@@ -3047,7 +3048,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ May 29 2026
-__TIME__ 16:01:04
+__TIME__ 19:47:00
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3407,7 +3408,7 @@ test tlog
   -> log10f(1000.0) = 3.000000 (Expected: 3.0)
 
 [TEST 4] Edge cases:
-  -> logf(0.0)  = -65535.//////
+  -> logf(0.0)  = -4294967295.//////
   -> logf(-5.0) = 0.000000
 test tphi
 should tend towards 1.61803398874989484820458683436563811772030

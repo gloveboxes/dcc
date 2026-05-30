@@ -1726,19 +1726,28 @@ qf_f_prec_known:
         ld      (qf_fh),de
 qf_f_rounded:
 
-        ; Integer part = (int)abs(f)
+        ; Integer part = (unsigned long)abs(f).
+        ; The old path used __ffi/qf_print_u, so %f could not print an
+        ; integer part above 65535 and produced values like 65535.//////.
         ld      hl,(qf_fl)
         ld      de,(qf_fh)
-        call    __ffi
-        ld      (qf_iw),hl
-        call    qf_print_u
+        call    __fful
+
+        ; Save integer part both for printing and later subtraction.
+        ld      (__qf32_l),hl
+        ld      (__qf32_h),de
+        ld      (qf_tl),hl
+        ld      (qf_th),de
+
+        call    qf_print_u32
 
         ld      a,'.'
         call    qf_emit_a
 
-        ; frac = abs(f) - (float)integer_part
-        ld      hl,(qf_iw)
-        call    __fif
+        ; qf_print_u32 destroys __qf32_l/__qf32_h, so use saved copy.
+        ld      hl,(qf_tl)
+        ld      de,(qf_th)
+        call    __fulf
         ld      (qf_tl),hl
         ld      (qf_th),de
         ld      hl,(qf_fl)

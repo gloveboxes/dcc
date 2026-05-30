@@ -3182,9 +3182,7 @@ __ioerr:
         ret
 
 
-        public  _rand
         public  _srand
-
 _srand:
         push    ix
         ld      ix,0
@@ -3197,6 +3195,7 @@ _srand:
         pop     ix
         ret
 
+        public  _rand
 _rand:
         ; Deterministic 16-bit xorshift generator.
         ; Avoids the very weak low bits of the old state = state * 5 + 1 LCG.

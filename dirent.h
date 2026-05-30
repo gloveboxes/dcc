@@ -23,8 +23,8 @@ struct dirent {
 #define readdir  drd
 #define closedir dcls
 
-extern DIR *dopn(const char *path);
-extern struct dirent *drd(DIR *dirp);
-extern int dcls(DIR *dirp);
+DIR *dopn(const char *path);
+struct dirent *drd(DIR *dirp);
+int dcls(DIR *dirp);
 
 #endif /* _DIRENT_H */

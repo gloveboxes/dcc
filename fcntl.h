@@ -1,7 +1,7 @@
 #ifndef _FCNTL_H
 #define _FCNTL_H
 
-extern int open();
+int open();
 
 #define O_RDONLY 0
 #define O_WRONLY 1

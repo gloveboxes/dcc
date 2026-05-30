@@ -9,11 +9,11 @@
 
 typedef long off_t;
 
-extern int unlink( const char * pathname );    /* remove a file */
-extern size_t read( int fd, void *buf, size_t count );
-extern size_t write( int fd, const void *buf, size_t count );
-extern int close( int fd );
-extern off_t lseek( int fd, off_t offset, int whence );
-extern int fsync( int fd );
+int unlink( const char * pathname );    /* remove a file */
+size_t read( int fd, void *buf, size_t count );
+size_t write( int fd, const void *buf, size_t count );
+int close( int fd );
+off_t lseek( int fd, off_t offset, int whence );
+int fsync( int fd );
 
 #endif /* _UNISTD_H */

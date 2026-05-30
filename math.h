@@ -3,11 +3,11 @@
 #ifndef _MATH_H
 #define _MATH_H
 
-extern float fabsf(float x);
-extern float floorf(float x);
-extern float ceilf(float x);
-extern float sqrtf(float x);
-extern float nextafterf(float x);
+float fabsf(float x);
+float floorf(float x);
+float ceilf(float x);
+float sqrtf(float x);
+float nextafterf(float x);
 
 float fmodf(float x, float y)
 {

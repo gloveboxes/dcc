@@ -1,7 +1,8 @@
-void swapmem( char *a, char *b, int s )
+#include <stdlib.h>
+
+void memswap( char *a, char *b, size_t s )
 {
-    int i;
-    for ( i = 0; i < s; i++ )
+    for ( size_t i = 0; i < s; i++ )
     {
         char t = *a;
         *a = *b;
@@ -9,61 +10,43 @@ void swapmem( char *a, char *b, int s )
         a++;
         b++;
     }
-}
+} //memswap
 
-void qsort(char *base, unsigned nel, unsigned size, int (*compar)() )
+void qsort( void * vbase, size_t num, size_t size, int (*compare)( const void * a, const void * b ) )
 {
-        register char *i,*j,*x,*r;
-        auto struct stk {
-                char *l, *r;
-        } stack[16];
-        struct stk *sp;
+    if ( 0 == num )
+        return;
 
-        sp = stack;
-        r = base + (nel-1)*size;
-        for (;;) {
-                do {
-                        x = base + (r-base)/size/2 * size;
-                        i = base;
-                        j = r;
-                        do {
-                                while ((*compar)(i,x) < 0)
-                                        i += size;
-                                while ((*compar)(x,j) < 0)
-                                        j -= size;
-                                if (i < j) {
-                                        swapmem(i, j, size);
-                                        if (i == x)
-                                                x = j;
-                                        else if (j == x)
-                                                x = i;
-                                }
-                                if (i <= j) {
-                                        i += size;
-                                        j -= size;
-                                }
-                        } while (i <= j);
-                        if (j-base < r-i) {
-                                if (i < r) {    /* stack request for right partition */
-                                        sp->l = i;
-                                        sp->r = r;
-                                        ++sp;
-                                }
-                                r = j;                  /* continue sorting left partition */
-                        } else {
-                                if (base < j) { /* stack request for left partition */
-                                        sp->l = base;
-                                        sp->r = j;
-                                        ++sp;
-                                }
-                                base = i;               /* continue sorting right partition */
-                        }
-                } while (base < r);
+    char * base = (char *) vbase;
+    char * max;
+    char * last = max = base + ( num - 1 ) * size;
+    char * first = base;
+    char * key = base + size * ( num >> 1 );
+    do
+    {
+        while ( ( *compare )( first, key ) < 0 )
+            first += size;
+        while ( ( *compare )( key, last ) < 0 )
+            last -= size;
 
-                if (sp <= stack)
-                        break;
-                --sp;
-                base = sp->l;
-                r = sp->r;
+        if ( first <= last )
+        {
+            if ( first != last )
+            {
+                memswap( first, last, size );
+                if ( first == key )
+                    key = last;
+                else if ( last == key )
+                    key = first;
+             }
+             first += size;
+             last -= size;
         }
-}
+    } while ( first <= last );
+
+    if ( base < last )
+        qsort( base, ( last - base ) / size + 1, size, compare );
+    if ( first < max)
+        qsort( first, ( max - first ) / size + 1, size, compare );
+} //qsort
+

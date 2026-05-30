@@ -1,12 +1,15 @@
 #ifndef _STDLIB_H
 #define _STDLIB_H
 
-extern void exit( int code );
-extern int rand(void);
-extern void srand(unsigned int seed);
+void exit( int code );
+int rand(void);
+void srand(unsigned int seed);
+const void *bsearch(const void *key, const void *base, size_t num, size_t size, 
+                    int (*compare)(const void *, const void *));
+void qsort(void *base, size_t num, size_t size, int (*compare)(const void *, const void *));
 
-extern void * malloc( size_t size );
-extern void * calloc( size_t num, size_t size );
+void * malloc( size_t size );
+void * calloc( size_t num, size_t size );
 void free( void * ptr );
 
 #endif

@@ -126,7 +126,8 @@ struct Sym {
     int is_array;
     int array_len;
     int elem_size; /* stride per element; for multi-dim arrays = inner_dims * base_size */
-    int needs_extrn; /* 1 = extrn not yet emitted; emit lazily on first use */
+    int needs_extrn; /* 1 = symbol has external linkage and may need EXTRN if referenced */
+    int is_defined;  /* 1 = this translation unit emits storage/PUBLIC for the symbol */
     int has_proto;
     int proto_nargs;
     int proto_variadic;
@@ -145,6 +146,7 @@ struct Def {
 static void fatal(const char *msg);
 struct Sym; /* forward */
 static void emit_extrn_if_needed(struct Sym *s);
+static void emit_deferred_extrns(void);
 static int starts_type(void);      /* forward: used in parse_const_int_expr */
 static int parse_enum_const_value(void); /* forward: used in parse_base_type */
 static int parse_base_type(void);  /* forward: used in parse_const_int_expr */
@@ -160,27 +162,6 @@ static struct AsmName asm_names[MAX_ASM_NAMES];
 static int nasm_names;
 static int opt_floatio;
 
-static int asm_name_is_known_runtime(const char *cname)
-{
-    /* implemented in C: strchr */
-    static const char *names[] = {
-        "printf", "strlen", "memset", "memcpy", "strcmp", "strcpy",
-        "strrchr", "strstr",
-        "atoi", "putchar", "getchar", "fflush", "stdout", "stderr",
-        "rand", "exit",
-        "fgets", "toupper", "isspace", "isdigit", "stdin",
-        "nextafterf",
-        NULL
-    };
-    int i;
-
-    for (i = 0; names[i]; ++i)
-        if (!strcmp(cname, names[i]))
-            return 1;
-
-    return 0;
-}
-
 static int asm_name_needs_call_extrn(const char *cname)
 {
     /*
@@ -190,6 +171,7 @@ static int asm_name_needs_call_extrn(const char *cname)
      * immediately before an actual call.
      */
     return !strcmp(cname, "rand") ||
+           !strcmp(cname, "srand") ||
            !strcmp(cname, "exit");
 }
 
@@ -334,6 +316,11 @@ static int pp_active = 1;
 static char *strings[MAX_STRINGS];
 static int string_wide[MAX_STRINGS];
 static int nstrings;
+
+#define MAX_USED_EXTRNS 512
+static struct Sym *used_extrns[MAX_USED_EXTRNS];
+static int nused_extrns;
+
 
 static int label_id;
 static int current_return_label;
@@ -2933,11 +2920,40 @@ static char *read_adjacent_string_literals(void)
 /* If an extern symbol had its extrn deferred, emit it now (once). */
 static void emit_extrn_if_needed(struct Sym *s)
 {
-    if (s && s->needs_extrn) {
-        fprintf(outf, "\textrn %s\n", asm_name_for(s->name));
-        s->needs_extrn = 0;
+    int i;
+
+    /*
+     * Do not emit M80 EXTRN at the reference site.  C file-scope function
+     * declarations are external by default, but the same function may still be
+     * defined later in this translation unit.  Emitting EXTRN eagerly can then
+     * create duplicate EXTRN/PUBLIC trouble.  Instead, remember that code used
+     * the symbol and flush only still-undefined symbols at end of assembly.
+     */
+    if (!s || !s->needs_extrn || s->is_defined)
+        return;
+
+    for (i = 0; i < nused_extrns; ++i)
+        if (used_extrns[i] == s)
+            return;
+
+    if (nused_extrns >= MAX_USED_EXTRNS)
+        fatal("too many used externs");
+
+    used_extrns[nused_extrns++] = s;
+}
+
+static void emit_deferred_extrns(void)
+{
+    int i;
+
+    for (i = 0; i < nused_extrns; ++i) {
+        struct Sym *s;
+        s = used_extrns[i];
+        if (s && s->needs_extrn && !s->is_defined && !asm_name_is_internal_public(s->name))
+            fprintf(outf, "\textrn %s\n", asm_name_for(s->name));
     }
 }
+
 
 static void emit_runtime_extrn_if_needed(const char *name)
 {
@@ -5088,6 +5104,18 @@ static void gen_primary(void)
                 struct Sym *fn_sym = find_global(name);
                 struct Sym *call_sym = find_sym(name);
                 int indirect_call = 0;
+
+                /*
+                 * C89 implicit function declaration: a call to an undeclared
+                 * identifier declares an external function returning int.
+                 * Record it so deferred EXTRN emission can happen if no local
+                 * definition appears later.
+                 */
+                if (!fn_sym) {
+                    fn_sym = add_global(name, TYPE_INT, SC_FUNC);
+                    fn_sym->needs_extrn = 1;
+                }
+
                 if (call_sym && call_sym->storage != SC_FUNC && type_ptr_depth(call_sym->type) > 0)
                     indirect_call = 1;
                 expr_result_dead = 0; /* call args always need their value */
@@ -10802,7 +10830,7 @@ static void parse_function_or_global(int base_type)
             int already_declared;
             already_declared = (find_global(name) != NULL);
             s = add_global(name, type, SC_FUNC);
-            if (decl_is_extern && !already_declared)
+            if (!s->is_defined)
                 s->needs_extrn = 1;
             if (accept(','))
                 continue;
@@ -10855,6 +10883,9 @@ static void parse_function_or_global(int base_type)
                 tok_line = saved_tok_line;
                 tok = saved_tok;
 
+                s->is_defined = 1;
+                s->needs_extrn = 0;
+
                 nulabels = 0;
                 current_return_label = new_label();
                 current_return_type = type;
@@ -10870,7 +10901,13 @@ static void parse_function_or_global(int base_type)
                 return;
             }
 
-            if (decl_is_extern && !already_declared)
+            /*
+             * C89: a file-scope function declaration has external linkage even
+             * without the 'extern' keyword.  Record it as a possible external,
+             * but the M80 EXTRN is emitted only if actually referenced and not
+             * later defined in this translation unit.
+             */
+            if (!s->is_defined)
                 s->needs_extrn = 1;
 
             if (accept(','))
@@ -10928,6 +10965,8 @@ static void parse_function_or_global(int base_type)
             }
 
             s = add_global(name, type, SC_GLOBAL);
+            s->is_defined = 1;
+            s->needs_extrn = 0;
 
             if (arrlen || total_count == 0) {
                 s->is_array = 1;
@@ -10965,39 +11004,15 @@ static void parse_translation_unit(void)
 {
     emit("\t; dcc stage-1d output\n\n");
 
-    /* Predeclare known runtime symbols so calls/uses can resolve during
-     * parsing, but do not emit EXTRN here.  L80 treats every EXTRN as a
-     * required unresolved symbol even if no instruction refers to it, which
-     * defeats dccrtl stripping.  Emit EXTRN lazily from the actual codegen
-     * sites instead. */
-    add_predefined_extern("printf",  TYPE_INT, SC_FUNC);
-    add_predefined_extern("strlen",  TYPE_INT, SC_FUNC);
-    add_predefined_extern("memset",  TYPE_INT, SC_FUNC);
-    add_predefined_extern("memcpy",  TYPE_INT, SC_FUNC);
-//    add_predefined_extern("memcmp",  TYPE_INT, SC_FUNC);
-    add_predefined_extern("strcmp",  TYPE_INT, SC_FUNC);
-    add_predefined_extern("strcpy",  TYPE_INT, SC_FUNC);
-//    add_predefined_extern("strchr",  TYPE_INT | TYPE_PTR, SC_FUNC);
-//    add_predefined_extern("strrchr", TYPE_INT | TYPE_PTR, SC_FUNC);
-//    add_predefined_extern("strstr",  TYPE_INT | TYPE_PTR, SC_FUNC);
-    add_predefined_extern("atoi",    TYPE_INT, SC_FUNC);
-    add_predefined_extern("rand",    TYPE_INT, SC_FUNC);
-    add_predefined_extern("exit",    TYPE_VOID, SC_FUNC);
-    add_predefined_extern("putchar", TYPE_INT, SC_FUNC);
-    add_predefined_extern("getchar", TYPE_INT, SC_FUNC);
-    add_predefined_extern("fflush",  TYPE_INT, SC_FUNC);
-    add_predefined_extern("malloc",  TYPE_INT | TYPE_PTR, SC_FUNC);
-    add_predefined_extern("calloc",  TYPE_INT | TYPE_PTR, SC_FUNC);
-    add_predefined_extern("free",    TYPE_VOID, SC_FUNC);
-    add_predefined_extern("stdout",  TYPE_INT | TYPE_PTR, SC_EXTERN);
-    add_predefined_extern("stderr",  TYPE_INT | TYPE_PTR, SC_EXTERN);
-    add_predefined_extern("stdin",   TYPE_INT | TYPE_PTR, SC_EXTERN);
-    add_predefined_extern("fgets",   TYPE_INT | TYPE_PTR, SC_FUNC);
-    add_predefined_extern("toupper", TYPE_INT, SC_FUNC);
-    add_predefined_extern("isspace", TYPE_INT, SC_FUNC);
-    add_predefined_extern("isdigit", TYPE_INT, SC_FUNC);
-    add_predefined_extern("setjmp",  TYPE_INT, SC_FUNC);
-    add_predefined_extern("longjmp", TYPE_VOID, SC_FUNC);
+    /*
+     * Do not predeclare C library/runtime functions here.  In C89, file-scope
+     * prototypes in headers already have external linkage even without the
+     * 'extern' keyword; parse_function_or_global() records those prototypes.
+     * If no prototype is visible, call codegen can still create an implicit
+     * extern function symbol.  M80 EXTRN records are deferred until end of
+     * translation unit and only emitted for symbols that were actually used and
+     * not defined here.
+     */
 
     /* Predefined linker-visible bounds of this translation unit's BSS.
      * These are labels, not allocated C objects; taking their address is
@@ -12144,6 +12159,7 @@ int main(int argc, char **argv)
     add_define("NULL", "0");
 
     parse_translation_unit();
+    emit_deferred_extrns();
     emit_data();
     emit("\n\tend\n");
 

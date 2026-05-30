@@ -11,6 +11,7 @@
 #include <stdlib.h>
 
 // until separate compilation is a thing, include dependencies
+#include <bsearch.c>
 #include <qsort.c>
 #include <string.c>
 
@@ -116,38 +117,6 @@ int do_compare( char **a, char **b )
     return strcmp( *a, *b );
 }
 
-char ** x_bsearch( char ** key, char ** vbase, int num, int width, int (*compare)() )
-{
-    char * base = (char *) vbase;
-    int k, cmp;
-    char * here;
-    int i = 0;
-    int j = num - 1;
-
-    if ( 0 == num )
-        return 0;
-
-    do
-    {
-        k = ( j + i ) / 2;
-        here = base + width * k;
-        cmp = ( *compare )( key, here );
-        if ( 0 == cmp )
-        {
-            while ( ( here > base ) && ( ( *compare )( key, here - width ) == 0 ) )
-                here -= width;
-            return here;
-        }
-
-        if ( cmp < 0 )
-            j = k - 1;
-        else
-            i = k + 1;
-      } while ( j >= i );
-
-   return 0;
-} 
-
 int enumerate( char *pfile )
 {
 #ifdef CPM80
@@ -159,7 +128,7 @@ int enumerate( char *pfile )
     struct FCBCPM the_fcb;
     struct FCBCPM * result_fcb;
     int result, i, len;
-    int list_len = 0;
+    size_t list_len = 0;
     char * pthis, ** presult;
     uint32_t fsize;
     char file[ 13 ];
@@ -209,9 +178,11 @@ int enumerate( char *pfile )
         return false;
     }
 
+    // list_len may be 0 at this point
+
     qsort( list, list_len, sizeof( char * ), do_compare );
 
-    presult = x_bsearch( & pappname, list, list_len, sizeof( char * ), do_compare );
+    presult = bsearch( & pappname, list, list_len, sizeof( char * ), do_compare );
     if ( 0 != presult )
         printf( "  found this executable! %s\n", *presult );
     
@@ -224,29 +195,30 @@ int enumerate( char *pfile )
     }
 
     return true;
-}
+} //enumerate
 
 int main( int argc, char * argv[] )
 {
     if ( argc > 1 )
         quiet = false;
 
-#if CPM80 && FULLTEST
-    printf( "finding all files\n" );
-    enumerate( "????????.???" );
+    if ( !quiet )
+    {
+        printf( "finding all files\n" );
+        enumerate( "????????.???" );
+    
+        printf( "finding files that start with A\n" );
+        enumerate( "A???????.???" );
+    
+        printf( "finding C files\n" );
+        enumerate( "????????.C" );
+    
+        printf( "finding PAS files\n" );
+        enumerate( "????????.PAS" );
 
-    printf( "finding files that start with A\n" );
-    enumerate( "A???????.???" );
-
-    printf( "finding C files\n" );
-    enumerate( "????????.C" );
-
-    printf( "finding PAS files\n" );
-    enumerate( "????????.PAS" );
-#endif
-
-//    printf( "finding C files\n" );
-//    enumerate( "????????.C" );
+        printf( "finding TXT files\n" );
+        enumerate( "????????.TXT" );
+    }
 
     printf( "finding COM files\n" );
     enumerate( "????????.COM" );
@@ -257,9 +229,6 @@ int main( int argc, char * argv[] )
     printf( "finding XYZ files\n" );
     enumerate( "????????.XYZ" );
 
-//    printf( "finding TXT files\n" );
-//    enumerate( "????????.TXT" );
-
     printf( "cp/m enumerate directory completed with great success\n" );
     return 0;
-}
+} //main

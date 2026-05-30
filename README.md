@@ -36,7 +36,7 @@ m80.com and l80.com are part of the M80 Assembler product from Microsoft. I didn
 
 The compiler accepts some syntax from later C standards including declaring variables where you like and initializing them with complex expressions. Only 4-byte floats are supported; 8-byte doubles are not. I'm almost certain more arcane C expressions/features aren't implemented (yet), but the test cases have pretty good coverage. Only a small subset of the C runtime is implemented in DCCRTL.MAC, but the samples implement a bunch more that you can copy/paste where needed.
 
-## memory layout
+## Memory layout
 
 Memory layout is what you would expect; CP/M loads .COM files in just one way. BSS begins just after the loaded image. The app assumes sp is set to the highest free byte by the loader. DCCRTL.MAC defines DEFAULT_STACK as 512. The heap used by malloc() uses RAM between the end of BSS and the bottom of the stack. If you need to adjust the heap and stack sizes you can change that one constant to slide the barrier. There are no runtime checks that prevent the stack from smashing the heap; you have to be careful that DEFAULT_STACK works for your app.
 

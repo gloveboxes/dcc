@@ -3341,6 +3341,19 @@ __lmul:
         ld      hl,0
         ld      (__lm_res_l),hl
         ld      (__lm_res_h),hl
+        ; Fast path: if both operands fit in 16 bits, only 16 iterations needed
+        ; (the upper 16 bits of RHS are 0, so no more adds happen after bit 15).
+        ld      hl,(__lm_lhs_h)
+        ld      a,h
+        or      l
+        jp      nz,lmul_full32
+        ld      hl,(__lm_rhs_h)
+        ld      a,h
+        or      l
+        jp      nz,lmul_full32
+        ld      b,16
+        jp      lmul_loop
+lmul_full32:
         ld      b,32
 lmul_loop:
         push    bc
@@ -3501,6 +3514,13 @@ __lmu:
         ld      hl,0
         ld      (__ldv_rem_l),hl
         ld      (__ldv_rem_h),hl
+        ; Fast path: divisor fits in 16 bits → use compact register-based algorithm.
+        ; Keep DE = divisor and HL = 16-bit running remainder throughout.
+        ; Process the 32-bit dividend MSB-first, 8 bits per call to lmodu_byte.
+        ld      hl,(__ldv_dvs_h)
+        ld      a,h
+        or      l
+        jp      z,lmodu_dvs16
         ld      b,32
 lmodu_loop:
         push    bc
@@ -3536,6 +3556,50 @@ lmodu_no_sub:
         ld      de,(__ldv_rem_h)
         ld      sp,ix
         pop     ix
+        ret
+
+lmodu_dvs16:
+        ; Divisor is 16-bit (in __ldv_dvs_l).  Process the 32-bit dividend
+        ; byte-by-byte MSB-first, accumulating a 16-bit remainder in HL.
+        ; Result fits in HL since remainder < 16-bit divisor.
+        ld      de,(__ldv_dvs_l)        ; DE = divisor (stays in register)
+        ld      hl,0                    ; HL = partial remainder
+        ld      a,(__ldv_dvd_h+1)       ; byte 3 (MSB) of 32-bit dividend
+        call    lmodu_byte
+        ld      a,(__ldv_dvd_h)         ; byte 2
+        call    lmodu_byte
+        ld      a,(__ldv_dvd_l+1)       ; byte 1
+        call    lmodu_byte
+        ld      a,(__ldv_dvd_l)         ; byte 0 (LSB)
+        call    lmodu_byte
+        ; HL = remainder; DE high word = 0 (remainder < 16-bit divisor)
+        ld      de,0
+        ld      sp,ix
+        pop     ix
+        ret
+
+lmodu_byte:
+        ; Process 8 bits of A (MSB-first) into 16-bit remainder HL.
+        ; DE = divisor (constant).  Clobbers A, B.
+        ;
+        ; When adc hl,hl overflows (carry set), true_shifted > 65535 >= DE so
+        ; we must subtract.  (HL_wrapped - DE) wraps to true_shifted - DE which
+        ; is the correct new remainder; skip the restore.
+        ld      b,8
+lmodu_bit:
+        rlca                            ; rotate A left: MSB → carry (next dividend bit)
+        adc     hl,hl                   ; HL = (HL<<1) | bit; carry = 16-bit overflow
+        jr      c,lmodu_ovf             ; overflow: true_shifted > 65535 >= DE; always sub
+        or      a                       ; clear carry (no overflow)
+        sbc     hl,de                   ; try HL -= divisor
+        jr      nc,lmodu_bit_ok         ; HL >= divisor: keep
+        add     hl,de                   ; restore: HL was < divisor
+        jr      lmodu_bit_ok
+lmodu_ovf:
+        or      a                       ; clear carry
+        sbc     hl,de                   ; HL_wrapped - DE = correct new remainder
+lmodu_bit_ok:
+        djnz    lmodu_bit
         ret
 
 ; __ldivs: signed 32-bit divide.  Returns DE:HL = LHS / RHS.
@@ -5789,6 +5853,41 @@ __flt:
         ld      ix,0
         add     ix,sp
 
+        ; Fast path: both positive non-NaN. For positive IEEE singles (sign=0,
+        ; exp<255), raw byte ordering matches numeric ordering, so skip NaN/zero
+        ; checks and compare directly.
+        ld      a,(ix+7)
+        ld      b,a
+        ld      a,(ix+11)
+        or      b               ; both sign bits must be 0
+        and     80h
+        jp      nz,__flt_slow
+        ld      a,(ix+7)
+        and     7fh
+        cp      7fh
+        jp      z,__flt_slow    ; a: D&7F==7F => might be NaN/Inf
+        ld      a,(ix+11)
+        and     7fh
+        cp      7fh
+        jp      z,__flt_slow    ; b: D&7F==7F => might be NaN/Inf
+        ld      a,(ix+7)
+        cp      (ix+11)
+        jp      c,__flt1
+        jp      nz,__flt0
+        ld      a,(ix+6)
+        cp      (ix+10)
+        jp      c,__flt1
+        jp      nz,__flt0
+        ld      a,(ix+5)
+        cp      (ix+9)
+        jp      c,__flt1
+        jp      nz,__flt0
+        ld      a,(ix+4)
+        cp      (ix+8)
+        jp      c,__flt1
+        jp      __flt0
+
+__flt_slow:
         ; NaN => false
         ld      l,(ix+4)
         ld      h,(ix+5)
@@ -5870,6 +5969,39 @@ __fgt:
         ld      ix,0
         add     ix,sp
 
+        ; Fast path: both positive non-NaN -- a > b iff b_raw < a_raw.
+        ld      a,(ix+7)
+        ld      b,a
+        ld      a,(ix+11)
+        or      b
+        and     80h
+        jp      nz,__fgt_slow
+        ld      a,(ix+7)
+        and     7fh
+        cp      7fh
+        jp      z,__fgt_slow
+        ld      a,(ix+11)
+        and     7fh
+        cp      7fh
+        jp      z,__fgt_slow
+        ld      a,(ix+11)       ; compare b vs a (b < a means a > b)
+        cp      (ix+7)
+        jp      c,__fgt1
+        jp      nz,__fgt0
+        ld      a,(ix+10)
+        cp      (ix+6)
+        jp      c,__fgt1
+        jp      nz,__fgt0
+        ld      a,(ix+9)
+        cp      (ix+5)
+        jp      c,__fgt1
+        jp      nz,__fgt0
+        ld      a,(ix+8)
+        cp      (ix+4)
+        jp      c,__fgt1
+        jp      __fgt0
+
+__fgt_slow:
         ; NaN => false
         ld      l,(ix+4)
         ld      h,(ix+5)
@@ -5950,6 +6082,40 @@ __fle:
         ld      ix,0
         add     ix,sp
 
+        ; Fast path: both positive non-NaN -- a <= b iff a_raw <= b_raw.
+        ld      a,(ix+7)
+        ld      b,a
+        ld      a,(ix+11)
+        or      b
+        and     80h
+        jp      nz,__fle_slow
+        ld      a,(ix+7)
+        and     7fh
+        cp      7fh
+        jp      z,__fle_slow
+        ld      a,(ix+11)
+        and     7fh
+        cp      7fh
+        jp      z,__fle_slow
+        ld      a,(ix+7)
+        cp      (ix+11)
+        jp      c,__fle1
+        jp      nz,__fle0
+        ld      a,(ix+6)
+        cp      (ix+10)
+        jp      c,__fle1
+        jp      nz,__fle0
+        ld      a,(ix+5)
+        cp      (ix+9)
+        jp      c,__fle1
+        jp      nz,__fle0
+        ld      a,(ix+4)
+        cp      (ix+8)
+        jp      c,__fle1
+        jp      nz,__fle0
+        jp      __fle1          ; equal => a <= b
+
+__fle_slow:
         ; NaN => false
         ld      l,(ix+4)
         ld      h,(ix+5)
@@ -6047,6 +6213,39 @@ __fge:
         ld      ix,0
         add     ix,sp
 
+        ; Fast path: both positive non-NaN -- a >= b iff a_raw >= b_raw.
+        ld      a,(ix+7)
+        ld      b,a
+        ld      a,(ix+11)
+        or      b
+        and     80h
+        jp      nz,__fge_slow
+        ld      a,(ix+7)
+        and     7fh
+        cp      7fh
+        jp      z,__fge_slow
+        ld      a,(ix+11)
+        and     7fh
+        cp      7fh
+        jp      z,__fge_slow
+        ld      a,(ix+7)
+        cp      (ix+11)
+        jp      c,__fge0        ; a_byte < b_byte => a < b
+        jp      nz,__fge1       ; a_byte > b_byte => a > b
+        ld      a,(ix+6)
+        cp      (ix+10)
+        jp      c,__fge0
+        jp      nz,__fge1
+        ld      a,(ix+5)
+        cp      (ix+9)
+        jp      c,__fge0
+        jp      nz,__fge1
+        ld      a,(ix+4)
+        cp      (ix+8)
+        jp      c,__fge0
+        jp      __fge1          ; equal or a_byte >= b_byte => a >= b
+
+__fge_slow:
         ; NaN => false
         ld      l,(ix+4)
         ld      h,(ix+5)
@@ -6379,26 +6578,53 @@ FABNZ:
         jp      FARET
 
 FALGN:
-        ; align exponents by shifting the smaller mantissa right.
-FALG1:
+        ; align exponents: compute diff once, shift in a djnz loop, early-exit if diff>=24.
         ld      a,(AEXP)
-        ld      b,a
-        ld      a,(BEXP)
-        cp      b
-        jp      z,FASGN
-        jp      c,FBSR
-        ; B exponent larger: shift A right, AEXP++
+        ld      b,a             ; B = AEXP
+        ld      a,(BEXP)        ; A = BEXP
+        sub     b               ; A = BEXP - AEXP (signed)
+        jp      z,FASGN         ; equal exponents: nothing to align
+        jp      c,FALGN_AGT     ; carry: BEXP < AEXP, A has larger exponent
+
+        ; BEXP > AEXP: shift A mantissa right by (BEXP-AEXP), then set AEXP=BEXP
+        cp      24
+        jp      nc,FALGN_AABS   ; diff >= 24: A's contribution rounds to zero
+        ld      b,a             ; B = shift count
+FALGN_ASHR:
         call    FSRA
-        ld      a,(AEXP)
-        inc     a
-        ld      (AEXP),a
-        jp      FALG1
-FBSR:
-        call    FSRB
+        djnz    FALGN_ASHR
         ld      a,(BEXP)
-        inc     a
-        ld      (BEXP),a
-        jp      FALG1
+        ld      (AEXP),a        ; align AEXP up to BEXP
+        jp      FASGN
+
+FALGN_AGT:
+        ; AEXP > BEXP: A = BEXP-AEXP is negative, negate to get AEXP-BEXP
+        neg                     ; A = AEXP - BEXP (positive)
+        cp      24
+        jp      nc,FALGN_BABS   ; diff >= 24: B's contribution rounds to zero
+        ld      b,a             ; B = shift count
+FALGN_BSHR:
+        call    FSRB
+        djnz    FALGN_BSHR
+        jp      FASGN
+
+FALGN_AABS:
+        ; A is negligible relative to B: zero A's mantissa, set AEXP=BEXP
+        xor     a
+        ld      (AM0),a
+        ld      (AM1),a
+        ld      (AM2),a
+        ld      a,(BEXP)
+        ld      (AEXP),a
+        jp      FASGN
+
+FALGN_BABS:
+        ; B is negligible relative to A: zero B's mantissa
+        xor     a
+        ld      (BM0),a
+        ld      (BM1),a
+        ld      (BM2),a
+        jp      FASGN
 
 FASGN:
         ld      a,(ASGN)
@@ -6773,16 +6999,20 @@ __fmul:
         ld      (FM3),a
         ld      (FM4),a
         ld      (FM5),a
-        ld      a,(BM0)
-        ld      (FQ0),a
-        ld      a,(BM1)
-        ld      (FQ1),a
+        ; Load multiplier (BM) into registers; skip FQ* memory writes entirely.
+        ; E=BM0/FQ0, L=BM1/FQ1, H=BM2/FQ2 — shifted right each iteration.
+        ; All three must be loaded from memory: the sign computation above does
+        ; ld b,a (saving ASGN), which overwrites B before we get here.
         ld      a,(BM2)
-        ld      (FQ2),a
+        ld      h,a             ; H = BM2
+        ld      a,(BM1)
+        ld      l,a             ; L = BM1
+        ld      a,(BM0)
+        ld      e,a             ; E = BM0
 
         ld      b,24
 FMLP:
-        ld      a,(FQ0)
+        ld      a,e             ; FQ0 in register E
         and     1
         jp      z,FMNA
         ; P += M
@@ -6836,16 +7066,10 @@ FMNA:
         ld      a,(FM5)
         rla
         ld      (FM5),a
-        ; Q >>= 1
-        ld      a,(FQ2)
-        srl     a
-        ld      (FQ2),a
-        ld      a,(FQ1)
-        rr      a
-        ld      (FQ1),a
-        ld      a,(FQ0)
-        rr      a
-        ld      (FQ0),a
+        ; Q >>= 1 (registers only: H=FQ2, L=FQ1, E=FQ0)
+        srl     h
+        rr      l
+        rr      e
         dec     b
         jp      nz,FMLP
 
@@ -6985,6 +7209,17 @@ __fdiv:
         ld      (FQ1),a
         ld      (FQ2),a
 
+        ; Load divisor mantissa into registers for the 24-iteration loop.
+        ; H=BM2, L=BM1, D=BM0 are constant throughout; C=0 for FP3 borrow.
+        ; B=BM2 survives from FUNB; BM0/BM1 must reload from memory because
+        ; the exponent computation above clobbers H, L, D, and E.
+        ld      h,b             ; H = BM2  (B preserved through exponent computation)
+        ld      a,(BM1)
+        ld      l,a             ; L = BM1
+        ld      a,(BM0)
+        ld      d,a             ; D = BM0
+        ld      c,0
+
         ld      b,24
 FDLUP:
         ; Q <<= 1
@@ -7000,54 +7235,33 @@ FDLUP:
 
         ; if R >= B then R -= B and set low bit of Q.
         ; R is kept as a 25-bit value in FP3:FP2:FP1:FP0.
-        ; The original 24-bit remainder lost the carry when shifting
-        ; cases such as 9.0/3.0, causing a zero quotient.
+        ; BM (divisor mantissa) is in H:L:D; C=0 supplies the zero borrow operand.
         ld      a,(FP3)
         or      a
-        jp      nz,FDSUB
+        jp      nz,FDSUB        ; FP3 != 0: R > B (B has no byte here)
         ld      a,(FP2)
-        ld      c,a
-        ld      a,(BM2)
-        cp      c
-        jp      c,FDSUB
-        jp      nz,FDNSB
+        cp      h               ; FP2 - BM2; carry if FP2 < BM2
+        jp      c,FDNSB         ; R < B
+        jp      nz,FDSUB        ; R > B
         ld      a,(FP1)
-        ld      c,a
-        ld      a,(BM1)
-        cp      c
-        jp      c,FDSUB
-        jp      nz,FDNSB
+        cp      l               ; FP1 - BM1
+        jp      c,FDNSB
+        jp      nz,FDSUB
         ld      a,(FP0)
-        ld      c,a
-        ld      a,(BM0)
-        cp      c
-        jp      c,FDSUB
-        jp      nz,FDNSB
+        cp      d               ; FP0 - BM0; carry if FP0 < BM0
+        jp      c,FDNSB         ; R < B; fall through if R >= B
 FDSUB:
         ld      a,(FP0)
-        ld      c,a
-        ld      a,(BM0)
-        ld      e,a
-        ld      a,c
-        sub     e
+        sub     d               ; FP0 - BM0 (no borrow input)
         ld      (FP0),a
         ld      a,(FP1)
-        ld      c,a
-        ld      a,(BM1)
-        ld      e,a
-        ld      a,c
-        sbc     a,e
+        sbc     a,l             ; FP1 - BM1 - borrow
         ld      (FP1),a
         ld      a,(FP2)
-        ld      c,a
-        ld      a,(BM2)
-        ld      e,a
-        ld      a,c
-        sbc     a,e
+        sbc     a,h             ; FP2 - BM2 - borrow
         ld      (FP2),a
-        ld      c,0
         ld      a,(FP3)
-        sbc     a,c
+        sbc     a,c             ; FP3 - 0 - borrow (C=0)
         ld      (FP3),a
         ld      a,(FQ0)
         or      1

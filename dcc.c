@@ -3508,6 +3508,7 @@ static void emit_store_de_to_addr_hl(int type)
 }
 
 static void gen_expr(void);
+static int snippet_is_single_pointer_id(const char *s);
 static void gen_statement(void);
 static int parse_funcptr_declarator(int *ptype, char *name, int namesz)
 {
@@ -5956,9 +5957,11 @@ static void gen_direct_rel_branch(int op, int label, int branch_when_true)
 
     if (const_positive_snippet_value(rhs_code, &rhs_const) &&
         (op == '<' || op == TOK_GE || op == '>' || op == TOK_LE)) {
+        int ptr_cmp;
+        ptr_cmp = snippet_is_single_pointer_id(lhs_code);
         gen_snippet_expr(lhs_code);
         emit_ld_de_const(rhs_const);
-        if (g_expr_type & TYPE_UNSIGNED) {
+        if ((g_expr_type & TYPE_UNSIGNED) || ptr_cmp) {
             if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
             else emit_cmp_branch_false_unsigned(op, label);
         } else {
@@ -5967,12 +5970,15 @@ static void gen_direct_rel_branch(int op, int label, int branch_when_true)
         }
     } else {
         int lhs_type;
+        int ptr_cmp;
+        ptr_cmp = snippet_is_single_pointer_id(lhs_code) ||
+                  snippet_is_single_pointer_id(rhs_code);
         gen_snippet_expr(lhs_code);
         lhs_type = g_expr_type;
         emit("\tpush hl\n");
         gen_snippet_expr(rhs_code);
         emit("\tex de,hl\n\tpop hl\n");
-        if (lhs_type & TYPE_UNSIGNED) {
+        if ((lhs_type & TYPE_UNSIGNED) || ptr_cmp) {
             if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
             else emit_cmp_branch_false_unsigned(op, label);
         } else {
@@ -6349,6 +6355,43 @@ static int simple_direct_condition_until(int stop_kind)
     return found && !bad;
 }
 
+
+static int snippet_is_single_pointer_id(const char *s)
+{
+    char name[64];
+    int i;
+    struct Sym *sym;
+
+    /* copy_range() prefixes snippets with #line; skip those directives. */
+    while (*s == '#' || *s == '\n' || *s == '\r') {
+        if (*s == '#') {
+            while (*s && *s != '\n') s++;
+        } else {
+            s++;
+        }
+    }
+
+    while (*s == ' ' || *s == '\t')
+        s++;
+
+    if (!is_ident_start((unsigned char)*s))
+        return 0;
+
+    i = 0;
+    while (is_ident_char((unsigned char)*s) && i < 63)
+        name[i++] = *s++;
+    name[i] = 0;
+
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r')
+        s++;
+
+    if (*s != 0 && *s != ';')
+        return 0;
+
+    sym = find_sym(name);
+    return sym && (sym->type & (TYPE_PTR | TYPE_PTR2));
+}
+
 static void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
                                         int stop_kind)
 {
@@ -6382,9 +6425,11 @@ static void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
 
     if (const_positive_snippet_value(rhs_code, &rhs_const) &&
         (op == '<' || op == TOK_GE || op == '>' || op == TOK_LE)) {
+        int ptr_cmp;
+        ptr_cmp = snippet_is_single_pointer_id(lhs_code);
         gen_snippet_expr(lhs_code);
         emit_ld_de_const(rhs_const);
-        if (g_expr_type & TYPE_UNSIGNED) {
+        if ((g_expr_type & TYPE_UNSIGNED) || ptr_cmp) {
             if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
             else emit_cmp_branch_false_unsigned(op, label);
         } else {
@@ -6393,12 +6438,15 @@ static void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
         }
     } else {
         int lhs_type;
+        int ptr_cmp;
+        ptr_cmp = snippet_is_single_pointer_id(lhs_code) ||
+                  snippet_is_single_pointer_id(rhs_code);
         gen_snippet_expr(lhs_code);
         lhs_type = g_expr_type;
         emit("\tpush hl\n");
         gen_snippet_expr(rhs_code);
         emit("\tex de,hl\n\tpop hl\n");
-        if (lhs_type & TYPE_UNSIGNED) {
+        if ((lhs_type & TYPE_UNSIGNED) || ptr_cmp) {
             if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
             else emit_cmp_branch_false_unsigned(op, label);
         } else {
@@ -6518,6 +6566,110 @@ fail:
     return 0;
 }
 
+
+static int emit_cmp_const_branch_for_signed_local16(struct Sym *s, int op, long c,
+                                                    int label, int branch_when_true)
+{
+    int ldone;
+
+    if (!sym_can_ix_direct(s))
+        return 0;
+    if (type_size(s->type) != 2)
+        return 0;
+    if (s->type & TYPE_UNSIGNED)
+        return 0;
+    if (c < 0 || c > 255)
+        return 0;
+
+    /*
+     * Fast signed 16-bit local/param compare against a small non-negative
+     * constant.  This intentionally starts with the hot loop form only:
+     *
+     *     for (i = 0; i < 20; i++)
+     *
+     * Signed correctness is preserved:
+     *   negative lhs       => lhs < c is true
+     *   positive hi != 0   => lhs >= 256, so lhs < c is false
+     *   hi == 0            => compare low byte with c
+     */
+    if (op != '<')
+        return 0;
+
+    if (branch_when_true) {
+        ldone = new_label();
+        fprintf(outf, "\tld a,(ix%+d)\n", s->offset + 1);
+        emit("\tor a\n");
+        emit_jp_label("jp m,", label);     /* negative < c */
+        emit_jp_label("jp nz,", ldone);    /* positive >= 256 */
+        fprintf(outf, "\tld a,(ix%+d)\n", s->offset);
+        fprintf(outf, "\tcp %ld\n", c & 255);
+        emit_jp_label("jp c,", label);
+        emit_label(ldone);
+    } else {
+        ldone = new_label();
+        fprintf(outf, "\tld a,(ix%+d)\n", s->offset + 1);
+        emit("\tor a\n");
+        emit_jp_label("jp m,", ldone);     /* negative => true, so not false */
+        emit_jp_label("jp nz,", label);    /* positive >= 256 => false */
+        fprintf(outf, "\tld a,(ix%+d)\n", s->offset);
+        fprintf(outf, "\tcp %ld\n", c & 255);
+        emit_jp_label("jp nc,", label);
+        emit_label(ldone);
+    }
+
+    return 1;
+}
+
+static int gen_direct_small_const_int_rel_branch_until(int label, int branch_when_true,
+                                                       int stop_kind)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    struct Sym *s;
+    int op;
+    long c;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    if (tok.kind != TOK_ID)
+        goto fail;
+    s = find_sym(tok.text);
+    if (!s)
+        goto fail;
+    next_token();
+
+    if (!is_relop_token(tok.kind))
+        goto fail;
+    op = tok.kind;
+    next_token();
+
+    if (!parse_byte_const_operand(&c))
+        goto fail;
+
+    if (tok.kind != stop_kind)
+        goto fail;
+
+    if (!emit_cmp_const_branch_for_signed_local16(s, op, c, label, branch_when_true))
+        goto fail;
+
+    return 1;
+
+fail:
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return 0;
+}
+
 static int gen_condition_branch_false_until(int lfalse, int stop_kind)
 {
     if (gen_const_and_byte_condition_branch_until(lfalse, 0, stop_kind))
@@ -6527,6 +6679,9 @@ static int gen_condition_branch_false_until(int lfalse, int stop_kind)
         return 1;
 
     if (gen_direct_byte_rel_branch_until(lfalse, 0, stop_kind))
+        return 1;
+
+    if (gen_direct_small_const_int_rel_branch_until(lfalse, 0, stop_kind))
         return 1;
 
     if (!simple_direct_condition_until(stop_kind))
@@ -6545,6 +6700,9 @@ static int gen_condition_branch_true_until(int ltrue, int stop_kind)
         return 1;
 
     if (gen_direct_byte_rel_branch_until(ltrue, 1, stop_kind))
+        return 1;
+
+    if (gen_direct_small_const_int_rel_branch_until(ltrue, 1, stop_kind))
         return 1;
 
     if (!simple_direct_condition_until(stop_kind))

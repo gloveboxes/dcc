@@ -23,7 +23,7 @@ ftype C[ l ] [ n ];
 
 void filla()
 {
-    int i, j;
+    register int i, j;
     for ( i = 0; i < l; i++ )
         for ( j = 0; j < m; j++ )
             A[ i ][ j ] = (ftype) ( i + j + 2 );
@@ -31,7 +31,7 @@ void filla()
 
 void fillb()
 {
-    int i, j;
+    register int i, j;
     for ( i = 0; i < m; i++ )
         for ( j = 0; j < n; j++ )
             B[ i ][ j ] = (ftype) ( ( i + j + 2 ) / ( j + 1 ) );
@@ -39,7 +39,7 @@ void fillb()
 
 void fillc()
 {
-    int i, j;
+    register int i, j;
     for ( i = 0; i < l; i++ )
         for ( j = 0; j < n; j++ )
             C[ i ][ j ] = 0;
@@ -56,7 +56,7 @@ void ffillc()
 
 void matmult()
 {
-    int i, j, k;
+    register int i, j, k;
     for ( i = 0; i < l; i++ )
         for ( j = 0; j < n; j++ )
             for ( k = 0; k < m; k++ )
@@ -90,7 +90,7 @@ void fmatmult()
 
 void summit()
 {
-    int i, j;
+    register int i, j;
     for ( i = 0; i < l; i++ )
         for ( j = 0; j < n; j++ )
             Summ += C[ i ][ j ];

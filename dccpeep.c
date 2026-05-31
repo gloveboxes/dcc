@@ -1563,6 +1563,202 @@ static int peep_in_function_range(const char *func, int *startp, int *endp)
 }
 
 /*
+ * Replace ld de,N; [extrn __mulu;] call __mulu with inline shift-add sequences
+ * for small constants (10, 20, 40, 80, 160).  Uses DE as a scratch register to
+ * save the original HL value; this matches what the caller already expects
+ * (__mulu clobbers DE).
+ *
+ * Also constant-folds ld hl,C1; ld de,C2; call __mulu → ld hl,C1*C2 when
+ * both operands are compile-time constants.
+ */
+
+/*
+ * Replace integer-zero-to-float conversion followed by a 4-byte float store:
+ *
+ *   push <addr>
+ *   ld hl,0
+ *   call __fif
+ *   ld b,d
+ *   ld c,e
+ *   pop de
+ *   ex de,hl
+ *   ld (hl),e
+ *   inc hl
+ *   ld (hl),d
+ *   inc hl
+ *   ld (hl),c
+ *   inc hl
+ *   ld (hl),b
+ *
+ * Since __fif(0) is exactly 0.0f, all four stored bytes are zero.  This is
+ * common in mm.c's fillc()/ffillc() and avoids a runtime helper call inside
+ * the clearing loops.
+ */
+static int pass_float_zero_store(void)
+{
+    int i;
+    int changed;
+
+    changed = 0;
+
+    for (i = 0; i + 12 < nlines; ++i) {
+        if (eq(i, "ld hl,0") &&
+            eq(i + 1, "call __fif") &&
+            eq(i + 2, "ld b,d") &&
+            eq(i + 3, "ld c,e") &&
+            eq(i + 4, "pop de") &&
+            eq(i + 5, "ex de,hl") &&
+            eq(i + 6, "ld (hl),e") &&
+            eq(i + 7, "inc hl") &&
+            eq(i + 8, "ld (hl),d") &&
+            eq(i + 9, "inc hl") &&
+            eq(i + 10, "ld (hl),c") &&
+            eq(i + 11, "inc hl") &&
+            eq(i + 12, "ld (hl),b")) {
+            replace1_tagged(i, "pop hl", "float_zero_store");
+            replace1(i + 1, "ld (hl),0");
+            replace1(i + 2, "inc hl");
+            replace1(i + 3, "ld (hl),0");
+            replace1(i + 4, "inc hl");
+            replace1(i + 5, "ld (hl),0");
+            replace1(i + 6, "inc hl");
+            replace1(i + 7, "ld (hl),0");
+            delete_n(i + 8, 5);
+            changed = 1;
+            if (i > 0)
+                --i;
+        }
+    }
+
+    return changed;
+}
+
+static int pass_mulu_const(void)
+{
+    int i, changed = 0;
+
+    for (i = 0; i + 1 < nlines; i++) {
+        long de_val;
+        int has_extrn;
+        int n_delete;
+        char tmp[MAX_LINE];
+        char *endp;
+
+        if (!parse_ld_de_positive_imm(lines[i], &de_val))
+            continue;
+
+        has_extrn = (i + 2 < nlines &&
+                     eq(i + 1, "extrn __mulu") &&
+                     eq(i + 2, "call __mulu"));
+        if (!has_extrn && !eq(i + 1, "call __mulu"))
+            continue;
+
+        n_delete = has_extrn ? 3 : 2;
+
+        /* Constant fold: ld hl,C1 immediately before ld de,C2; call __mulu */
+        if (i > 0) {
+            strip_peep_comment_copy(tmp, lines[i - 1]);
+            if (strncmp(tmp, "ld hl,", 6) == 0) {
+                long hl_val = strtol(tmp + 6, &endp, 0);
+                while (*endp == ' ' || *endp == '\t') endp++;
+                if (*endp == '\0' && hl_val >= 0 && hl_val <= 32767) {
+                    long prod = hl_val * de_val;
+                    if (prod >= 0 && prod <= 65535) {
+                        char buf[64];
+                        sprintf(buf, "ld hl,%ld ; peep: mulu_const_fold", prod);
+                        replace1(i - 1, buf);
+                        delete_n(i, n_delete);
+                        changed = 1;
+                        if (i > 1) i -= 2;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        /* Inline expansion for specific multiplier constants.
+         * Strategy: save HL in DE (ld d,h; ld e,l), compute 4x, add original
+         * to get 5x, then shift left to reach the target.
+         * 10  = 5 * 2    :  ×1→DE, ×2, ×4, +DE(=5), ×2
+         * 20  = 5 * 4    :  ×1→DE, ×2, ×4, +DE(=5), ×2, ×2
+         * 40  = 5 * 8    :  ×1→DE, ×2, ×4, +DE(=5), ×2, ×2, ×2
+         * 80  = 5 * 16   :  ×1→DE, ×2, ×4, +DE(=5), ×2, ×2, ×2, ×2
+         * 160 = 5 * 32   :  ×1→DE, ×2, ×4, +DE(=5), ×2, ×2, ×2, ×2, ×2  */
+        if (de_val != 10 && de_val != 20 && de_val != 40 &&
+            de_val != 80 && de_val != 160)
+            continue;
+
+        delete_n(i, n_delete);
+
+        /* Insert instructions in REVERSE order so position i holds the first. */
+        /* Extra trailing shifts (160 needs one more than 80, etc.) */
+        if (de_val >= 160) insert_line(i, "add hl,hl");   /* ×160 */
+        if (de_val >=  80) insert_line(i, "add hl,hl");   /* ×80  */
+        if (de_val >=  40) insert_line(i, "add hl,hl");   /* ×40  */
+        if (de_val >=  20) insert_line(i, "add hl,hl");   /* ×20  */
+        if (de_val >=  10) insert_line(i, "add hl,hl");   /* ×10  */
+        /* Core 5× sequence: */
+        insert_line(i, "add hl,de");                       /* ×5 = ×4 + ×1 */
+        insert_line(i, "add hl,hl");                       /* ×4  */
+        insert_line(i, "add hl,hl");                       /* ×2  */
+        insert_line(i, "ld e,l");                          /* save ×1 low  */
+        {
+            char tag[32];
+            sprintf(tag, "mulu%ld", de_val);
+            insert_line_tagged(i, "ld d,h", tag);          /* save ×1 high */
+        }
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+
+    return changed;
+}
+
+static int stride_parse_ld_r_ix_neg(const char *s, char r, int *n); /* forward */
+
+/*
+ * Remove the 6-instruction signed-compare bias (xor 80h pattern) when the
+ * comparison constant fits in one byte (D=0 in ld de,N) and is followed by
+ * ld h,(ix-K) immediately before ld de,N — indicating a local frame variable
+ * that is non-negative (loop counter 0..N-1).
+ *
+ * Safe because: for values 0..127, H=0 always, and the bias xor 80h on both
+ * sides cancels, producing the same carry as plain unsigned subtraction.
+ */
+static int pass_signed_cmp_small_const(void)
+{
+    int i, changed = 0;
+    int imm, hi_off;
+
+    for (i = 0; i + 8 < nlines; i++) {
+        /* ld de,N where 0 < N <= 127 (D byte is 0 before and after xor) */
+        if (!peep_parse_ld_de_0_to_255(lines[i], &imm) || imm > 127 || imm == 0)
+            continue;
+
+        /* Preceding line must be ld h,(ix-K) — high byte of a frame local */
+        if (i < 1 || !stride_parse_ld_r_ix_neg(lines[i - 1], 'h', &hi_off))
+            continue;
+
+        /* The signed-compare bias block: 6 instructions */
+        if (eq(i + 1, "ld a,h") &&
+            eq(i + 2, "xor 80h") &&
+            eq(i + 3, "ld h,a") &&
+            eq(i + 4, "ld a,d") &&
+            eq(i + 5, "xor 80h") &&
+            eq(i + 6, "ld d,a") &&
+            eq(i + 7, "or a") &&
+            eq(i + 8, "sbc hl,de")) {
+            delete_n(i + 1, 6);
+            changed = 1;
+            if (i > 0) i--;
+        }
+    }
+
+    return changed;
+}
+
+/*
  * In MinMax, score/value/alpha/beta/depth are constrained to small
  * nonnegative SCORE_* values and depths.  Remove the signed-compare bias
  * from comparisons inside this function only.
@@ -5057,6 +5253,7 @@ int main(int argc, char **argv)
         if (pass_ix_array_word_addr()) changed = 1;
         if (pass_ix_postdec_to_local()) changed = 1;
         if (pass_store_word_const_hl()) changed = 1;
+        if (pass_float_zero_store()) changed = 1;
         if (pass_incsp_to_popbc()) changed = 1;
         if (pass_remove_unreferenced_labels()) changed = 1;
         if (pass_ldir_memset()) changed = 1;
@@ -5074,6 +5271,7 @@ int main(int argc, char **argv)
         if (pass_posfunc_b_cache()) changed = 1;
         if (pass_board_byte_eq_direct_load()) changed = 1;
         if (pass_lookforwinner_b_cache()) changed = 1;
+        if (pass_mulu_const()) changed = 1;
         if (pass_minmax_unsigned_compares()) changed = 1;
         if (pass_fix_main_argc_gt_one()) changed = 1;
 /*        if (pass_replace_tstr_fake_strstr()) changed = 1; */

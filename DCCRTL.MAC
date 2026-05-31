@@ -3344,8 +3344,9 @@ __lmul:
         ld      hl,0
         ld      (__lm_res_l),hl
         ld      (__lm_res_h),hl
-        ; Fast path: if both operands fit in 16 bits, only 16 iterations needed
-        ; (the upper 16 bits of RHS are 0, so no more adds happen after bit 15).
+        ; Fast path: select iteration count based on operand width.
+        ; Both high words = 0 (16-bit): 16 iterations suffice.
+        ; Both low words also have high byte = 0 (8-bit): 8 iterations suffice.
         ld      hl,(__lm_lhs_h)
         ld      a,h
         or      l
@@ -3354,6 +3355,18 @@ __lmul:
         ld      a,h
         or      l
         jp      nz,lmul_full32
+        ; Both operands fit in 16 bits.  Check if both fit in 8 bits.
+        ld      hl,(__lm_lhs_l)
+        ld      a,h             ; high byte of lhs low word
+        or      a
+        jp      nz,lmul_16bit
+        ld      hl,(__lm_rhs_l)
+        ld      a,h             ; high byte of rhs low word
+        or      a
+        jp      nz,lmul_16bit
+        ld      b,8             ; both 8-bit: 8 iterations suffice
+        jp      lmul_loop
+lmul_16bit:
         ld      b,16
         jp      lmul_loop
 lmul_full32:
@@ -3565,12 +3578,15 @@ lmodu_dvs16:
         ; Divisor is 16-bit (in __ldv_dvs_l).  Process the 32-bit dividend
         ; byte-by-byte MSB-first, accumulating a 16-bit remainder in HL.
         ; Result fits in HL since remainder < 16-bit divisor.
+        ; Use conditional call (call nz) to skip zero bytes cheaply.
         ld      de,(__ldv_dvs_l)        ; DE = divisor (stays in register)
         ld      hl,0                    ; HL = partial remainder
-        ld      a,(__ldv_dvd_h+1)       ; byte 3 (MSB) of 32-bit dividend
-        call    lmodu_byte
+        ld      a,(__ldv_dvd_h+1)       ; byte 3 (MSB)
+        or      a
+        call    nz,lmodu_byte           ; skip entirely if byte = 0
         ld      a,(__ldv_dvd_h)         ; byte 2
-        call    lmodu_byte
+        or      a
+        call    nz,lmodu_byte           ; skip if byte 2 = 0
         ld      a,(__ldv_dvd_l+1)       ; byte 1
         call    lmodu_byte
         ld      a,(__ldv_dvd_l)         ; byte 0 (LSB)
@@ -6983,7 +6999,7 @@ __fmul:
         jp      nc,FMINF
         ld      (AEXP),a
 
-        ; P = 0, M = A mantissa as 48-bit, Q = B mantissa as 24-bit.
+        ; P = 0.
         xor     a
         ld      (FP0),a
         ld      (FP1),a
@@ -6991,6 +7007,125 @@ __fmul:
         ld      (FP3),a
         ld      (FP4),a
         ld      (FP5),a
+
+        ; Choose the multiplier Q to avoid guaranteed zero low-byte
+        ; iterations.  Product is commutative, so this is exact.
+        ;
+        ; Prefer a 16-bit byte skip if either mantissa has two zero low bytes;
+        ; otherwise use an 8-bit byte skip if either mantissa has one zero low
+        ; byte.  This keeps full 24-bit mantissas and only avoids iterations
+        ; where Q's low byte would force no add.
+        ld      a,(AM0)
+        or      a
+        jp      nz,FMCHECK_B
+        ld      a,(AM1)
+        or      a
+        jp      z,FMSET_BA_8    ; A has 16 low zero bits
+        jp      FMCHECK_B2_FOR_8
+
+FMCHECK_B:
+        ld      a,(BM0)
+        or      a
+        jp      nz,FMSET_AB_24
+        ld      a,(BM1)
+        or      a
+        jp      z,FMSET_AB_8    ; B has 16 low zero bits
+        jp      FMSET_AB_16     ; B has 8 low zero bits
+
+FMCHECK_B2_FOR_8:
+        ; A has 8 low zero bits.  If B has 16, prefer that; otherwise use A.
+        ld      a,(BM0)
+        or      a
+        jp      nz,FMSET_BA_16
+        ld      a,(BM1)
+        or      a
+        jp      z,FMSET_AB_8
+        jp      FMSET_BA_16
+
+FMSET_BA_16:
+        ; A has 8 low zero bits: M = B mantissa << 8, Q = A >> 8.
+        xor     a
+        ld      (FM0),a
+        ld      a,(BM0)
+        ld      (FM1),a
+        ld      a,(BM1)
+        ld      (FM2),a
+        ld      a,(BM2)
+        ld      (FM3),a
+        xor     a
+        ld      (FM4),a
+        ld      (FM5),a
+        ld      h,0
+        ld      a,(AM2)
+        ld      l,a
+        ld      a,(AM1)
+        ld      e,a
+        ld      b,16
+        jp      FMLP
+
+FMSET_BA_8:
+        ; A has 16 low zero bits: M = B mantissa << 16, Q = A >> 16.
+        xor     a
+        ld      (FM0),a
+        ld      (FM1),a
+        ld      a,(BM0)
+        ld      (FM2),a
+        ld      a,(BM1)
+        ld      (FM3),a
+        ld      a,(BM2)
+        ld      (FM4),a
+        xor     a
+        ld      (FM5),a
+        ld      h,0
+        ld      l,0
+        ld      a,(AM2)
+        ld      e,a
+        ld      b,8
+        jp      FMLP
+
+FMSET_AB_16:
+        ; B has 8 low zero bits: M = A mantissa << 8, Q = B >> 8.
+        xor     a
+        ld      (FM0),a
+        ld      a,(AM0)
+        ld      (FM1),a
+        ld      a,(AM1)
+        ld      (FM2),a
+        ld      a,(AM2)
+        ld      (FM3),a
+        xor     a
+        ld      (FM4),a
+        ld      (FM5),a
+        ld      h,0
+        ld      a,(BM2)
+        ld      l,a
+        ld      a,(BM1)
+        ld      e,a
+        ld      b,16
+        jp      FMLP
+
+FMSET_AB_8:
+        ; B has 16 low zero bits: M = A mantissa << 16, Q = B >> 16.
+        xor     a
+        ld      (FM0),a
+        ld      (FM1),a
+        ld      a,(AM0)
+        ld      (FM2),a
+        ld      a,(AM1)
+        ld      (FM3),a
+        ld      a,(AM2)
+        ld      (FM4),a
+        xor     a
+        ld      (FM5),a
+        ld      h,0
+        ld      l,0
+        ld      a,(BM2)
+        ld      e,a
+        ld      b,8
+        jp      FMLP
+
+FMSET_AB_24:
+        ; General path: M = A mantissa, Q = B mantissa.
         ld      a,(AM0)
         ld      (FM0),a
         ld      a,(AM1)
@@ -7001,18 +7136,14 @@ __fmul:
         ld      (FM3),a
         ld      (FM4),a
         ld      (FM5),a
-        ; Load multiplier (BM) into registers; skip FQ* memory writes entirely.
-        ; E=BM0/FQ0, L=BM1/FQ1, H=BM2/FQ2 — shifted right each iteration.
-        ; All three must be loaded from memory: the sign computation above does
-        ; ld b,a (saving ASGN), which overwrites B before we get here.
         ld      a,(BM2)
-        ld      h,a             ; H = BM2
+        ld      h,a
         ld      a,(BM1)
-        ld      l,a             ; L = BM1
+        ld      l,a
         ld      a,(BM0)
-        ld      e,a             ; E = BM0
-
+        ld      e,a
         ld      b,24
+
 FMLP:
         ld      a,e             ; FQ0 in register E
         and     1

@@ -18,6 +18,48 @@ struct Pair g_pair;
 struct Pair g_arr[2];
 struct Node g_node;
 
+#include <stdio.h>
+
+void test2()
+{
+    /* 
+     * In C89, all declarations must be at the very top of the block.
+     * Mixing register variables, auto structs, and pointers here.
+     */
+    register char *i, *j, *x, *r;
+    
+    auto struct stk {
+        char *l;
+        char *r;
+    } stack[16];
+    
+    struct stk *sp;
+
+    /* Initialize register string pointers */
+    i = "Karina";
+    j = "Winter";
+    x = "Giselle";
+    r = "Ningning";
+
+    /* Initialize the pointer to point to the first element of the auto array */
+    sp = &stack[0];
+
+    /* Assign values to the structure fields via the pointer */
+    sp->l = i;
+    sp->r = j;
+
+    /* Advance the pointer to the next element in the stack array */
+    sp++;
+    sp->l = x;
+    sp->r = r;
+
+    /* Print values using the original array to verify storage works */
+    printf("Stack[0]: %s, %s\n", stack[0].l, stack[0].r);
+    printf("Stack[1]: %s, %s\n", stack[1].l, stack[1].r);
+
+    return 0;
+}
+
 int main()
 {
     struct Pair local;
@@ -50,5 +92,8 @@ int main()
     printf("p=%d %d %d\n", pp->a, pp->b, pp->c);
     printf("n=%d %d\n", g_node.value, g_node.pairp->b);
 
+    test2();
+
+    printf( "tstruct completed with great success\n" );
     return 0;
 }

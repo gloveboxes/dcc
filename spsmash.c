@@ -1,6 +1,6 @@
 /*
    detects stack overflow. this condition is ignored by default.
-   concerned coders can follow this patterns to detect overflow.
+   concerned coders can follow these patterns to detect overflow.
 */
 
 #include <stdint.h>

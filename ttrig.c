@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <math.h>
 
+#define _countof( X ) ( sizeof( X ) / sizeof( X[0] ) )
+
 /* results compare to msvc's results aside from the occasional least-significant digit */
 
 /* Core loopless ATAN polynomial function used by both atanf and atan2f */
@@ -192,7 +194,7 @@ int main(void)
     pairs_y[8] = 0.0f;  pairs_x[8] = 0.0f;
 
     /* 1. Direct Sweep Testing: sinf, cosf, tanf, atanf */
-    for (i = 0; i < 11; i++) {
+    for (i = 0; i < _countof( angles ); i++) {
         float test_val;
         test_val = angles[i];
         printf( "sin  %f: %f\n", test_val, sinf( test_val ) );
@@ -202,7 +204,7 @@ int main(void)
     }
 
     /* 2. Inverse Bound Sweep Testing: asinf, acosf */
-    for (i = 0; i < 9; i++) {
+    for (i = 0; i < _countof( inverse_inputs ); i++) {
         float test_val;
         test_val = inverse_inputs[i];
         printf( "asin %f: %f\n", test_val, asinf( test_val ) );
@@ -210,7 +212,7 @@ int main(void)
     }
 
     /* 3. Coordinate System Testing: atan2f */
-    for (i = 0; i < 9; i++) {
+    for (i = 0; i < _countof( pairs_y ); i++) {
         float y, x;
         y = pairs_y[i];
         x = pairs_x[i];

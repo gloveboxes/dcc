@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdlib.h>
 
 const void * bsearch( const void * key, const void * vbase, size_t num, size_t size, int (*compare)( const void * a, const void * b ) )

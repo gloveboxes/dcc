@@ -1,7 +1,6 @@
 #ifndef _STRING_H
 #define _STRING_H
 
-#include <stdint.h>
 #include <stddef.h>
 
 /* implemented in dccrtl.mac */

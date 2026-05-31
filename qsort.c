@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdlib.h>
 
 void memswap( char *a, char *b, size_t s )

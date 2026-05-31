@@ -10,7 +10,11 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-// until separate compilation is a thing, include dependencies
+// One could instead use dcc's -c flag to compile these then assemble them to bsearch.rel, qsort.rel, and string.rel.
+// See mrel.bat / mrel.sh for an example of how to do that.
+// Then link those with something like this in ma.bat:
+//     ntvcm l80 /P:100,rtlmin,bsearch,qsort,string,%name%,%name%/N/E
+
 #include <bsearch.c>
 #include <qsort.c>
 #include <string.c>

@@ -161,6 +161,7 @@ struct AsmName {
 static struct AsmName asm_names[MAX_ASM_NAMES];
 static int nasm_names;
 static int opt_floatio;
+static int opt_module;      /* -c/-module: emit linkable helper module, not final app TU */
 
 static int asm_name_needs_call_extrn(const char *cname)
 {
@@ -11172,13 +11173,15 @@ static void parse_translation_unit(void)
      * not defined here.
      */
 
-    /* Predefined linker-visible bounds of this translation unit's BSS.
-     * These are labels, not allocated C objects; taking their address is
-     * the intended use. */
-    add_global("__bssb", TYPE_CHAR, SC_EXTERN);
-    add_global("__bsse", TYPE_CHAR, SC_EXTERN);
-    add_global("__hstart", TYPE_CHAR, SC_EXTERN);
-    add_global("__data_end", TYPE_CHAR, SC_EXTERN);
+    /* Predefined linker-visible bounds of the final app's BSS.
+     * Compile-only helper modules must not define or reference these, or
+     * multiple independently compiled modules will collide at link time. */
+    if (!opt_module) {
+        add_global("__bssb", TYPE_CHAR, SC_EXTERN);
+        add_global("__bsse", TYPE_CHAR, SC_EXTERN);
+        add_global("__hstart", TYPE_CHAR, SC_EXTERN);
+        add_global("__data_end", TYPE_CHAR, SC_EXTERN);
+    }
 
     next_token();
 
@@ -11406,6 +11409,27 @@ static void emit_data(void)
     {
         int bss_off;
         int bss_size;
+
+        if (opt_module) {
+            /* A separately linked helper module cannot share the final app's
+             * synthetic __bssb EQU space: doing so would overlap BSS from
+             * multiple modules and also create duplicate boundary publics.
+             * Use ordinary DS storage here.  This may increase COM size for
+             * helper modules with writable globals, but it is link-safe. */
+            emit("\n\t; module uninitialized globals\n");
+            for (i = 0; i < nglobals; ++i) {
+                s = &globals[i];
+
+                if (s->storage == SC_FUNC || s->storage == SC_EXTERN) continue;
+                if ((s->has_init && s->init_count > 0) || (s->has_init && !s->is_array)) continue;
+
+                bss_size = s->size > 0 ? s->size : 2;
+                fprintf(outf, "\tpublic %s\n", asm_name_for(s->name));
+                fprintf(outf, "%s:\n", asm_name_for(s->name));
+                fprintf(outf, "\tds %d\n", bss_size);
+            }
+            return;
+        }
 
         bss_off = 0;
         emit("\n\tpublic\t__data_end\n__data_end:\n");
@@ -12230,7 +12254,7 @@ static void add_cmdline_define(const char *arg)
 
 static void usage(void)
 {
-    fprintf(stderr, "usage: dcc [-ffloatio] [-Dname[=value]] input.c -o output.mac\n");
+    fprintf(stderr, "usage: dcc [-c|-module] [-ffloatio] [-Dname[=value]] input.c -o output.mac\n");
     exit(1);
 }
 
@@ -12240,12 +12264,15 @@ int main(int argc, char **argv)
 
     input_name = NULL;
     output_name = NULL;
+    opt_module = 0;
 
     add_define("_DCC_", "1");
 
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-ffloatio")) {
             opt_floatio = 1;
+        } else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "-module")) {
+            opt_module = 1;
         } else if (!strcmp(argv[i], "-D")) {
             if (++i >= argc) usage();
             add_cmdline_define(argv[i]);

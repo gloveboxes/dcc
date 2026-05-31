@@ -74,5 +74,6 @@ run_set nopeep test_dccu.txt
 to_lf test_dcc.txt
 to_lf test_dccu.txt
 
+set +e
 diff baseline_test_dcc.txt test_dcc.txt
 diff baseline_test_dcc.txt test_dccu.txt

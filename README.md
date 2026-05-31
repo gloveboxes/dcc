@@ -26,7 +26,7 @@ Linux typically is configured to have case-sensitive filenames. CP/M files are u
 
 ## Emulators
 
-I use my [ntvcm](https://github.com/davidly/ntvcm) CP/M 2.2 emulator to run m80.com, l80.com, and apps built with dcc. The widely-used CPM emulator works equally well; all test build and pass with that emulator. I haven't run other emulators but I suspect they'll all just work. The compiler and runtime don't push emulator compatibility limits.
+I use my [ntvcm](https://github.com/davidly/ntvcm) CP/M 2.2 emulator to run m80.com, l80.com, and apps built with dcc. The widely-used CPM emulator works equally well; all tests build and pass with that emulator. I haven't run other emulators but I suspect they'll all just work. The compiler and runtime don't push emulator compatibility limits.
 
 ## M80 and L80
 
@@ -56,7 +56,7 @@ Generally, dcc compares very well with all other compilers that target CP/M, esp
 
 Benchmark times are in milliseconds on a 4Mhz Z80. CP/M file sizes are rounded up to the next multiple of 128 bytes due to how the file system works.
 
-<img width="3264" height="1247" alt="table" src="https://github.com/user-attachments/assets/932a8da8-2fee-4731-b08c-95d5f01ec15b" />
+<img width="3088" height="1183" alt="table" src="https://github.com/user-attachments/assets/74b9f62a-84b2-404c-a44a-815da21b2ab7" />
 
 ## Notes
 

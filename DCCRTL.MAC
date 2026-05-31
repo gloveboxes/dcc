@@ -5376,10 +5376,6 @@ lj_ix:          dw      0
 ; CP/M has no hierarchical directories.
 ; ============================================================
         public  _dopn
-        public  _drd
-        public  _dcls
-        public  _perror
-
 _dopn:
         push    ix
         ld      ix,0
@@ -5452,6 +5448,7 @@ __droky:
         pop     ix
         ret
 
+        public  _drd
 _drd:
         push    ix
         ld      ix,0
@@ -5543,12 +5540,14 @@ __drter:
         pop     ix
         ret
 
+        public  _dcls
 _dcls:
         ld      a,1
         ld      (__drdn),a
         ld      hl,0
         ret
 
+        public  _perror
 _perror:
         push    ix
         ld      ix,0

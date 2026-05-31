@@ -28,6 +28,7 @@ struct Block {
     int start;
     int end;
     int keep;
+    int dep;        /* block to keep when this block is kept, or -1 */
     char name[128];
 };
 
@@ -365,6 +366,105 @@ static int prev_nonblank_is_public(int i)
     return 0;
 }
 
+static int line_public_count(const char *line)
+{
+    char clean[MAX_LINE];
+    const char *p;
+    char sym[128];
+    int n;
+
+    strip_comment_copy(line, clean, sizeof(clean));
+    p = skipws(clean);
+    if (ci_strncmp(p, "public", 6) != 0 ||
+        !(p[6] == ' ' || p[6] == '\t'))
+        return 0;
+    p += 6;
+
+    n = 0;
+    for (;;) {
+        p = skipws(p);
+        if (!parse_ident_token(&p, sym))
+            break;
+        n++;
+        p = skipws(p);
+        if (*p == ',') {
+            p++;
+            continue;
+        }
+        break;
+    }
+    return n;
+}
+
+static int collect_public_names_from_range(int first, int last, char names[][128], int maxnames)
+{
+    int i;
+    int n;
+    char clean[MAX_LINE];
+    const char *p;
+    char sym[128];
+
+    n = 0;
+    for (i = first; i < last; ++i) {
+        strip_comment_copy(lines[i].s, clean, sizeof(clean));
+        p = skipws(clean);
+        if (ci_strncmp(p, "public", 6) != 0 ||
+            !(p[6] == ' ' || p[6] == '\t'))
+            continue;
+        p += 6;
+        for (;;) {
+            p = skipws(p);
+            if (!parse_ident_token(&p, sym))
+                break;
+            if (n < maxnames) {
+                strncpy(names[n], sym, 127);
+                names[n][127] = 0;
+                n++;
+            }
+            p = skipws(p);
+            if (*p == ',') {
+                p++;
+                continue;
+            }
+            break;
+        }
+    }
+    return n;
+}
+
+static int name_in_list(const char *name, char names[][128], int n)
+{
+    int i;
+    for (i = 0; i < n; ++i)
+        if (str_ieq(name, names[i]))
+            return 1;
+    return 0;
+}
+
+static int find_public_label_in_range(const char *name, int first, int last)
+{
+    int i;
+    for (i = first; i < last; ++i) {
+        if (line_label_is(lines[i].s, name))
+            return i;
+    }
+    return -1;
+}
+
+static void sort_ints(int *v, int n)
+{
+    int i, j;
+    for (i = 0; i < n; ++i) {
+        for (j = i + 1; j < n; ++j) {
+            if (v[j] < v[i]) {
+                int t = v[i];
+                v[i] = v[j];
+                v[j] = t;
+            }
+        }
+    }
+}
+
 static void start_new_block_at(int i, int *curp)
 {
     int cur;
@@ -379,6 +479,7 @@ static void start_new_block_at(int i, int *curp)
 
     cur = nblocks++;
     memset(&blocks[cur], 0, sizeof(blocks[cur]));
+    blocks[cur].dep = -1;
     blocks[cur].start = i;
     blocks[cur].end = nlines;
     sprintf(blocks[cur].name, "block%d", cur);
@@ -388,50 +489,122 @@ static void start_new_block_at(int i, int *curp)
 static void build_blocks(void)
 {
     int i;
-    int cur;
-    char lab[128];
+    int run_start;
+    char names[128][128];
 
     nblocks = 0;
 
-    cur = -1;
-    for (i = 0; i < nlines; ++i) {
-        if (is_public_line(lines[i].s)) {
-            /* Consecutive PUBLIC directives usually introduce one shared
-             * implementation cluster, e.g.:
-             *
-             *     public _open
-             *     public _read
-             *     public _write
-             *     FIRSTFD equ 3
-             *     _open:
-             *        ...
-             *     _read:
-             *        ...
-             *
-             * Splitting at each PUBLIC makes orphan public declarations and
-             * loses shared EQU constants.  Start a new block only for the
-             * first PUBLIC in such a run. */
-            if (cur < 0 || !prev_nonblank_is_public(i))
-                start_new_block_at(i, &cur);
+    i = 0;
+    while (i < nlines) {
+        int run_end;
+        int next_run;
+        int npublic;
+        int starts[128];
+        int nstarts;
+        int prelude_block;
+        int bi;
+        int j;
+
+        if (!is_public_line(lines[i].s)) {
+            i++;
+            continue;
         }
 
-        if (cur >= 0) {
-            collect_publics_from_line(lines[i].s, cur);
+        /*
+         * A run of consecutive PUBLIC directives often declares several entry
+         * points before any code/EQU lines.  The old stripper made the whole
+         * run and all following routines one block, so using _open kept _read,
+         * _write, _lseek, stdio, etc.  Instead:
+         *
+         *   - make a small prelude block for the PUBLIC run and shared EQU/data
+         *     before the first public label;
+         *   - split at the actual public labels found later in the run's body;
+         *   - make each split block depend on the prelude, so the PUBLIC lines
+         *     and shared constants are preserved when any entry is kept.
+         */
+        run_start = i;
+        run_end = i;
+        while (run_end < nlines && is_public_line(lines[run_end].s))
+            run_end++;
 
-            if (parse_label(lines[i].s, lab)) {
-                /* Private/internal labels within a kept public block should
-                 * also resolve dependencies to that same block.  This keeps
-                 * helpers like __pf_run when _printf calls them, and prevents
-                 * splitting at data labels such as pf_sink.
-                 */
-                add_sym(lab, cur);
+        next_run = run_end;
+        while (next_run < nlines && !is_public_line(lines[next_run].s))
+            next_run++;
+
+        npublic = collect_public_names_from_range(run_start, run_end, names, 128);
+
+        nstarts = 0;
+        for (j = 0; j < npublic; ++j) {
+            int li;
+            li = find_public_label_in_range(names[j], run_end, next_run);
+            if (li >= 0 && nstarts < 128)
+                starts[nstarts++] = li;
+        }
+        sort_ints(starts, nstarts);
+
+        if (nstarts <= 1) {
+            bi = -1;
+            start_new_block_at(run_start, &bi);
+            blocks[bi].end = next_run;
+            for (j = run_start; j < next_run; ++j) {
+                char lab[128];
+                collect_publics_from_line(lines[j].s, bi);
+                if (parse_label(lines[j].s, lab))
+                    add_sym(lab, bi);
+            }
+            i = next_run;
+            continue;
+        }
+
+        /* Prelude: PUBLIC run plus lines before the first public label. */
+        prelude_block = -1;
+        start_new_block_at(run_start, &prelude_block);
+        blocks[prelude_block].end = starts[0];
+        strcpy(blocks[prelude_block].name, "public_prelude");
+        for (j = run_start; j < starts[0]; ++j) {
+            char lab[128];
+            if (parse_label(lines[j].s, lab))
+                add_sym(lab, prelude_block);
+        }
+
+        for (j = 0; j < nstarts; ++j) {
+            int k;
+            int block_start;
+            int block_end;
+
+            block_start = starts[j];
+            block_end = (j + 1 < nstarts) ? starts[j + 1] : next_run;
+
+            bi = -1;
+            start_new_block_at(block_start, &bi);
+            blocks[bi].end = block_end;
+            blocks[bi].dep = prelude_block;
+
+            for (k = block_start; k < block_end; ++k) {
+                char lab[128];
+                if (parse_label(lines[k].s, lab)) {
+                    add_sym(lab, bi);
+                    if (name_in_list(lab, names, npublic))
+                        add_sym(lab, bi);
+                }
+                collect_publics_from_line(lines[k].s, bi);
             }
         }
-    }
 
-    if (cur >= 0)
-        blocks[cur].end = nlines;
+        /*
+         * PUBLIC symbols whose labels were not found are mapped to the prelude.
+         * This is safer than losing them, and usually means they are data or
+         * aliases near the declaration run.
+         */
+        for (j = 0; j < npublic; ++j) {
+            if (find_public_label_in_range(names[j], run_end, next_run) < 0)
+                add_sym(names[j], prelude_block);
+        }
+
+        i = next_run;
+    }
 }
+
 
 static void add_refs_from_line(const char *line)
 {
@@ -596,11 +769,18 @@ static void scan_app(const char *fn)
 static int keep_block_for_symbol(const char *name)
 {
     int b = find_sym_block(name);
+    int changed;
+
+    changed = 0;
     if (b >= 0 && !blocks[b].keep) {
         blocks[b].keep = 1;
-        return 1;
+        changed = 1;
     }
-    return 0;
+    if (b >= 0 && blocks[b].dep >= 0 && !blocks[blocks[b].dep].keep) {
+        blocks[blocks[b].dep].keep = 1;
+        changed = 1;
+    }
+    return changed;
 }
 
 static void mark_reachable(void)
@@ -620,6 +800,10 @@ static void mark_reachable(void)
         for (b = 0; b < nblocks; ++b) {
             if (!blocks[b].keep)
                 continue;
+            if (blocks[b].dep >= 0 && !blocks[blocks[b].dep].keep) {
+                blocks[blocks[b].dep].keep = 1;
+                changed = 1;
+            }
 
             pass_start = blocks[b].start;
             pass_end = blocks[b].end;
@@ -631,6 +815,77 @@ static void mark_reachable(void)
             }
         }
     } while (changed);
+}
+
+
+static int public_symbol_is_kept(const char *name)
+{
+    int b;
+
+    b = find_sym_block(name);
+    return b >= 0 && blocks[b].keep;
+}
+
+static void write_filtered_public_line(FILE *f, const char *line)
+{
+    char clean[MAX_LINE];
+    const char *p;
+    char sym[128];
+    int wrote;
+    char indent[64];
+    int ii;
+
+    strip_comment_copy(line, clean, sizeof(clean));
+    p = skipws(clean);
+    if (ci_strncmp(p, "public", 6) != 0 ||
+        !(p[6] == ' ' || p[6] == '\t')) {
+        fprintf(f, "%s\n", line);
+        return;
+    }
+
+    /*
+     * Finer splitting can keep a PUBLIC prelude while stripping some bodies
+     * declared in that prelude.  M80 then prints "U public _foo" for each
+     * PUBLIC whose label is absent.  Re-emit only PUBLIC symbols whose owning
+     * block is kept.
+     */
+    ii = 0;
+    while (line[ii] == ' ' || line[ii] == '\t') {
+        if (ii < (int)sizeof(indent) - 1)
+            indent[ii] = line[ii];
+        ii++;
+    }
+    if (ii >= (int)sizeof(indent))
+        ii = (int)sizeof(indent) - 1;
+    indent[ii] = 0;
+
+    p += 6;
+    wrote = 0;
+
+    for (;;) {
+        p = skipws(p);
+        if (!parse_ident_token(&p, sym))
+            break;
+
+        if (public_symbol_is_kept(sym)) {
+            if (!wrote) {
+                fprintf(f, "%spublic  %s", indent, sym);
+                wrote = 1;
+            } else {
+                fprintf(f, ",%s", sym);
+            }
+        }
+
+        p = skipws(p);
+        if (*p == ',') {
+            p++;
+            continue;
+        }
+        break;
+    }
+
+    if (wrote)
+        fprintf(f, "\n");
 }
 
 static void write_output(const char *fn)
@@ -655,13 +910,13 @@ static void write_output(const char *fn)
 
     /* Preamble before first PUBLIC: org/equ/comments/etc. */
     for (i = 0; i < first_block_start; ++i)
-        fprintf(f, "%s\n", lines[i].s);
+        write_filtered_public_line(f, lines[i].s);
 
     for (b = 0; b < nblocks; ++b) {
         if (!blocks[b].keep)
             continue;
         for (i = blocks[b].start; i < blocks[b].end; ++i)
-            fprintf(f, "%s\n", lines[i].s);
+            write_filtered_public_line(f, lines[i].s);
     }
 
     /* If the original file had a standalone END outside any kept block,

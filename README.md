@@ -18,11 +18,13 @@ ma.bat and ma.sh are scripts to build your app. Run "ma foo" (or "ma.sh foo" on 
 
 runall.bat and runall.sh compile and run all 90+ test cases both optimized and unoptimized. The output of that run is compared with baseline_test_dcc.txt to check for regressions.
 
-Apps must all fit in one .C file for now. That file can include .H files. You can also include .C files from your main .C file to help keep code more organized if you want.
-
 The test apps validate compiler correctness and performance. Some test apps are small and exercise a single compiler feature. Others are larger; tchess.c plays chess (not very well) and with the -c argument can play against itself. 
 
 Linux typically is configured to have case-sensitive filenames. CP/M files are uppercase. The convention used is that source .c files have lowercase names since only dcc works with them. Assembly files (.MAC) are all uppercase, as are output files from m80.com and l80.com including .COM, .PRN, and .REL.
+
+### Separate compilation units
+
+By default dcc assumes apps have one .c file. You can #include .c files into your main app. Or, you can use dcc's -c flag to compile stand-alone .c files then link them with your main app (built without -c). See cpmenumd.c for instructions for how to do that using mrel.bat/mrel.sh and updates to ma.bat / ma.sh for linking.
 
 ## Emulators
 

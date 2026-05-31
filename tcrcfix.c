@@ -265,6 +265,49 @@ static void test_crc_update_kernel(void)
             (long)((crc_t)0x34567800UL));
 }
 
+
+/*
+ * This exposed the bug in non-IX-direct 32-bit compound shift stores.
+ *
+ * In crc.c's 6-bit path, `buf >>= 8` was a local crc_t in a large stack
+ * frame, so it lived too far below IX for direct indexed stores.  The old
+ * compound-shift store path corrupted the low word while storing DE:HL back
+ * through a saved lvalue address.
+ */
+static crc_t non_ix_shift_store_probe(void)
+{
+    volatile char pad[160];
+    crc_t buf;
+    int i;
+
+    for (i = 0; i < (int)sizeof(pad); i++)
+        pad[i] = (char)i;
+
+    buf = (crc_t)0x12345678UL;
+    buf >>= 8;
+    if (buf != (crc_t)0x00123456UL)
+        return buf;
+
+    buf >>= 8;
+    if (buf != (crc_t)0x00001234UL)
+        return buf;
+
+    buf = (crc_t)0x00000031UL;
+    buf <<= 6;
+    if (buf != (crc_t)0x00000C40UL)
+        return buf;
+
+    buf >>= 8;
+    return buf;
+}
+
+static void test_non_ix_compound_shift_store(void)
+{
+    check_l("non-IX compound shift store",
+            (long)non_ix_shift_store_probe(),
+            (long)((crc_t)0x0000000CUL));
+}
+
 static void test_stdio_rtl_symbols(void)
 {
     char *p;
@@ -287,6 +330,7 @@ int main(void)
     test_argv_expr();
     test_long_direct_condition();
     test_crc_update_kernel();
+    test_non_ix_compound_shift_store();
     test_stdio_rtl_symbols();
 
     if (failures) {

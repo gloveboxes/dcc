@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 # Optional first argument: emulator command. Defaults to ntvcm.
 EMULATOR=${1:-ntvcm}

@@ -205,4 +205,5 @@ int main( int argc, char * argv[] )
     }
 
     printf( "tcmp completed with great success\n" );
+    return 0;
 } //main

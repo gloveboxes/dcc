@@ -191,12 +191,12 @@ static int asm_name_is_internal_public(const char *cname)
      * Usage from C:
      *     extern char __bssb;
      *     extern char __bsse;
-     *     extern char __heap_start;
+     *     extern char __hstart;
      *     p = &__bssb;
      */
     return !strcmp(cname, "__bssb") ||
            !strcmp(cname, "__bsse") ||
-           !strcmp(cname, "__heap_start") ||
+           !strcmp(cname, "__hstart") ||
            !strcmp(cname, "__data_end");
 }
 
@@ -11002,7 +11002,7 @@ static void add_predefined_extern(const char *name, int type, int storage)
 
 static void parse_translation_unit(void)
 {
-    emit("\t; dcc stage-1d output\n\n");
+    emit("\t; dcc stage-1d output\n\n      cseg\n");
 
     /*
      * Do not predeclare C library/runtime functions here.  In C89, file-scope
@@ -11019,7 +11019,7 @@ static void parse_translation_unit(void)
      * the intended use. */
     add_global("__bssb", TYPE_CHAR, SC_EXTERN);
     add_global("__bsse", TYPE_CHAR, SC_EXTERN);
-    add_global("__heap_start", TYPE_CHAR, SC_EXTERN);
+    add_global("__hstart", TYPE_CHAR, SC_EXTERN);
     add_global("__data_end", TYPE_CHAR, SC_EXTERN);
 
     next_token();
@@ -11266,9 +11266,9 @@ static void emit_data(void)
         }
 
         fprintf(outf, "__bsse\tequ\t__bssb+%d\n", bss_off);
-        fprintf(outf, "__heap_start\tequ\t__bsse\n");
+        fprintf(outf, "__hstart\tequ\t__bsse\n");
         emit("\tpublic\t__bsse\n");
-        emit("\tpublic\t__heap_start\n");
+        emit("\tpublic\t__hstart\n");
     }
 }
 

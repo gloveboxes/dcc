@@ -2,30 +2,33 @@
 ;
 ; M80/L80 Z80 assembly.
 ;
-        org     100h
+;        org     100h
 
         extrn   _main
-        extrn   __heap_start
-        extrn   __bssb
-        extrn   __bsse
+        extrn   __hstart   ; heap start
+        extrn   __bssb     ; bss begin
+        extrn   __bsse     ; bss end
+        public  __brk
+        public  __hlimit   ; heap limit
         public  start
 
 DEFAULT_STACK    equ     512 ; top of the heap is here. if no heap is used you have more stack.
 HDRSIZE          equ     2
 
+        cseg
 start:
         call    __build_argv
 
         ; Initialize heap allocator.
-        ; __heap_limit = initial SP - DEFAULT_STACK
+        ; __hlimit = initial SP - DEFAULT_STACK
         ld      hl,0
         add     hl,sp
         ld      de,-DEFAULT_STACK
         add     hl,de
-        ld      (__heap_limit),hl
-        ; __brk = __heap_base = __heap_start (label at end of user module)
-        ld      hl,__heap_start
-        ld      (__heap_base),hl
+        ld      (__hlimit),hl
+        ; __brk = __hbase = __hstart (label at end of user module)
+        ld      hl,__hstart
+        ld      (__hbase),hl
         ld      (__brk),hl
 
         ; Zero BSS (C89: uninitialized globals must be zero at startup)
@@ -4162,7 +4165,7 @@ les_done:
 ;   bit 15 = 1: block is free; bit 15 = 0: block is in use
 ;   bits 14-0 = user data size in bytes
 ;
-; __heap_base / __brk / __heap_limit are set by start:.
+; __hbase / __brk / __hlimit are set by start:.
 ; ============================================================
 
         public  _malloc
@@ -4241,8 +4244,8 @@ __malloc_hl:
 mh_sz_ok:
         ld      (__ml_need),hl
 
-        ; Walk free list from __heap_base to __brk
-        ld      hl,(__heap_base)
+        ; Walk free list from __hbase to __brk
+        ld      hl,(__hbase)
         ld      (__ml_p),hl
 
 mh_walk:
@@ -4369,7 +4372,7 @@ mh_extend:
         add     hl,de
         ld      de,HDRSIZE
         add     hl,de           ; HL = brk + need + HDRSIZE
-        ld      de,(__heap_limit)
+        ld      de,(__hlimit)
         inc     de              ; allow == heap_limit (> not >=)
         or      a
         sbc     hl,de           ; carry if brk+need+HDRSIZE < heap_limit+1 (fits)
@@ -4406,9 +4409,9 @@ mh_oom:
         ret
 
 ; Heap state
-__heap_base:    dw      0
+__hbase:    dw      0
 __brk:          dw      0
-__heap_limit:   dw      0
+__hlimit:   dw      0
 
 ; Allocator temporaries
 __ml_need:      dw      0

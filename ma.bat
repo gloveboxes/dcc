@@ -72,5 +72,8 @@ ntvcm m80 =rtlmin.mac /X /O /Z
 if errorlevel 1 exit /b 1
 
 rem Link app + runtime.
-ntvcm l80 rtlmin,%name%,%name%/N/E
+ntvcm l80 /P:100,rtlmin,%name%,%name%/N/E
 if errorlevel 1 exit /b 1
+
+
+

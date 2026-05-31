@@ -111,7 +111,7 @@ to_crlf "$rtl_src"
 to_crlf "$rtl_min"
 
 "$NTVCM" "$M80" "=${rtl_min}" /X /O /Z
-"$NTVCM" "$L80" "RTLMIN,${upper_base},${upper_base}/N/E"
+"$NTVCM" "$L80" "/P:100,RTLMIN,${upper_base},${upper_base}/N/E"
 
 # Convenience lowercase copy for host-side scripts/emulators that prefer it.
 if [ -f "$app_com" ] && [ "$lower_base" != "$upper_base" ]; then

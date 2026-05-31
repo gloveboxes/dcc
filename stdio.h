@@ -14,6 +14,8 @@ typedef int FILE;
 #define SEEK_CUR    1
 #define SEEK_END    2
 
+#define BUFSIZ 128 /* C89 says this should be at least 256, but for size reasons it's 128 here */
+
 /* Standard streams (defined in dccrtl.mac as word variables) */
 FILE *stdin;
 FILE *stdout;

@@ -83,4 +83,5 @@ int main( int argc, char * argv[] )
 
     uint32_t n = 4000000000;
     printf( "factorial( %lu ) = %lu\n", n, factorial( n ) );
+    return 0;
 } //main

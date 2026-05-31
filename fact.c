@@ -15,4 +15,5 @@ int main()
 {
     int32_t n = 15;
     printf( "factorial( %lu ) = %lu\n", n, factorial( n ) );
+    return 0;
 } //main

@@ -180,4 +180,5 @@ int main( int argc, char *argv[] )
     }
 
     printf( "fileops completed with great success\n" );
+    return 0;
 } /*main*/

@@ -58,6 +58,7 @@ bss_done:
         ld      hl,(__argc)
         push    hl              ; argc
         call    _main
+        call    __cpm_set_retcode
         jp      0000h
 
 
@@ -2380,7 +2381,44 @@ __qf32_save_h:  dw      0
 
         public  _exit
 _exit:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        pop     ix
+        call    __cpm_set_retcode
         jp      0000h
+
+; ------------------------------------------------------------
+; CP/M 3 program return code support.
+;
+; CP/M 3 / CP/M Plus BDOS function 108 (P_CODE):
+;     C  = 6Ch
+;     DE = program return code to set
+;     DE = FFFFh means get current code, so avoid using FFFFh as a
+;          set value.  For exit(-1), use 00FFh, matching the common
+;          8-bit process-status convention.
+;
+; CP/M 2.2 safely ignores unsupported BDOS functions, and emulators can
+; intercept this call directly, so no version check is needed.
+; ------------------------------------------------------------
+__cpm_set_retcode:
+        ; input: HL = C int status / main return value
+
+        ; If status is FFFFh, remap to 00FFh.  DE=FFFFh is the
+        ; P_CODE "get" sentinel, not a settable return code.
+        ld      a,h
+        and     l
+        inc     a
+        jr      nz,csr_not_minus1
+        ld      hl,00ffh
+csr_not_minus1:
+
+        ex      de,hl           ; DE = status
+        ld      c,6ch           ; P_CODE: get/set program return code
+        call    5
+        ret
 
         public  _atoi
 _atoi:

@@ -136,5 +136,6 @@ int main( int argc, char * argv[] )
     ti32_bits( (int32_t) -247, (int32_t) -247 );
 
     printf( "tbits completed with great success\n" );
+    return 0;
 } //main
 

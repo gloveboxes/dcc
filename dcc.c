@@ -8873,12 +8873,26 @@ normal_assign:
             emit_shift_loop(op, t);
             /* store: for 32-bit, need address from deeper in stack */
             if (type_is_long(t)) {
-                emit("\tpush de\n\tpush hl\n");
-                emit("\tld b,d\n\tld c,e\n\tex de,hl\n");
-                emit("\tld hl,4\n\tadd hl,sp\n\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n\tex de,hl\n");
+                /*
+                 * Result is in DE:HL and the saved lvalue address is still
+                 * on top of the stack.  The old custom sequence pushed the
+                 * result first, then tried to reload the address from SP+4;
+                 * in doing so it clobbered the low word and stored stack
+                 * address bytes into the destination.  This broke non-IX
+                 * direct long compound shifts such as:
+                 *
+                 *     buf >>= 8;
+                 *
+                 * in crc.c's 6-bit packing path.
+                 */
+                emit("\tld b,d\n\tld c,e\n");   /* BC = high word */
+                emit("\tpop de\n");               /* DE = address */
+                emit("\tex de,hl\n");             /* HL = address, DE = low word */
                 emit("\tld (hl),e\n\tinc hl\n\tld (hl),d\n\tinc hl\n\tld (hl),c\n\tinc hl\n\tld (hl),b\n");
-                emit("\tpop hl\n\tpop de\n");
-                emit("\tpop bc\n"); /* discard address */
+                if (!want_dead) {
+                    emit("\tex de,hl\n");         /* HL = low word */
+                    emit("\tld d,b\n\tld e,c\n"); /* DE = high word */
+                }
             } else {
                 emit("\tex de,hl\n\tpop hl\n");
                 emit_store_de_to_addr_hl(t);

@@ -128,6 +128,7 @@ struct Sym {
     int elem_size; /* stride per element; for multi-dim arrays = inner_dims * base_size */
     int needs_extrn; /* 1 = symbol has external linkage and may need EXTRN if referenced */
     int is_defined;  /* 1 = this translation unit emits storage/PUBLIC for the symbol */
+    int is_static;   /* file-scope static: internal linkage, mangle and do not PUBLIC */
     int has_proto;
     int proto_nargs;
     int proto_variadic;
@@ -151,6 +152,11 @@ static int starts_type(void);      /* forward: used in parse_const_int_expr */
 static int parse_enum_const_value(void); /* forward: used in parse_base_type */
 static int parse_base_type(void);  /* forward: used in parse_const_int_expr */
 static int type_add_ptr(int t);    /* forward */
+static int common_arith_type(int a, int b);
+static void emit_cast_16_to_common(int from_type, int common_type);
+static void gen_cmp32(int op, int lhs_type);
+static int snippet_needs_long_compare(const char *lhs, const char *rhs, int *commonp);
+static void emit_branch_on_bool_hl(int label, int branch_when_true);
 
 struct AsmName {
     char cname[64];
@@ -162,6 +168,8 @@ static struct AsmName asm_names[MAX_ASM_NAMES];
 static int nasm_names;
 static int opt_floatio;
 static int opt_module;      /* -c/-module: emit linkable helper module, not final app TU */
+
+static struct Sym *find_global(const char *name);
 
 static int asm_name_needs_call_extrn(const char *cname)
 {
@@ -178,7 +186,19 @@ static int asm_name_needs_call_extrn(const char *cname)
 
 static int asm_name_must_mangle(const char *cname)
 {
-    return strncmp(cname, "fake_", 5) == 0;
+    struct Sym *s;
+
+    if (strncmp(cname, "fake_", 5) == 0)
+        return 1;
+
+    /*
+     * M80/L80 have short external-name significance, so file-scope static
+     * helpers such as cb_is_zero/cb_is_one and compute_crc/compute_crc_fb can
+     * collide if emitted as their C names.  Static names have internal linkage:
+     * give them generated assembler names and do not make them PUBLIC.
+     */
+    s = find_global(cname);
+    return s && s->is_static;
 }
 
 static int asm_name_is_internal_public(const char *cname)
@@ -334,6 +354,7 @@ static int nflow;
 static int errors;
 static int scan_mode;
 static int decl_is_extern;
+static int decl_is_static;
 static int expr_result_dead;
 static int g_expr_type;
 static int g_tok_long_suffix; /* set by lexer when L/l suffix seen on integer literal */
@@ -2529,6 +2550,8 @@ static int parse_base_type(void)
     while (is_type_qualifier_token(tok.kind) || tok.kind == TOK_EXTERN || tok.kind == TOK_STATIC || tok.kind == TOK_REGISTER || tok.kind == TOK_AUTO || tok.kind == TOK_INLINE) {
         if (tok.kind == TOK_EXTERN) {
             decl_is_extern = 1;
+        } else if (tok.kind == TOK_STATIC) {
+            decl_is_static = 1;
         }
         next_token();
     }
@@ -2933,6 +2956,26 @@ static void emit_extrn_if_needed(struct Sym *s)
     if (!s || !s->needs_extrn || s->is_defined)
         return;
 
+    /*
+     * M80 wants EXTRN before the first reference.  For SC_EXTERN objects
+     * (stdin/stdout/stderr/errno or extern data declarations), the reference
+     * itself proves it is needed, so emit immediately.  Function prototypes
+     * still use deferred EXTRN so a later definition in this translation unit
+     * does not create EXTRN/PUBLIC conflicts.
+     */
+    if (s->storage == SC_EXTERN && !asm_name_is_internal_public(s->name)) {
+        /*
+         * In scan_mode we are only computing locals/frame size.  Do not mark
+         * the EXTRN as emitted here, because scan_mode suppresses output; the
+         * real generation pass must still print it before the first reference.
+         */
+        if (!scan_mode) {
+            fprintf(outf, "\textrn %s\n", asm_name_for(s->name));
+            s->needs_extrn = 0;
+        }
+        return;
+    }
+
     for (i = 0; i < nused_extrns; ++i)
         if (used_extrns[i] == s)
             return;
@@ -3083,10 +3126,7 @@ static void emit_incdec_sym_direct(struct Sym *s, int op)
     int done;
 
     /* Pointer ++/-- advances by the pointed-to object size, not by one
-     * byte.  The old IX-direct fast path treated every 16-bit object as an
-     * integer and incremented by 1, so forms such as:
-     *     float *pf; pf++;
-     * advanced into the middle of a 4-byte float object. */
+     * byte. */
     if (s && type_ptr_depth(s->type) > 0) {
         int elem;
         elem = type_index_elem_size(s->type);
@@ -3111,20 +3151,57 @@ static void emit_incdec_sym_direct(struct Sym *s, int op)
 
     done = new_label();
 
-    if (op == TOK_INC) {
-        fprintf(outf, "\tinc (ix%+d)\n", s->offset);
-        emit_jp_label("jp nz,", done);
-        fprintf(outf, "\tinc (ix%+d)\n", s->offset + 1);
+    if (type_size(s->type) == 4) {
+        /*
+         * 4-byte IX-direct long ++/--.  The previous fast path always used
+         * the 2-byte sequence, so a long decrement 0 -> -1 produced
+         * 0000FFFF instead of FFFFFFFF.  That made loops like:
+         *
+         *     for (i = BLOCKS - 1; i >= 0; i--)
+         *
+         * continue once more with i's low word equal to -1.
+         */
+        if (op == TOK_INC) {
+            fprintf(outf, "\tinc (ix%+d)\n", s->offset);
+            emit_jp_label("jp nz,", done);
+            fprintf(outf, "\tinc (ix%+d)\n", s->offset + 1);
+            emit_jp_label("jp nz,", done);
+            fprintf(outf, "\tinc (ix%+d)\n", s->offset + 2);
+            emit_jp_label("jp nz,", done);
+            fprintf(outf, "\tinc (ix%+d)\n", s->offset + 3);
+        } else {
+            fprintf(outf, "\tld a,(ix%+d)\n", s->offset);
+            fprintf(outf, "\tdec (ix%+d)\n", s->offset);
+            emit("\tor a\n");
+            emit_jp_label("jp nz,", done);
+            fprintf(outf, "\tld a,(ix%+d)\n", s->offset + 1);
+            fprintf(outf, "\tdec (ix%+d)\n", s->offset + 1);
+            emit("\tor a\n");
+            emit_jp_label("jp nz,", done);
+            fprintf(outf, "\tld a,(ix%+d)\n", s->offset + 2);
+            fprintf(outf, "\tdec (ix%+d)\n", s->offset + 2);
+            emit("\tor a\n");
+            emit_jp_label("jp nz,", done);
+            fprintf(outf, "\tdec (ix%+d)\n", s->offset + 3);
+        }
     } else {
-        fprintf(outf, "\tld a,(ix%+d)\n", s->offset);
-        fprintf(outf, "\tdec (ix%+d)\n", s->offset);
-        emit("\tor a\n");
-        emit_jp_label("jp nz,", done);
-        fprintf(outf, "\tdec (ix%+d)\n", s->offset + 1);
+        /* 2-byte int ++/--. */
+        if (op == TOK_INC) {
+            fprintf(outf, "\tinc (ix%+d)\n", s->offset);
+            emit_jp_label("jp nz,", done);
+            fprintf(outf, "\tinc (ix%+d)\n", s->offset + 1);
+        } else {
+            fprintf(outf, "\tld a,(ix%+d)\n", s->offset);
+            fprintf(outf, "\tdec (ix%+d)\n", s->offset);
+            emit("\tor a\n");
+            emit_jp_label("jp nz,", done);
+            fprintf(outf, "\tdec (ix%+d)\n", s->offset + 1);
+        }
     }
 
     emit_label(done);
 }
+
 
 
 static void emit_load_from_hl(int type);
@@ -3610,6 +3687,85 @@ static int char_array_string_initializer_size(int base_type)
     tok = save_tok;
     return n;
 }
+
+/*
+ * Parse one or more array declarator dimensions after the identifier.
+ *
+ * DCC stores arrays as a flat byte/object allocation.  For multidimensional
+ * arrays, total_len is the product of all dimensions, and first_stride_elems
+ * is the product of the inner dimensions.  Example:
+ *
+ *     char bufs[2][256]
+ *
+ * total_len = 512, first_stride_elems = 256.  Existing array indexing code
+ * already uses Sym.elem_size as the stride for the first index, so bufs[i]
+ * points at the correct row without needing a full C array type system.
+ */
+static void parse_array_declarator_dims(int base_type,
+                                        int *total_len,
+                                        int *first_stride_bytes,
+                                        int allow_empty_first)
+{
+    int dims[8];
+    int ndims;
+    int i;
+    int n;
+    int elem_bytes;
+    int total;
+    int inner;
+
+    ndims = 0;
+
+    while (accept('[')) {
+        if (tok.kind == ']') {
+            next_token();
+            n = (allow_empty_first && ndims == 0)
+                    ? char_array_string_initializer_size(base_type)
+                    : 0;
+        } else {
+            n = parse_const_int_expr();
+            expect(']');
+        }
+
+        if (n < 0)
+            n = 0;
+        if (ndims < 8)
+            dims[ndims++] = n;
+    }
+
+    if (ndims == 0) {
+        total_len[0] = 0;
+        first_stride_bytes[0] = 0;
+        return;
+    }
+
+    total = 1;
+    for (i = 0; i < ndims; ++i) {
+        if (dims[i] <= 0) {
+            total = 0;
+            break;
+        }
+        total *= dims[i];
+    }
+
+    elem_bytes = type_size(base_type);
+    if (elem_bytes <= 0)
+        elem_bytes = 2;
+
+    inner = 1;
+    for (i = 1; i < ndims; ++i) {
+        if (dims[i] <= 0) {
+            inner = 0;
+            break;
+        }
+        inner *= dims[i];
+    }
+
+    total_len[0] = total;
+    first_stride_bytes[0] = (ndims > 1 && inner > 0) ? inner * elem_bytes : elem_bytes;
+}
+
+
 
 static void emit_init_auto_char_array_from_string(struct Sym *s, const char *str)
 {
@@ -4790,20 +4946,21 @@ static int emit_default_call_args(long *arg_start, long *arg_end, int argc)
 
 static void emit_cleanup_stack_bytes(int bytes)
 {
-    if (bytes) {
-        if (bytes <= 8) {
-            int k;
-            for (k = 0; k < bytes; k++)
-                emit("\tinc sp\n");
-        } else {
-            emit("\tex de,hl\n");
-            fprintf(outf, "\tld hl,%d\n", bytes);
-            emit("\tadd hl,sp\n");
-            emit("\tld sp,hl\n");
-            emit("\tex de,hl\n");
-        }
-    }
+    int k;
+
+    /*
+     * Do not use HL/DE to adjust SP here.  A function may have just returned
+     * a 32-bit value in DE:HL, and the old:
+     *
+     *     ex de,hl / ld hl,n / add hl,sp / ld sp,hl / ex de,hl
+     *
+     * preserved only HL and destroyed the high word in DE.  A few INC SP
+     * instructions are larger/slower but correct for all return types.
+     */
+    for (k = 0; k < bytes; ++k)
+        emit("\tinc sp\n");
 }
+
 
 static void emit_call_hl_from_stack_offset(int off)
 {
@@ -5178,21 +5335,32 @@ static void gen_primary(void)
                     g_expr_type = fn_sym ? fn_sym->type : TYPE_INT;
                 }
 
-                if (arg_bytes) {
-                    if (arg_bytes <= 8) {
-                        int k;
-                        for (k = 0; k < arg_bytes; k++)
-                            emit("\tinc sp\n");
-                    } else {
-                        emit("\tex de,hl\n");
-                        fprintf(outf, "\tld hl,%d\n", arg_bytes);
-                        emit("\tadd hl,sp\n");
-                        emit("\tld sp,hl\n");
-                        emit("\tex de,hl\n");
-                    }
-                }
+                emit_cleanup_stack_bytes(arg_bytes);
             }
             return;
+        }
+
+        /*
+         * The CP/M RTL represents stdin/stdout/stderr as FILE values 0/1/2.
+         * It also exports _stdin/_stdout/_stderr data objects, but using those
+         * external variables makes M80 print a noisy 'U' for every reference.
+         * In ordinary rvalue expression context, emit the immediate FILE value.
+         */
+        if (tok.kind != '[' && tok.kind != '.' && tok.kind != TOK_ARROW &&
+            tok.kind != TOK_INC && tok.kind != TOK_DEC) {
+            if (!strcmp(name, "stdin")) {
+                emit("\tld hl,0\n");
+                g_expr_type = TYPE_INT;
+                return;
+            } else if (!strcmp(name, "stdout")) {
+                emit("\tld hl,1\n");
+                g_expr_type = TYPE_INT;
+                return;
+            } else if (!strcmp(name, "stderr")) {
+                emit("\tld hl,2\n");
+                g_expr_type = TYPE_INT;
+                return;
+            }
         }
 
         s = find_sym(name);
@@ -5444,14 +5612,25 @@ static int try_gen_simple_deref_value(void)
     char name[64];
     int op;
     int base;
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
 
     if (tok.kind != '*')
         return 0;
 
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
     next_token();
 
     if (tok.kind != TOK_ID)
-        return 0;
+        goto fail;
 
     strncpy(name, tok.text, sizeof(name) - 1);
     name[sizeof(name) - 1] = 0;
@@ -5463,6 +5642,11 @@ static int try_gen_simple_deref_value(void)
     }
 
     next_token();
+
+    if (tok.kind == '[' || tok.kind == '.' || tok.kind == TOK_ARROW ||
+        tok.kind == '(') {
+        goto fail;
+    }
 
     if (tok.kind == TOK_INC || tok.kind == TOK_DEC) {
         op = tok.kind;
@@ -5480,7 +5664,16 @@ static int try_gen_simple_deref_value(void)
     emit_load_from_hl(base);
     g_expr_type = base;
     return 1;
+
+fail:
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return 0;
 }
+
 
 static void gen_unary(void)
 {
@@ -5490,6 +5683,10 @@ static void gen_unary(void)
     if (paren_starts_cast()) {
         expect('(');
         t = parse_type();
+        while (accept('*')) {
+            skip_type_qualifiers();
+            t = type_add_ptr(t);
+        }
         skip_type_qualifiers();
         expect(')');
         gen_unary();
@@ -5972,19 +6169,32 @@ static void gen_direct_rel_branch(int op, int label, int branch_when_true)
     } else {
         int lhs_type;
         int ptr_cmp;
-        ptr_cmp = snippet_is_single_pointer_id(lhs_code) ||
-                  snippet_is_single_pointer_id(rhs_code);
-        gen_snippet_expr(lhs_code);
-        lhs_type = g_expr_type;
-        emit("\tpush hl\n");
-        gen_snippet_expr(rhs_code);
-        emit("\tex de,hl\n\tpop hl\n");
-        if ((lhs_type & TYPE_UNSIGNED) || ptr_cmp) {
-            if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
-            else emit_cmp_branch_false_unsigned(op, label);
+        int common_type;
+
+        if (snippet_needs_long_compare(lhs_code, rhs_code, &common_type)) {
+            gen_snippet_expr(lhs_code);
+            lhs_type = g_expr_type;
+            emit_cast_16_to_common(lhs_type, common_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_snippet_expr(rhs_code);
+            emit_cast_16_to_common(g_expr_type, common_type);
+            gen_cmp32(op, common_type);
+            emit_branch_on_bool_hl(label, branch_when_true);
         } else {
-            if (branch_when_true) emit_cmp_branch_true(op, label);
-            else emit_cmp_branch_false(op, label);
+            ptr_cmp = snippet_is_single_pointer_id(lhs_code) ||
+                      snippet_is_single_pointer_id(rhs_code);
+            gen_snippet_expr(lhs_code);
+            lhs_type = g_expr_type;
+            emit("\tpush hl\n");
+            gen_snippet_expr(rhs_code);
+            emit("\tex de,hl\n\tpop hl\n");
+            if ((lhs_type & TYPE_UNSIGNED) || ptr_cmp) {
+                if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
+                else emit_cmp_branch_false_unsigned(op, label);
+            } else {
+                if (branch_when_true) emit_cmp_branch_true(op, label);
+                else emit_cmp_branch_false(op, label);
+            }
         }
     }
 
@@ -6393,6 +6603,159 @@ static int snippet_is_single_pointer_id(const char *s)
     return sym && (sym->type & (TYPE_PTR | TYPE_PTR2));
 }
 
+
+static const char *skip_snippet_ws_and_lines(const char *s)
+{
+    for (;;) {
+        while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
+            s++;
+        if (*s == '#') {
+            while (*s && *s != '\n')
+                s++;
+            continue;
+        }
+        break;
+    }
+    return s;
+}
+
+static int snippet_simple_type(const char *s, int *typep)
+{
+    char name[64];
+    int n;
+    int td;
+    struct Sym *sym;
+    const char *p;
+
+    s = skip_snippet_ws_and_lines(s);
+
+    if (*s == '(') {
+        s++;
+        s = skip_snippet_ws_and_lines(s);
+
+        n = 0;
+        while (is_ident_char((unsigned char)*s) && n < 63)
+            name[n++] = *s++;
+        name[n] = 0;
+
+        if (!strcmp(name, "unsigned")) {
+            s = skip_snippet_ws_and_lines(s);
+            n = 0;
+            while (is_ident_char((unsigned char)*s) && n < 63)
+                name[n++] = *s++;
+            name[n] = 0;
+            if (!strcmp(name, "long")) {
+                while (*s == ' ' || *s == '\t') s++;
+                if (*s == ')') {
+                    typep[0] = TYPE_LONG | TYPE_UNSIGNED;
+                    return 1;
+                }
+            }
+            if (!strcmp(name, "int") || name[0] == 0) {
+                while (*s == ' ' || *s == '\t') s++;
+                if (*s == ')') {
+                    typep[0] = TYPE_INT | TYPE_UNSIGNED;
+                    return 1;
+                }
+            }
+            return 0;
+        }
+
+        if (!strcmp(name, "long")) {
+            while (*s == ' ' || *s == '\t') s++;
+            if (*s == ')') {
+                typep[0] = TYPE_LONG;
+                return 1;
+            }
+        }
+
+        if (!strcmp(name, "int")) {
+            while (*s == ' ' || *s == '\t') s++;
+            if (*s == ')') {
+                typep[0] = TYPE_INT;
+                return 1;
+            }
+        }
+
+        td = find_typedef(name);
+        if (td >= 0) {
+            int t;
+            t = typedefs[td].type;
+            while (*s == ' ' || *s == '\t') s++;
+            while (*s == '*') {
+                t = type_add_ptr(t);
+                s++;
+                while (*s == ' ' || *s == '\t') s++;
+                if (!strncmp(s, "const", 5) && !is_ident_char((unsigned char)s[5])) {
+                    s += 5;
+                    while (*s == ' ' || *s == '\t') s++;
+                }
+            }
+            if (*s == ')') {
+                typep[0] = t;
+                return 1;
+            }
+        }
+
+        return 0;
+    }
+
+    if (isdigit((unsigned char)*s)) {
+        typep[0] = TYPE_INT;
+        while (isxdigit((unsigned char)*s) || *s == 'x' || *s == 'X')
+            s++;
+        if (*s == 'l' || *s == 'L')
+            typep[0] = TYPE_LONG;
+        return 1;
+    }
+
+    if (!is_ident_start((unsigned char)*s))
+        return 0;
+
+    n = 0;
+    while (is_ident_char((unsigned char)*s) && n < 63)
+        name[n++] = *s++;
+    name[n] = 0;
+
+    p = skip_snippet_ws_and_lines(s);
+    if (*p != 0 && *p != ';')
+        return 0;
+
+    sym = find_sym(name);
+    if (!sym)
+        return 0;
+
+    typep[0] = sym->type;
+    return 1;
+}
+
+static int snippet_needs_long_compare(const char *lhs, const char *rhs, int *commonp)
+{
+    int lt;
+    int rt;
+
+    lt = TYPE_INT;
+    rt = TYPE_INT;
+
+    snippet_simple_type(lhs, &lt);
+    snippet_simple_type(rhs, &rt);
+
+    if (!type_is_long(lt) && !type_is_long(rt))
+        return 0;
+
+    commonp[0] = common_arith_type(lt, rt);
+    return type_is_long(commonp[0]);
+}
+
+static void emit_branch_on_bool_hl(int label, int branch_when_true)
+{
+    emit("\tld a,h\n\tor l\n");
+    if (branch_when_true)
+        emit_jp_label("jp nz,", label);
+    else
+        emit_jp_label("jp z,", label);
+}
+
 static void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
                                         int stop_kind)
 {
@@ -6440,19 +6803,32 @@ static void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
     } else {
         int lhs_type;
         int ptr_cmp;
-        ptr_cmp = snippet_is_single_pointer_id(lhs_code) ||
-                  snippet_is_single_pointer_id(rhs_code);
-        gen_snippet_expr(lhs_code);
-        lhs_type = g_expr_type;
-        emit("\tpush hl\n");
-        gen_snippet_expr(rhs_code);
-        emit("\tex de,hl\n\tpop hl\n");
-        if ((lhs_type & TYPE_UNSIGNED) || ptr_cmp) {
-            if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
-            else emit_cmp_branch_false_unsigned(op, label);
+        int common_type;
+
+        if (snippet_needs_long_compare(lhs_code, rhs_code, &common_type)) {
+            gen_snippet_expr(lhs_code);
+            lhs_type = g_expr_type;
+            emit_cast_16_to_common(lhs_type, common_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_snippet_expr(rhs_code);
+            emit_cast_16_to_common(g_expr_type, common_type);
+            gen_cmp32(op, common_type);
+            emit_branch_on_bool_hl(label, branch_when_true);
         } else {
-            if (branch_when_true) emit_cmp_branch_true(op, label);
-            else emit_cmp_branch_false(op, label);
+            ptr_cmp = snippet_is_single_pointer_id(lhs_code) ||
+                      snippet_is_single_pointer_id(rhs_code);
+            gen_snippet_expr(lhs_code);
+            lhs_type = g_expr_type;
+            emit("\tpush hl\n");
+            gen_snippet_expr(rhs_code);
+            emit("\tex de,hl\n\tpop hl\n");
+            if ((lhs_type & TYPE_UNSIGNED) || ptr_cmp) {
+                if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
+                else emit_cmp_branch_false_unsigned(op, label);
+            } else {
+                if (branch_when_true) emit_cmp_branch_true(op, label);
+                else emit_cmp_branch_false(op, label);
+            }
         }
     }
 
@@ -7706,6 +8082,9 @@ static void gen_conditional(void)
 {
     int lfalse;
     int lend;
+    int true_type;
+    int false_type;
+    int need_long_result;
 
     gen_lor();
 
@@ -7720,14 +8099,53 @@ static void gen_conditional(void)
         emit_jp_label("jp z,", lfalse);
 
         gen_expr();
+        true_type = g_expr_type;
+
+        /*
+         * C's conditional operator applies the usual conversions between the
+         * second and third operands.  DCC does not have a full typed IR, so a
+         * narrow true arm used with a long false arm could leave DE stale.
+         *
+         * Example from tarray.c:
+         *     int32_t cap = (end_of_row > beyond) ? beyond : end_of_row;
+         *
+         * beyond is 16-bit size_t, end_of_row is 32-bit int32_t.  Without
+         * extending the true arm, selecting beyond stores a garbage high word.
+         *
+         * Extending a 16-bit true arm here is safe when the whole expression is
+         * ultimately 16-bit: callers/stores that want int use HL and ignore DE.
+         */
+        need_long_result = type_is_long(true_type);
+        if (!type_is_long(true_type) && !type_is_float(true_type)) {
+            emit_extend_to_long((true_type & TYPE_UNSIGNED) ||
+                                (true_type & (TYPE_PTR | TYPE_PTR2)));
+        }
+
         emit_jp_label("jp", lend);
 
         expect(':');
         emit_label(lfalse);
 
         gen_conditional();
+        false_type = g_expr_type;
+
+        if (type_is_long(false_type))
+            need_long_result = 1;
+
+        if (need_long_result && !type_is_long(false_type) && !type_is_float(false_type)) {
+            emit_extend_to_long((false_type & TYPE_UNSIGNED) ||
+                                (false_type & (TYPE_PTR | TYPE_PTR2)));
+            false_type = (false_type & TYPE_UNSIGNED) ? (TYPE_LONG | TYPE_UNSIGNED) : TYPE_LONG;
+        }
 
         emit_label(lend);
+
+        if (need_long_result) {
+            if ((true_type & TYPE_UNSIGNED) || (false_type & TYPE_UNSIGNED))
+                g_expr_type = TYPE_LONG | TYPE_UNSIGNED;
+            else
+                g_expr_type = TYPE_LONG;
+        }
     }
 }
 
@@ -9065,13 +9483,16 @@ static void gen_local_decl_after_type(int base)
 
         arrlen = g_funcptr_decl_array_len;
         g_funcptr_decl_array_len = 0;
-        if (accept('[')) {
-            if (tok.kind == ']') {
-                next_token();
-                arrlen = char_array_string_initializer_size(type);
+        {
+            int first_stride_bytes;
+            first_stride_bytes = 0;
+            if (arrlen == 0)
+                parse_array_declarator_dims(type, &arrlen, &first_stride_bytes, 1);
+            if (first_stride_bytes > 0) {
+                /* stash temporarily in bytes; assigned to Sym below */
+                current_field_array_elem_size = first_stride_bytes;
             } else {
-                arrlen = parse_const_int_expr();
-                expect(']');
+                current_field_array_elem_size = 0;
             }
         }
         /* inherit array length from array typedef (e.g. typedef int T[4]) */
@@ -9088,6 +9509,8 @@ static void gen_local_decl_after_type(int base)
             if (arrlen > 0) {
                 s->is_array = 1;
                 s->array_len = arrlen;
+                s->elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(type);
+                if (s->elem_size <= 0) s->elem_size = 2;
             }
         }
 
@@ -10134,6 +10557,12 @@ static void parse_param_list(void)
         type = parse_type();
         unnamed_id = 0;
 
+        while (accept('*')) {
+            skip_type_qualifiers();
+            type = type_add_ptr(type);
+        }
+        skip_type_qualifiers();
+
         if (parse_funcptr_declarator(&type, name, sizeof(name))) {
             /* function pointer parameter */
         } else if (tok.kind == TOK_ID) {
@@ -10175,7 +10604,14 @@ static void parse_param_list(void)
 
 static void emit_function_prologue(const char *name, int local_bytes)
 {
-    fprintf(outf, "\n\tpublic %s\n", asm_name_for(name));
+    struct Sym *s;
+
+    s = find_global(name);
+    if (!s || !s->is_static)
+        fprintf(outf, "\n\tpublic %s\n", asm_name_for(name));
+    else
+        fprintf(outf, "\n");
+
     fprintf(outf, "%s:\n", asm_name_for(name));
     emit("\tpush ix\n");
     emit("\tld ix,0\n");
@@ -10236,14 +10672,12 @@ static void scan_local_decl_after_type(int base)
 
         arrlen = g_funcptr_decl_array_len;
         g_funcptr_decl_array_len = 0;
-        if (accept('[')) {
-            if (tok.kind == ']') {
-                next_token();
-                arrlen = char_array_string_initializer_size(type);
-            } else {
-                arrlen = parse_const_int_expr();
-                expect(']');
-            }
+        {
+            int first_stride_bytes;
+            first_stride_bytes = 0;
+            if (arrlen == 0)
+                parse_array_declarator_dims(type, &arrlen, &first_stride_bytes, 1);
+            current_field_array_elem_size = first_stride_bytes;
         }
         /* inherit array length from array typedef */
         if (arrlen == 0 && g_typedef_array_len > 0)
@@ -10257,6 +10691,8 @@ static void scan_local_decl_after_type(int base)
             if (arrlen > 0) {
                 s->is_array = 1;
                 s->array_len = arrlen;
+                s->elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(type);
+                if (s->elem_size <= 0) s->elem_size = 2;
             }
         }
 
@@ -10296,14 +10732,12 @@ static void scan_static_local_decl_after_type(int base)
 
         arrlen = g_funcptr_decl_array_len;
         g_funcptr_decl_array_len = 0;
-        if (accept('[')) {
-            if (tok.kind == ']') {
-                arrlen = -1;
-                next_token();
-            } else {
-                arrlen = parse_const_int_expr();
-                expect(']');
-            }
+        {
+            int first_stride_bytes;
+            first_stride_bytes = 0;
+            if (arrlen == 0)
+                parse_array_declarator_dims(type, &arrlen, &first_stride_bytes, 1);
+            current_field_array_elem_size = first_stride_bytes;
         }
         if (arrlen == 0 && g_typedef_array_len > 0)
             arrlen = g_typedef_array_len;
@@ -10319,7 +10753,7 @@ static void scan_static_local_decl_after_type(int base)
         if (arrlen != 0) {
             g->is_array = 1;
             g->array_len = arrlen > 0 ? arrlen : 0;
-            g->elem_size = type_size(type);
+            g->elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(type);
             if (g->elem_size <= 0) g->elem_size = 2;
         }
 
@@ -10989,7 +11423,10 @@ static void parse_function_or_global(int base_type)
             int already_declared;
             already_declared = (find_global(name) != NULL);
             s = add_global(name, type, SC_FUNC);
-            if (!s->is_defined)
+            if (decl_is_static) {
+                s->is_static = 1;
+                s->needs_extrn = 0;
+            } else if (!s->is_defined)
                 s->needs_extrn = 1;
             if (accept(','))
                 continue;
@@ -11003,6 +11440,10 @@ static void parse_function_or_global(int base_type)
 
             already_declared = (find_global(name) != NULL);
             s = add_global(name, type, SC_FUNC);
+            if (decl_is_static) {
+                s->is_static = 1;
+                s->needs_extrn = 0;
+            }
             parse_param_list();
             copy_parsed_prototype_to_sym(s);
             expect(')');
@@ -11066,7 +11507,10 @@ static void parse_function_or_global(int base_type)
              * but the M80 EXTRN is emitted only if actually referenced and not
              * later defined in this translation unit.
              */
-            if (!s->is_defined)
+            if (decl_is_static) {
+                s->is_static = 1;
+                s->needs_extrn = 0;
+            } else if (!s->is_defined)
                 s->needs_extrn = 1;
 
             if (accept(','))
@@ -11126,6 +11570,8 @@ static void parse_function_or_global(int base_type)
             s = add_global(name, type, SC_GLOBAL);
             s->is_defined = 1;
             s->needs_extrn = 0;
+            if (decl_is_static)
+                s->is_static = 1;
 
             if (arrlen || total_count == 0) {
                 s->is_array = 1;
@@ -11183,6 +11629,11 @@ static void parse_translation_unit(void)
         add_global("__data_end", TYPE_CHAR, SC_EXTERN);
     }
 
+    add_predefined_extern("stdin", TYPE_INT, SC_EXTERN);
+    add_predefined_extern("stdout", TYPE_INT, SC_EXTERN);
+    add_predefined_extern("stderr", TYPE_INT, SC_EXTERN);
+    add_predefined_extern("errno", TYPE_INT, SC_EXTERN);
+
     next_token();
 
     while (tok.kind != TOK_EOF) {
@@ -11191,6 +11642,7 @@ static void parse_translation_unit(void)
         } else if (starts_type()) {
             int t;
             decl_is_extern = 0;
+            decl_is_static = 0;
             t = parse_type();
             if (tok.kind == ';') {
                 next_token();
@@ -11364,7 +11816,8 @@ static void emit_data(void)
         /* skip BSS (uninitialized) globals — emitted separately below */
         if (!(s->has_init && s->init_count > 0) && !(s->has_init && !s->is_array)) continue;
 
-        fprintf(outf, "\tpublic %s\n", asm_name_for(s->name));
+        if (!s->is_static)
+            fprintf(outf, "\tpublic %s\n", asm_name_for(s->name));
         fprintf(outf, "%s:\n", asm_name_for(s->name));
         if (s->has_init && s->init_count > 0) {
             int j;
@@ -11424,7 +11877,8 @@ static void emit_data(void)
                 if ((s->has_init && s->init_count > 0) || (s->has_init && !s->is_array)) continue;
 
                 bss_size = s->size > 0 ? s->size : 2;
-                fprintf(outf, "\tpublic %s\n", asm_name_for(s->name));
+                if (!s->is_static)
+                    fprintf(outf, "\tpublic %s\n", asm_name_for(s->name));
                 fprintf(outf, "%s:\n", asm_name_for(s->name));
                 fprintf(outf, "\tds %d\n", bss_size);
             }
@@ -12342,6 +12796,10 @@ int main(int argc, char **argv)
      * or add_global() preserves the wrong storage class and M80 sees
      * ld hl,_stdout without a preceding EXTRN. */
     add_define("NULL", "0");
+    if (find_define("BUFSIZ") < 0)
+        add_define("BUFSIZ", "512");
+    if (find_define("EOF") < 0)
+        add_define("EOF", "-1");
 
     parse_translation_unit();
     emit_deferred_extrns();

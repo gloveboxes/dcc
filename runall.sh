@@ -12,7 +12,7 @@ APPLIST="sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong \
          tc89pp tc89fnty tc89flt tc89fltc tc89flta tc89fptr tc89fs tc89fcmp \
          tc89fcnv tc89fadd tc89fmul tc89fdiv tc89ffio tc89flng tc89fmat \
          ttrig tlog tphi tap cpmenumd tbits tfo pihex tstrify tlcont primes \
-         tpreproc trwold tlimits spsmash"
+         tpreproc trwold tlimits spsmash tcrcfix"
 
 run_args() {
     case "$1" in

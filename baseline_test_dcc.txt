@@ -3051,7 +3051,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ May 31 2026
-__TIME__ 06:10:52
+__TIME__ 14:37:10
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3576,3 +3576,6 @@ Test 3: 4-byte (32-bit) long limits... PASSED
 Results: 3/3 tests passed.
 test spsmash
 intentional stack overflow condition.
+test tcrcfix
+
+tcrcfix_c89: all tests passed

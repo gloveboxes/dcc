@@ -189,6 +189,93 @@ _putchar:
         pop     ix
         ret
 
+        public  _fputc
+_fputc:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ; int fputc(int c, FILE *fp)
+        ; fp values 0/1/2 are stdin/stdout/stderr pseudo FILEs in this RTL.
+        ld      a,(ix+6)        ; low byte of fp/fd
+        cp      1
+        jr      z,fputc_con
+        cp      2
+        jr      z,fputc_con
+
+        ; file path: store char in a one-byte buffer and call _write(fp,&ch,1)
+        ld      a,(ix+4)
+        ld      (__fputc_ch),a
+
+        ld      hl,1
+        push    hl              ; count
+        ld      hl,__fputc_ch
+        push    hl              ; buf
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        push    hl              ; fp
+        call    _write
+
+        ; clean 3 args while preserving _write return in HL
+        ex      de,hl
+        ld      hl,6
+        add     hl,sp
+        ld      sp,hl
+        ex      de,hl
+
+        ; success iff _write returned 1 byte
+        ld      a,h
+        or      a
+        jr      nz,fputc_bad
+        ld      a,l
+        cp      1
+        jr      nz,fputc_bad
+
+        ld      h,0
+        ld      l,(ix+4)        ; return written character
+        pop     ix
+        ret
+
+fputc_con:
+        ld      e,(ix+4)
+        call    __conout
+        ld      h,0
+        ld      l,(ix+4)
+        pop     ix
+        ret
+
+fputc_bad:
+        ld      hl,0ffffh       ; EOF
+        pop     ix
+        ret
+
+__fputc_ch:
+        db      0
+
+        public  _clearerr
+_clearerr:
+        ; void clearerr(FILE *fp)
+        ; This simple RTL keeps no per-FILE error/eof flags.
+        ld      hl,0
+        ret
+
+        public  _setbuf
+_setbuf:
+        ; void setbuf(FILE *fp, char *buf)
+        ; Unbuffered/stubbed: all current I/O goes through direct CP/M calls.
+        ld      hl,0
+        ret
+
+        public  _strerror
+_strerror:
+        ; char *strerror(int errnum)
+        ; Minimal fallback for programs that only need a printable message.
+        ld      hl,__strerror_msg
+        ret
+
+__strerror_msg:
+        db      'Error',0
+
         public  _getchar
 _getchar:
         ld      c,1

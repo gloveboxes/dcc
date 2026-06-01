@@ -8,11 +8,11 @@
         extrn   __hstart   ; heap start
         extrn   __bssb     ; bss begin
         extrn   __bsse     ; bss end
+        extrn   __stack_size ; bytes reserved above heap for C stack
         public  __brk
         public  __hlimit   ; heap limit
         public  start
 
-DEFAULT_STACK    equ     512 ; top of the heap is here. if no heap is used you have more stack.
 HDRSIZE          equ     2
 
         cseg
@@ -20,11 +20,12 @@ start:
         call    __build_argv
 
         ; Initialize heap allocator.
-        ; __hlimit = initial SP - DEFAULT_STACK
+        ; __hlimit = initial SP - __stack_size
         ld      hl,0
         add     hl,sp
-        ld      de,-DEFAULT_STACK
-        add     hl,de
+        ld      de,__stack_size
+        or      a
+        sbc     hl,de
         ld      (__hlimit),hl
         ; __brk = __hbase = __hstart (label at end of user module)
         ld      hl,__hstart

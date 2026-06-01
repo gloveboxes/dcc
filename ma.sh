@@ -93,7 +93,7 @@ rm -f "$app_mac" "$app_rel" "$app_com" "${upper_base}.PRN" \
       "$peep_tmp" "$rtl_min" RTLMIN.REL RTLMIN.PRN
 
 # Compile directly to an uppercase .MAC file.
-"$DCC" "${dcc_flags[@]}" "$source_file" -o "$app_mac"
+"$DCC" "${dcc_flags[@]}" -stack 512 "$source_file" -o "$app_mac"
 
 if [ "$use_peep" -eq 1 ]; then
     "$DCCPEEP" "$app_mac" "$peep_tmp"

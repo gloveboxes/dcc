@@ -168,6 +168,7 @@ static struct AsmName asm_names[MAX_ASM_NAMES];
 static int nasm_names;
 static int opt_floatio;
 static int opt_module;      /* -c/-module: emit linkable helper module, not final app TU */
+static int opt_stack_size;  /* bytes reserved above heap for C stack */
 
 static struct Sym *find_global(const char *name);
 
@@ -12406,6 +12407,8 @@ static void emit_data(void)
         }
 
         bss_off = 0;
+        emit("\n\tpublic\t__stack_size\n");
+        fprintf(outf, "__stack_size\tequ\t%d\n", opt_stack_size);
         emit("\n\tpublic\t__data_end\n__data_end:\n");
         emit("\tpublic\t__bssb\n__bssb:\n");
 
@@ -13228,7 +13231,7 @@ static void add_cmdline_define(const char *arg)
 
 static void usage(void)
 {
-    fprintf(stderr, "usage: dcc [-c|-module] [-ffloatio] [-Dname[=value]] input.c -o output.mac\n");
+    fprintf(stderr, "usage: dcc [-c|-module] [-ffloatio] [-stack bytes] [-Dname[=value]] input.c -o output.mac\n");
     exit(1);
 }
 
@@ -13239,6 +13242,7 @@ int main(int argc, char **argv)
     input_name = NULL;
     output_name = NULL;
     opt_module = 0;
+    opt_stack_size = 512;
 
     add_define("_DCC_", "1");
 
@@ -13247,6 +13251,28 @@ int main(int argc, char **argv)
             opt_floatio = 1;
         } else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "-module")) {
             opt_module = 1;
+        } else if (!strcmp(argv[i], "-stack") || !strcmp(argv[i], "--stack")) {
+            char *endp;
+            long v;
+            if (++i >= argc) usage();
+            v = strtol(argv[i], &endp, 0);
+            if (*endp != 0 || v < 0 || v > 32767)
+                usage();
+            opt_stack_size = (int)v;
+        } else if (!strncmp(argv[i], "-stack=", 7)) {
+            char *endp;
+            long v;
+            v = strtol(argv[i] + 7, &endp, 0);
+            if (*endp != 0 || v < 0 || v > 32767)
+                usage();
+            opt_stack_size = (int)v;
+        } else if (!strncmp(argv[i], "--stack=", 8)) {
+            char *endp;
+            long v;
+            v = strtol(argv[i] + 8, &endp, 0);
+            if (*endp != 0 || v < 0 || v > 32767)
+                usage();
+            opt_stack_size = (int)v;
         } else if (!strcmp(argv[i], "-D")) {
             if (++i >= argc) usage();
             add_cmdline_define(argv[i]);

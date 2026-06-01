@@ -44,7 +44,7 @@ if not errorlevel 1 (
 )
 
 rem Compile on host first, producing %name%.mac.
-dcc.exe %DCC_FLAGS% "%SOURCE_FILE%" -o "%name%.mac"
+dcc.exe %DCC_FLAGS% -stack 512 "%SOURCE_FILE%" -o "%name%.mac"
 if errorlevel 1 exit /b 1
 
 if "%USE_PEEP%"=="1" (

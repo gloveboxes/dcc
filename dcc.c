@@ -410,6 +410,7 @@ static int decl_is_static;
 static int expr_result_dead;
 static int g_expr_type;
 static int g_tok_long_suffix; /* set by lexer when L/l suffix seen on integer literal */
+static int g_tok_unsigned_suffix; /* set for U/u suffix or non-decimal unsigned-int literal */
 
 /* User-defined goto labels (function-scoped) */
 #define MAX_USER_LABELS 256
@@ -2096,8 +2097,11 @@ static void next_token(void)
 
     if (isdigit(c)) {
         long v;
+        int non_decimal_literal;
         v = 0;
+        non_decimal_literal = 0;
         if (c == '0' && (peekc() == 'x' || peekc() == 'X')) {
+            non_decimal_literal = 1;
             getc_src();
             while (isxdigit(peekc())) {
                 c = getc_src();
@@ -2138,13 +2142,27 @@ static void next_token(void)
         }
 
         g_tok_long_suffix = 0;
+        g_tok_unsigned_suffix = 0;
         while (peekc() == 'u' || peekc() == 'U' ||
                peekc() == 'l' || peekc() == 'L') {
             int c2 = getc_src();
             if (c2 == 'l' || c2 == 'L') g_tok_long_suffix = 1;
+            if (c2 == 'u' || c2 == 'U') g_tok_unsigned_suffix = 1;
         }
+
+        /*
+         * With DCC's 16-bit int, unsuffixed hexadecimal/octal constants use
+         * the C89 non-decimal sequence: int, unsigned int, long, unsigned long.
+         * Thus 0xffff is unsigned int, not signed int, and must zero-extend
+         * when assigned to uint32_t/unsigned long.
+         *
+         * Decimal 65535 is still long, because decimal constants do not try
+         * unsigned int before long in C89.
+         */
         if (v > 0xffffL)
             g_tok_long_suffix = 1;
+        else if (non_decimal_literal && v > 32767L)
+            g_tok_unsigned_suffix = 1;
 
         tok.kind = TOK_NUM;
         tok.val = v;
@@ -3636,6 +3654,8 @@ static int sizeof_parse_primary_type(int *typep, int *sizep)
 
     if (tok.kind == TOK_NUM) {
         type = g_tok_long_suffix ? TYPE_LONG : TYPE_INT;
+        if (g_tok_unsigned_suffix)
+            type |= TYPE_UNSIGNED;
         next_token();
         *typep = type;
         *sizep = type_size(type);
@@ -5573,9 +5593,13 @@ static void gen_primary(void)
             fprintf(outf, "\tld hl,%ld\n", tok.val & 0xffffL);
             fprintf(outf, "\tld de,%ld\n", (tok.val >> 16) & 0xffffL);
             g_expr_type = TYPE_LONG;
+            if (tok.kind == TOK_NUM && g_tok_unsigned_suffix)
+                g_expr_type |= TYPE_UNSIGNED;
         } else {
             fprintf(outf, "\tld hl,%ld\n", tok.val & 0xffffL);
             g_expr_type = TYPE_INT;
+            if (tok.kind == TOK_NUM && g_tok_unsigned_suffix)
+                g_expr_type |= TYPE_UNSIGNED;
         }
         next_token();
         return;
@@ -6131,6 +6155,55 @@ fail:
 }
 
 
+
+static void emit_incdec_value_in_dehl(int type, int op)
+{
+    int no_carry;
+
+    if (type_is_long(type)) {
+        no_carry = new_label();
+        if (op == TOK_INC) {
+            emit("\tinc hl\n");
+            emit("\tld a,h\n\tor l\n");
+            emit_jp_label("jp nz,", no_carry);
+            emit("\tinc de\n");
+        } else {
+            emit("\tld a,h\n\tor l\n");
+            emit_jp_label("jp nz,", no_carry);
+            emit("\tdec de\n");
+            emit_label(no_carry);
+            emit("\tdec hl\n");
+            return;
+        }
+        emit_label(no_carry);
+    } else {
+        if (op == TOK_INC)
+            emit("\tinc hl\n");
+        else
+            emit("\tdec hl\n");
+    }
+}
+
+static void emit_pre_incdec_lvalue(int type, int op)
+{
+    if (type_is_long(type)) {
+        /* Address is in HL.  Save it, load DE:HL, update full 32-bit value,
+         * then store DE:HL back through saved address. */
+        emit("\tpush hl\n");
+        emit_load_from_hl(type);
+        emit_incdec_value_in_dehl(type, op);
+        emit_store_de_to_addr_hl(type);
+    } else {
+        emit("\tpush hl\n");
+        emit_load_from_hl(type);
+        emit_incdec_value_in_dehl(type, op);
+        emit("\tex de,hl\n\tpop hl\n");
+        emit_store_de_to_addr_hl(type);
+        emit("\tex de,hl\n");
+    }
+    g_expr_type = type;
+}
+
 static void gen_unary(void)
 {
     int t;
@@ -6318,21 +6391,13 @@ static void gen_unary(void)
 
     if (accept(TOK_INC)) {
         gen_lvalue_addr(&t);
-        emit("\tpush hl\n");
-        emit_load_from_hl(t);
-        emit("\tinc hl\n\tex de,hl\n\tpop hl\n");
-        emit_store_de_to_addr_hl(t);
-        emit("\tex de,hl\n");
+        emit_pre_incdec_lvalue(t, TOK_INC);
         return;
     }
 
     if (accept(TOK_DEC)) {
         gen_lvalue_addr(&t);
-        emit("\tpush hl\n");
-        emit_load_from_hl(t);
-        emit("\tdec hl\n\tex de,hl\n\tpop hl\n");
-        emit_store_de_to_addr_hl(t);
-        emit("\tex de,hl\n");
+        emit_pre_incdec_lvalue(t, TOK_DEC);
         return;
     }
 
@@ -7935,6 +8000,7 @@ static int peek_simple_unary_type(void)
     int save_line;
     int save_tok_line;
     int save_long_suffix;
+    int save_unsigned_suffix;
     struct Token save_tok;
     int t;
     struct Sym *s;
@@ -7944,6 +8010,7 @@ static int peek_simple_unary_type(void)
     save_line = line_no;
     save_tok_line = tok_line;
     save_long_suffix = g_tok_long_suffix;
+    save_unsigned_suffix = g_tok_unsigned_suffix;
     save_tok = tok;
 
     t = TYPE_INT;
@@ -7955,7 +8022,7 @@ static int peek_simple_unary_type(void)
             if (tok.kind == ')') {
                 posi = save_pos; tok_start_pos = save_tok_start;
                 line_no = save_line; tok_line = save_tok_line;
-                g_tok_long_suffix = save_long_suffix; tok = save_tok;
+                g_tok_long_suffix = save_long_suffix; g_tok_unsigned_suffix = save_unsigned_suffix; tok = save_tok;
                 return promote_int_type(t);
             }
         }
@@ -7966,6 +8033,8 @@ static int peek_simple_unary_type(void)
             t = TYPE_LONG;
         else
             t = TYPE_INT;
+        if (g_tok_unsigned_suffix)
+            t |= TYPE_UNSIGNED;
     } else if (tok.kind == TOK_CHARLIT) {
         t = TYPE_INT;
     } else if (tok.kind == TOK_ID) {
@@ -8006,6 +8075,7 @@ static int peek_simple_unary_type(void)
     line_no = save_line;
     tok_line = save_tok_line;
     g_tok_long_suffix = save_long_suffix;
+    g_tok_unsigned_suffix = save_unsigned_suffix;
     tok = save_tok;
     return promote_int_type(t);
 }
@@ -8563,55 +8633,75 @@ static void gen_bor(void)
     }
 }
 
+
+static void emit_test_expr_nonzero(int expr_type, int true_label, int branch_when_true)
+{
+    if (type_is_long(expr_type))
+        emit("\tld a,h\n\tor l\n\tor d\n\tor e\n");
+    else
+        emit("\tld a,h\n\tor l\n");
+
+    if (branch_when_true)
+        emit_jp_label("jp nz,", true_label);
+    else
+        emit_jp_label("jp z,", true_label);
+}
+
 static void gen_land(void)
 {
     int lf, le;
+    int lhs_type;
 
     gen_bor();
+    lhs_type = g_expr_type;
 
     while (accept(TOK_ANDAND)) {
         lf = new_label();
         le = new_label();
 
-        emit("\tld a,h\n\tor l\n");
-        emit_jp_label("jp z,", lf);
+        emit_test_expr_nonzero(lhs_type, lf, 0);
 
         gen_bor();
 
-        emit("\tld a,h\n\tor l\n");
-        emit_jp_label("jp z,", lf);
+        emit_test_expr_nonzero(g_expr_type, lf, 0);
 
         emit("\tld hl,1\n");
         emit_jp_label("jp", le);
         emit_label(lf);
         emit("\tld hl,0\n");
         emit_label(le);
+
+        g_expr_type = TYPE_INT;
+        lhs_type = TYPE_INT;
     }
 }
 
 static void gen_lor(void)
 {
     int lt, le;
+    int lhs_type;
 
     gen_land();
+    lhs_type = g_expr_type;
 
     while (accept(TOK_OROR)) {
         lt = new_label();
         le = new_label();
 
-        emit("\tld a,h\n\tor l\n");
-        emit_jp_label("jp nz,", lt);
+        emit_test_expr_nonzero(lhs_type, lt, 1);
 
         gen_land();
 
-        emit("\tld a,h\n\tor l\n");
-        emit_jp_label("jp nz,", lt);
+        emit_test_expr_nonzero(g_expr_type, lt, 1);
 
         emit("\tld hl,0\n");
         emit_jp_label("jp", le);
         emit_label(lt);
         emit("\tld hl,1\n");
         emit_label(le);
+
+        g_expr_type = TYPE_INT;
+        lhs_type = TYPE_INT;
     }
 }
 
@@ -10590,8 +10680,7 @@ static void gen_if(void)
     if (!try_fast_global_char_array_condition(lelse) &&
         !gen_condition_branch_false(lelse)) {
         gen_expr();
-        emit("\tld a,h\n\tor l\n");
-        emit_jp_label("jp z,", lelse);
+        emit_test_expr_nonzero(g_expr_type, lelse, 0);
     }
     expect(')');
 
@@ -10618,8 +10707,7 @@ static void gen_while(void)
     expect('(');
     if (!gen_condition_branch_false(lend)) {
         gen_expr();
-        emit("\tld a,h\n\tor l\n");
-        emit_jp_label("jp z,", lend);
+        emit_test_expr_nonzero(g_expr_type, lend, 0);
     }
     expect(')');
 
@@ -10773,8 +10861,7 @@ static void gen_for(void)
     if (tok.kind != ';') {
         if (!gen_condition_branch_false_until(lend, ';')) {
             gen_expr();
-            emit("\tld a,h\n\tor l\n");
-            emit_jp_label("jp z,", lend);
+            emit_test_expr_nonzero(g_expr_type, lend, 0);
         }
     }
     expect(';');
@@ -11342,8 +11429,7 @@ static void gen_do_while(void)
     expect('(');
     if (!gen_condition_branch_true(ltop)) {
         gen_expr();
-        emit("\tld a,h\n\tor l\n");
-        emit_jp_label("jp nz,", ltop);
+        emit_test_expr_nonzero(g_expr_type, ltop, 1);
     }
     expect(')');
     expect(';');

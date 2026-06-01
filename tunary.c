@@ -3,18 +3,25 @@
 #include <stdbool.h>
 
 /* helpers to print values with type context */
-void shi8( int8_t x )   { printf( "%d\n", (int16_t) x ); }
-void shui8( uint8_t x ) { printf( "%d\n", (uint16_t) x ); }
-void shi16( int16_t x ) { printf( "%d\n", x ); }
+void shi8( int8_t x ) { printf( "%d\n" , (int16_t) x ); }
+void shui8( uint8_t x ) { printf( "%d\n" , (uint16_t) x ); }
+void shi16( int16_t x ) { printf( "%d\n" , x ); }
 
-int main()
-{
-    int8_t   i8;
-    uint8_t  ui8;
-    int16_t  i16;
+/* New helpers for 32-bit types */
+void shi32( int32_t x ) { printf( "%ld\n" , (long) x ); }
+void shui32( uint32_t x ) { printf( "%lu\n" , (unsigned long) x ); }
+
+int main() {
+    int8_t i8;
+    uint8_t ui8;
+    int16_t i16;
     uint16_t ui16;
+    
+    /* New variables for 32-bit types */
+    int32_t i32;
+    uint32_t ui32;
 
-    printf( "unary minus\n" );
+   printf( "unary minus\n" );
     i8 = 5;    shi8( -i8 );       /* -5      */
     i8 = -5;   shi8( -i8 );       /*  5      */
     i8 = -1;   shi8( -i8 );       /*  1      */
@@ -116,6 +123,22 @@ int main()
     shi16( (i16 > 0 ? i16 : -i16) + 1 );  /*  4 */
     i16 = -3;
     shi16( (i16 > 0 ? i16 : -i16) + 1 );  /*  4 */
+
+    /* 32-bit Bitwise NOT */
+    ui32 = 0x00000000; shui32( ~ui32 ); /* 4294967295 */
+    ui32 = 0xffffffff; shui32( ~ui32 ); /* 0 */
+    ui32 = 0x0000ffff; shui32( ~ui32 ); /* 4294901760 */
+    i32 = 0; shi32( ~i32 ); /* -1 */
+    i32 = -1; shi32( ~i32 ); /* 0 */
+    i32 = 1; shi32( ~i32 ); /* -2 */
+
+    /* 32-bit Logical NOT */
+    i32 = 0; shi16( !i32 ); /* 1 */
+    i32 = 999999; shi16( !i32 ); /* 0 */
+    ui32 = 0; shi16( !ui32 ); /* 1 */
+    ui32 = 555555; shi16( !ui32 ); /* 0 */
+    i32 = 100000; ++i32; shi32( i32 ); /* 100001 */
+    ui32 = 500000; ++ui32; shui32( ui32 ); /* 500001 */
 
     printf( "tunary completed\n" );
     return 0;

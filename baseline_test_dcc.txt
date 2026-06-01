@@ -3063,7 +3063,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ Jun  1 2026
-__TIME__ 10:09:57
+__TIME__ 10:37:59
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3614,3 +3614,7 @@ test tlongaud
 tlongaud: all tests passed with great success
 test tlongreg
 tlongreg: all tests passed with great success
+test tppreg
+tppreg: all tests passed
+test tinitreg
+tinitreg: all tests passed

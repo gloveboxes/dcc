@@ -678,6 +678,7 @@ static void add_define(const char *name, const char *value)
 }
 
 static const char *pp_expr_p;
+static int pp_expr_depth;
 
 static void pp_expr_skip_ws(void)
 {
@@ -700,21 +701,24 @@ static int pp_expr_match_word(const char *w)
 
 static long pp_expr_number(void)
 {
-    long v;
-    int neg;
+    unsigned long v;
+    int base;
 
     pp_expr_skip_ws();
-    neg = 0;
-    if (*pp_expr_p == '+') {
-        pp_expr_p++;
-    } else if (*pp_expr_p == '-') {
-        neg = 1;
-        pp_expr_p++;
-    }
 
     v = 0;
-    if (pp_expr_p[0] == '0' && (pp_expr_p[1] == 'x' || pp_expr_p[1] == 'X')) {
-        pp_expr_p += 2;
+    base = 10;
+    if (pp_expr_p[0] == '0') {
+        if (pp_expr_p[1] == 'x' || pp_expr_p[1] == 'X') {
+            base = 16;
+            pp_expr_p += 2;
+        } else {
+            base = 8;
+            pp_expr_p++;
+        }
+    }
+
+    if (base == 16) {
         while (isxdigit((unsigned char)*pp_expr_p)) {
             v *= 16;
             if (*pp_expr_p >= '0' && *pp_expr_p <= '9') v += *pp_expr_p - '0';
@@ -723,8 +727,8 @@ static long pp_expr_number(void)
             pp_expr_p++;
         }
     } else {
-        while (isdigit((unsigned char)*pp_expr_p)) {
-            v = v * 10 + (*pp_expr_p - '0');
+        while (*pp_expr_p >= '0' && *pp_expr_p <= (base == 8 ? '7' : '9')) {
+            v = v * (unsigned long)base + (unsigned long)(*pp_expr_p - '0');
             pp_expr_p++;
         }
     }
@@ -733,12 +737,53 @@ static long pp_expr_number(void)
            *pp_expr_p == 'l' || *pp_expr_p == 'L')
         pp_expr_p++;
 
-    return neg ? -v : v;
+    return (long)v;
+}
+
+static long pp_expr_charlit(void)
+{
+    int c;
+    long v;
+
+    pp_expr_skip_ws();
+    if (*pp_expr_p != '\'')
+        return 0;
+    pp_expr_p++;
+
+    if (*pp_expr_p == '\\') {
+        pp_expr_p++;
+        c = (unsigned char)*pp_expr_p;
+        if (c == 'n') v = '\n';
+        else if (c == 'r') v = '\r';
+        else if (c == 't') v = '\t';
+        else if (c == '0') v = 0;
+        else v = c;
+        if (*pp_expr_p)
+            pp_expr_p++;
+    } else {
+        v = (unsigned char)*pp_expr_p;
+        if (*pp_expr_p)
+            pp_expr_p++;
+    }
+
+    while (*pp_expr_p && *pp_expr_p != '\'')
+        pp_expr_p++;
+    if (*pp_expr_p == '\'')
+        pp_expr_p++;
+
+    return v;
 }
 
 static long pp_expr_primary(void);
 static long pp_expr_unary(void);
+static long pp_expr_mul(void);
+static long pp_expr_add(void);
+static long pp_expr_shift(void);
+static long pp_expr_rel(void);
 static long pp_expr_eq(void);
+static long pp_expr_bitand(void);
+static long pp_expr_bitxor(void);
+static long pp_expr_bitor(void);
 static long pp_expr_andand(void);
 static long pp_expr_oror(void);
 
@@ -792,16 +837,32 @@ static long pp_expr_primary(void)
         return v;
     }
 
-    if (isdigit((unsigned char)*pp_expr_p) || *pp_expr_p == '+' || *pp_expr_p == '-')
+    if (*pp_expr_p == '\'')
+        return pp_expr_charlit();
+
+    if (isdigit((unsigned char)*pp_expr_p))
         return pp_expr_number();
 
     if (is_ident_start((unsigned char)*pp_expr_p)) {
+        int di;
+        const char *savep;
+
         i = 0;
         while (is_ident_char((unsigned char)*pp_expr_p) && i < 63)
             name[i++] = *pp_expr_p++;
         name[i] = 0;
-        if (define_number_value(name, &v, 0))
+
+        di = find_define(name);
+        if (di >= 0 && !defs[di].is_func && pp_expr_depth < 16) {
+            savep = pp_expr_p;
+            pp_expr_p = defs[di].value;
+            pp_expr_depth++;
+            v = pp_expr_oror();
+            pp_expr_depth--;
+            pp_expr_p = savep;
             return v;
+        }
+
         return 0;
     }
 
@@ -815,10 +876,22 @@ static long pp_expr_unary(void)
         pp_expr_p++;
         return !pp_expr_unary();
     }
+    if (*pp_expr_p == '~') {
+        pp_expr_p++;
+        return ~pp_expr_unary();
+    }
+    if (*pp_expr_p == '+') {
+        pp_expr_p++;
+        return pp_expr_unary();
+    }
+    if (*pp_expr_p == '-') {
+        pp_expr_p++;
+        return -pp_expr_unary();
+    }
     return pp_expr_primary();
 }
 
-static long pp_expr_eq(void)
+static long pp_expr_mul(void)
 {
     long v;
     long r;
@@ -826,14 +899,171 @@ static long pp_expr_eq(void)
     v = pp_expr_unary();
     for (;;) {
         pp_expr_skip_ws();
+        if (*pp_expr_p == '*') {
+            pp_expr_p++;
+            v = v * pp_expr_unary();
+        } else if (*pp_expr_p == '/') {
+            pp_expr_p++;
+            r = pp_expr_unary();
+            v = r ? (v / r) : 0;
+        } else if (*pp_expr_p == '%') {
+            pp_expr_p++;
+            r = pp_expr_unary();
+            v = r ? (v % r) : 0;
+        } else {
+            break;
+        }
+    }
+    return v;
+}
+
+static long pp_expr_add(void)
+{
+    long v;
+
+    v = pp_expr_mul();
+    for (;;) {
+        pp_expr_skip_ws();
+        if (*pp_expr_p == '+') {
+            pp_expr_p++;
+            v = v + pp_expr_mul();
+        } else if (*pp_expr_p == '-') {
+            pp_expr_p++;
+            v = v - pp_expr_mul();
+        } else {
+            break;
+        }
+    }
+    return v;
+}
+
+static long pp_expr_shift(void)
+{
+    long v;
+    long r;
+
+    v = pp_expr_add();
+    for (;;) {
+        pp_expr_skip_ws();
+        if (pp_expr_p[0] == '<' && pp_expr_p[1] == '<') {
+            pp_expr_p += 2;
+            r = pp_expr_add();
+            if (r < 0 || r >= 32)
+                v = 0;
+            else
+                v = v << (int)r;
+        } else if (pp_expr_p[0] == '>' && pp_expr_p[1] == '>') {
+            pp_expr_p += 2;
+            r = pp_expr_add();
+            if (r < 0 || r >= 32)
+                v = 0;
+            else
+                v = v >> (int)r;
+        } else {
+            break;
+        }
+    }
+    return v;
+}
+
+static long pp_expr_rel(void)
+{
+    long v;
+    long r;
+
+    v = pp_expr_shift();
+    for (;;) {
+        pp_expr_skip_ws();
+        if (pp_expr_p[0] == '<' && pp_expr_p[1] == '=') {
+            pp_expr_p += 2;
+            r = pp_expr_shift();
+            v = (v <= r);
+        } else if (pp_expr_p[0] == '>' && pp_expr_p[1] == '=') {
+            pp_expr_p += 2;
+            r = pp_expr_shift();
+            v = (v >= r);
+        } else if (*pp_expr_p == '<') {
+            pp_expr_p++;
+            r = pp_expr_shift();
+            v = (v < r);
+        } else if (*pp_expr_p == '>') {
+            pp_expr_p++;
+            r = pp_expr_shift();
+            v = (v > r);
+        } else {
+            break;
+        }
+    }
+    return v;
+}
+
+static long pp_expr_eq(void)
+{
+    long v;
+    long r;
+
+    v = pp_expr_rel();
+    for (;;) {
+        pp_expr_skip_ws();
         if (pp_expr_p[0] == '=' && pp_expr_p[1] == '=') {
             pp_expr_p += 2;
-            r = pp_expr_unary();
+            r = pp_expr_rel();
             v = (v == r);
         } else if (pp_expr_p[0] == '!' && pp_expr_p[1] == '=') {
             pp_expr_p += 2;
-            r = pp_expr_unary();
+            r = pp_expr_rel();
             v = (v != r);
+        } else {
+            break;
+        }
+    }
+    return v;
+}
+
+static long pp_expr_bitand(void)
+{
+    long v;
+
+    v = pp_expr_eq();
+    for (;;) {
+        pp_expr_skip_ws();
+        if (*pp_expr_p == '&' && pp_expr_p[1] != '&') {
+            pp_expr_p++;
+            v = v & pp_expr_eq();
+        } else {
+            break;
+        }
+    }
+    return v;
+}
+
+static long pp_expr_bitxor(void)
+{
+    long v;
+
+    v = pp_expr_bitand();
+    for (;;) {
+        pp_expr_skip_ws();
+        if (*pp_expr_p == '^') {
+            pp_expr_p++;
+            v = v ^ pp_expr_bitand();
+        } else {
+            break;
+        }
+    }
+    return v;
+}
+
+static long pp_expr_bitor(void)
+{
+    long v;
+
+    v = pp_expr_bitxor();
+    for (;;) {
+        pp_expr_skip_ws();
+        if (*pp_expr_p == '|' && pp_expr_p[1] != '|') {
+            pp_expr_p++;
+            v = v | pp_expr_bitxor();
         } else {
             break;
         }
@@ -844,12 +1074,12 @@ static long pp_expr_eq(void)
 static long pp_expr_andand(void)
 {
     long v;
-    v = pp_expr_eq();
+    v = pp_expr_bitor();
     for (;;) {
         pp_expr_skip_ws();
         if (pp_expr_p[0] == '&' && pp_expr_p[1] == '&') {
             pp_expr_p += 2;
-            v = (pp_expr_eq() && v);
+            v = (pp_expr_bitor() && v);
         } else {
             break;
         }
@@ -876,6 +1106,7 @@ static long pp_expr_oror(void)
 static int pp_eval_simple_expr(const char *s)
 {
     pp_expr_p = s;
+    pp_expr_depth = 0;
     return pp_expr_oror() != 0;
 }
 
@@ -906,7 +1137,7 @@ static void parse_preprocessor_line(void)
 {
     char word[32];
     char name[64];
-    char val[128];
+    char val[512];
     int i, c;
     int parent;
     int cond;
@@ -3970,10 +4201,30 @@ static int char_array_string_initializer_size(int base_type)
     save_tok = tok;
 
     next_token();
-    if (tok.kind == TOK_STR)
-        n = (int)strlen(tok.text) + 1;
-    else
+    if (tok.kind == TOK_STR) {
+        char *lit;
+        int is_wide;
+
+        /*
+         * Omitted-size char arrays must be sized from the whole C string
+         * literal sequence, not just the first token.  The old lookahead used
+         * tok.text directly, so:
+         *
+         *     char t[] = "xy" "z";
+         *
+         * allocated only sizeof("xy") == 3 bytes, while code generation
+         * later emitted the concatenated four-byte initializer.  On CP/M this
+         * overwrote the next local slot and sizeof(t) was also wrong.
+         */
+        lit = read_adjacent_string_literals_ex(&is_wide);
+        if (is_wide)
+            n = 0;
+        else
+            n = (int)strlen(lit) + 1;
+        free(lit);
+    } else {
         n = 0;
+    }
 
     posi = save_pos;
     tok_start_pos = save_tok_start;
@@ -4143,13 +4394,25 @@ static void emit_init_auto_char_array_from_string(struct Sym *s, const char *str
 
     n = (int)strlen(str) + 1;
     limit = s->size;
-    if (limit <= 0 || limit > n)
+    if (limit <= 0)
         limit = n;
 
+    /*
+     * Automatic aggregate initializers must zero-fill any elements not
+     * explicitly initialized.  The old code emitted only the string bytes
+     * plus the first NUL, leaving the rest of a larger local char array
+     * containing old stack contents.
+     *
+     * For char s[3] = "abc", limit is the declared size and the terminating
+     * NUL is correctly not emitted.  For char s[8] = "abc", bytes 4..7 are
+     * now explicitly zeroed.
+     */
     for (i = 0; i < limit; ++i) {
+        int ch;
+        ch = (i + 1 < n) ? ((unsigned char)str[i]) : 0;
         emit_load_sym_addr(s);
         emit_add_const_to_hl(i);
-        fprintf(outf, "\tld e,%d\n", (i + 1 < n) ? ((unsigned char)str[i]) : 0);
+        fprintf(outf, "\tld e,%d\n", ch);
         emit_store_de_to_addr_hl(TYPE_CHAR);
     }
 }
@@ -10452,47 +10715,115 @@ static void emit_store_const_to_local_array_elem(struct Sym *s, int elem_type, i
     }
 }
 
-static void emit_init_auto_array_from_list(struct Sym *s, int elem_type)
+static int sym_array_elems_from_level(struct Sym *s, int level)
 {
+    int i;
     int n;
+
+    if (s->dim_count <= 0)
+        return s->array_len;
+
+    if (level < 0)
+        level = 0;
+    if (level >= s->dim_count)
+        return 1;
+
+    n = 1;
+    for (i = level; i < s->dim_count; ++i) {
+        if (s->dims[i] <= 0)
+            return s->array_len;
+        n *= s->dims[i];
+    }
+    return n;
+}
+
+static int sym_array_total_elems(struct Sym *s)
+{
+    return sym_array_elems_from_level(s, 0);
+}
+
+static void emit_init_auto_array_scalar(struct Sym *s, int elem_type, int *np)
+{
     long v;
     int k;
+    int n;
     char label[64];
 
-    expect('{');
-    n = 0;
-    while (tok.kind != TOK_EOF && tok.kind != '}') {
-        if (s->array_len > 0 && n >= s->array_len) {
-            error_here("too many initializer elements");
-            skip_initializer_or_decl_tail();
-            break;
-        }
+    n = np[0];
+    if (s->array_len > 0 && n >= s->array_len) {
+        error_here("too many initializer elements");
+        if (tok.kind != ',' && tok.kind != '}')
+            next_token();
+        return;
+    }
 
-        if ((elem_type & 15) == TYPE_FLOAT && type_ptr_depth(elem_type) == 0) {
-            unsigned long bits;
-            if (parse_float_init_literal(&bits))
-                emit_store_const_to_local_array_elem(s, elem_type, n, (long)bits);
-            else {
-                error_here("automatic float array initializer must be constant");
-                if (tok.kind != ',' && tok.kind != '}') next_token();
-            }
-        } else {
-            k = parse_global_init_atom(&v, label, sizeof(label));
-            if (k == 1) {
-                emit_store_const_to_local_array_elem(s, elem_type, n, v);
-            } else {
-                error_here("automatic array initializer must be constant");
-                if (tok.kind != ',' && tok.kind != '}')
-                    next_token();
-            }
+    if ((elem_type & 15) == TYPE_FLOAT && type_ptr_depth(elem_type) == 0) {
+        unsigned long bits;
+        if (parse_float_init_literal(&bits))
+            emit_store_const_to_local_array_elem(s, elem_type, n, (long)bits);
+        else {
+            error_here("automatic float array initializer must be constant");
+            if (tok.kind != ',' && tok.kind != '}')
+                next_token();
+            return;
         }
-        n++;
-        if (!accept(',')) break;
-        if (tok.kind == '}') break;
+    } else {
+        k = parse_global_init_atom(&v, label, sizeof(label));
+        if (k == 1) {
+            emit_store_const_to_local_array_elem(s, elem_type, n, v);
+        } else {
+            error_here("automatic array initializer must be constant");
+            if (tok.kind != ',' && tok.kind != '}')
+                next_token();
+            return;
+        }
+    }
+
+    np[0] = n + 1;
+}
+
+static void emit_init_auto_array_level(struct Sym *s, int elem_type, int *np, int level)
+{
+    int start;
+    int limit;
+
+    if (!accept('{')) {
+        emit_init_auto_array_scalar(s, elem_type, np);
+        return;
+    }
+
+    start = np[0];
+    limit = start + sym_array_elems_from_level(s, level);
+
+    while (tok.kind != TOK_EOF && tok.kind != '}') {
+        if (tok.kind == '{' && s->dim_count > 0 && level + 1 < s->dim_count)
+            emit_init_auto_array_level(s, elem_type, np, level + 1);
+        else
+            emit_init_auto_array_scalar(s, elem_type, np);
+
+        if (!accept(','))
+            break;
+        if (tok.kind == '}')
+            break;
     }
     expect('}');
 
-    while (s->array_len > 0 && n < s->array_len) {
+    while (np[0] < limit) {
+        emit_store_const_to_local_array_elem(s, elem_type, np[0], 0);
+        np[0] = np[0] + 1;
+    }
+}
+
+static void emit_init_auto_array_from_list(struct Sym *s, int elem_type)
+{
+    int n;
+    int total;
+
+    n = 0;
+    emit_init_auto_array_level(s, elem_type, &n, 0);
+
+    total = sym_array_total_elems(s);
+    while (total > 0 && n < total) {
         emit_store_const_to_local_array_elem(s, elem_type, n, 0);
         n++;
     }
@@ -10590,10 +10921,30 @@ static void gen_local_decl_after_type(int base)
 
         if (accept('=')) {
             if (s->is_array && (type & 15) == TYPE_CHAR && type_ptr_depth(type) == 0 && tok.kind == TOK_STR) {
-                emit_init_auto_char_array_from_string(s, tok.text);
-                next_token();
+                char *lit;
+                int is_wide;
+                lit = read_adjacent_string_literals_ex(&is_wide);
+                if (is_wide)
+                    error_here("wide string cannot initialize char array");
+                emit_init_auto_char_array_from_string(s, lit);
+                free(lit);
             } else if (s->is_array && tok.kind == '{' && !(type & TYPE_STRUCT)) {
                 emit_init_auto_array_from_list(s, type);
+            } else if (!s->is_array && tok.kind == '{') {
+                next_token();
+                emit_load_sym_addr(s);
+                emit("\tpush hl\n");
+                gen_expr();
+                if (type_is_long(type)) {
+                    if (!type_is_long(g_expr_type))
+                        emit_extend_to_long(g_expr_type & TYPE_UNSIGNED);
+                    emit_store_de_to_addr_hl(type);
+                } else {
+                    emit("\tex de,hl\n\tpop hl\n");
+                    emit_store_de_to_addr_hl(type);
+                }
+                accept(',');
+                expect('}');
             } else if (!s->is_array && (type & 15) == TYPE_FLOAT && type_ptr_depth(type) == 0) {
                 unsigned long bits;
                 if (parse_float_init_literal(&bits)) {
@@ -12310,24 +12661,12 @@ static int parse_simple_global_initializer(int *has_init)
 }
 
 
-static void parse_global_scalar_array_init_level(struct Sym *s, int *np)
+static void parse_global_scalar_array_init_scalar(struct Sym *s, int *np)
 {
     long v;
     int k;
     int n;
     int elem_bytes;
-
-    if (accept('{')) {
-        while (tok.kind != TOK_EOF && tok.kind != '}') {
-            parse_global_scalar_array_init_level(s, np);
-            if (!accept(','))
-                break;
-            if (tok.kind == '}')
-                break;
-        }
-        expect('}');
-        return;
-    }
 
     n = np[0];
     if (n >= 256) {
@@ -12339,12 +12678,6 @@ static void parse_global_scalar_array_init_level(struct Sym *s, int *np)
 
     s->init_labels[n][0] = 0;
 
-    /*
-     * Nested braces in scalar arrays are only grouping.  Flatten values using
-     * the scalar element width, not s->elem_size: for multidimensional arrays
-     * s->elem_size may be the first-dimension stride (for a[][2], 4 bytes),
-     * but each initializer atom here is still one unsigned short/int/etc.
-     */
     elem_bytes = type_size(s->type);
     if (elem_bytes <= 0)
         elem_bytes = 2;
@@ -12376,6 +12709,51 @@ static void parse_global_scalar_array_init_level(struct Sym *s, int *np)
         }
     }
 }
+
+static void parse_global_scalar_array_zero_to(struct Sym *s, int *np, int limit)
+{
+    int elem_bytes;
+
+    elem_bytes = type_size(s->type);
+    if (elem_bytes <= 0)
+        elem_bytes = 2;
+
+    while (np[0] < limit && np[0] < 256) {
+        sprintf(s->init_labels[np[0]], "0");
+        s->init_sizes[np[0]] = elem_bytes;
+        np[0] = np[0] + 1;
+    }
+}
+
+static void parse_global_scalar_array_init_level(struct Sym *s, int *np, int level)
+{
+    int start;
+    int limit;
+
+    if (!accept('{')) {
+        parse_global_scalar_array_init_scalar(s, np);
+        return;
+    }
+
+    start = np[0];
+    limit = start + sym_array_elems_from_level(s, level);
+
+    while (tok.kind != TOK_EOF && tok.kind != '}') {
+        if (tok.kind == '{' && s->dim_count > 0 && level + 1 < s->dim_count)
+            parse_global_scalar_array_init_level(s, np, level + 1);
+        else
+            parse_global_scalar_array_init_scalar(s, np);
+
+        if (!accept(','))
+            break;
+        if (tok.kind == '}')
+            break;
+    }
+    expect('}');
+
+    parse_global_scalar_array_zero_to(s, np, limit);
+}
+
 
 
 static void parse_global_init_list(struct Sym *s)
@@ -12434,6 +12812,12 @@ static void parse_global_init_list(struct Sym *s)
             n++;
         }
 
+        while (s->size > 0 && n < s->size && n < 256) {
+            sprintf(s->init_labels[n], "0");
+            s->init_sizes[n] = 1;
+            n++;
+        }
+
         s->has_init = 1;
         s->init_count = n;
         return;
@@ -12483,7 +12867,10 @@ static void parse_global_init_list(struct Sym *s)
 
     n = 0;
     while (tok.kind != TOK_EOF && tok.kind != '}') {
-        parse_global_scalar_array_init_level(s, &n);
+        if (tok.kind == '{' && s->dim_count > 1)
+            parse_global_scalar_array_init_level(s, &n, 1);
+        else
+            parse_global_scalar_array_init_scalar(s, &n);
         if (!accept(','))
             break;
         if (tok.kind == '}')
@@ -12491,6 +12878,11 @@ static void parse_global_init_list(struct Sym *s)
     }
 
     expect('}');
+    if (s->is_array && s->array_len > 0) {
+        int total;
+        total = sym_array_total_elems(s);
+        parse_global_scalar_array_zero_to(s, &n, total);
+    }
     s->has_init = 1;
     s->init_count = n;
     if (s->is_array && (s->array_len == 0 || s->size == 0)) {
@@ -13443,7 +13835,7 @@ static void prescan_function_macros_from_source(void)
         }
 
         if (!strcmp(word, "if")) {
-            char expr[128];
+            char expr[512];
             int ei;
             int cond;
             while (s < e && (*s == ' ' || *s == '\t')) s++;
@@ -13484,7 +13876,7 @@ static void prescan_function_macros_from_source(void)
                 int parent;
                 int i;
                 int cond;
-                char expr[128];
+                char expr[512];
                 int ei;
                 i = sp - 1;
                 parent = active_stack[i];
@@ -13676,7 +14068,7 @@ static char *filter_active_preprocessor_source(long *lenp)
         }
 
         if (!strcmp(word, "if")) {
-            char expr[128];
+            char expr[512];
             int ei;
             int cond;
             while (s < e && (*s == ' ' || *s == '\t')) s++;
@@ -13701,7 +14093,7 @@ static char *filter_active_preprocessor_source(long *lenp)
                 int i;
                 int parent;
                 int cond;
-                char expr[128];
+                char expr[512];
                 int ei;
                 i = sp - 1;
                 parent = active_stack[i];
@@ -13751,6 +14143,29 @@ static char *filter_active_preprocessor_source(long *lenp)
         }
 
         if (!active) {
+            append_mem(&out, &out_len, &out_cap, "\n", 1);
+            continue;
+        }
+
+        if (!strcmp(word, "error")) {
+            char msg[256];
+            char filebuf[256];
+            int lno;
+            int mi;
+
+            while (s < e && (*s == ' ' || *s == '\t')) s++;
+            mi = 0;
+            while (s < e && mi < (int)sizeof(msg) - 1)
+                msg[mi++] = *s++;
+            while (mi > 0 && (msg[mi - 1] == ' ' || msg[mi - 1] == '\t' || msg[mi - 1] == '\r'))
+                mi--;
+            msg[mi] = 0;
+
+            source_location_at(line_start, filebuf, sizeof(filebuf), &lno);
+            fprintf(stderr, "%s:%d: error: #error %s\n", filebuf, lno, msg);
+            errors++;
+            if (errors > 40)
+                fatal("too many errors");
             append_mem(&out, &out_len, &out_cap, "\n", 1);
             continue;
         }

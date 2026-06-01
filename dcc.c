@@ -3049,6 +3049,120 @@ static int parse_type(void)
     return t;
 }
 
+static void skip_type_name_param_list(void)
+{
+    int depth;
+
+    depth = 1;
+    next_token();
+    while (tok.kind != TOK_EOF && depth > 0) {
+        if (tok.kind == '(')
+            depth++;
+        else if (tok.kind == ')')
+            depth--;
+        next_token();
+    }
+}
+
+static int parse_type_name_decl(int *typep, int *sizep)
+{
+    int t;
+    int sz;
+    int n;
+    int saw_paren_ptr;
+    int size_is_pointer_object;
+
+    t = parse_base_type();
+    size_is_pointer_object = 0;
+    sz = type_size(t);
+    if (g_typedef_array_len > 0)
+        sz = object_array_size(t, g_typedef_array_len);
+    if (sz <= 0)
+        sz = 1;
+
+    while (accept('*')) {
+        skip_type_qualifiers();
+        t = type_add_ptr(t);
+        sz = 2;
+    }
+
+    if (tok.kind == '(') {
+        next_token();
+        skip_type_qualifiers();
+        saw_paren_ptr = 0;
+        while (accept('*')) {
+            skip_type_qualifiers();
+            saw_paren_ptr = 1;
+        }
+        if (tok.kind == TOK_ID)
+            next_token();
+        if (tok.kind == ')') {
+            next_token();
+            if (saw_paren_ptr) {
+                t = type_add_ptr(t);
+                sz = 2;
+                size_is_pointer_object = 1;
+            }
+        } else {
+            while (tok.kind != TOK_EOF && tok.kind != ')')
+                next_token();
+            if (tok.kind == ')')
+                next_token();
+            if (saw_paren_ptr) {
+                t = type_add_ptr(t);
+                sz = 2;
+                size_is_pointer_object = 1;
+            }
+        }
+    } else if (tok.kind == TOK_ID) {
+        /* Also accept the same helper for declarations with a concrete name.
+         * sizeof(type) normally uses an abstract declarator, but accepting an
+         * identifier here lets the cast parser reuse the helper for old DCC
+         * function-pointer forms without changing ordinary expression parsing.
+         */
+        next_token();
+    }
+
+    for (;;) {
+        if (tok.kind == '[') {
+            next_token();
+            n = 0;
+            if (tok.kind != ']')
+                n = parse_const_int_expr();
+            expect(']');
+            if (n < 0)
+                n = 0;
+            if (n == 0)
+                n = 1;
+            /* In an abstract declarator such as char (*)[4], the [4]
+             * qualifies the pointee, not the object being sized.  Keep the
+             * result pointer-sized.  Without this, sizeof(char (*)[4]) was
+             * incorrectly computed as 2 * 4.
+             */
+            if (!size_is_pointer_object)
+                sz *= n;
+        } else if (tok.kind == '(') {
+            /* Function type suffix.  Function designators are pointer-sized
+             * only when the declarator already introduced a pointer, e.g.
+             *     sizeof(int (*)(int))
+             * Plain sizeof(function type) is invalid C; keep a small, safe
+             * size so DCC can continue after the diagnostic-free parse.
+             */
+            skip_type_name_param_list();
+            if (t & (TYPE_PTR | TYPE_PTR2))
+                sz = 2;
+            else if (sz <= 0)
+                sz = 1;
+        } else {
+            break;
+        }
+    }
+
+    typep[0] = t;
+    sizep[0] = sz;
+    return 1;
+}
+
 static int parse_sizeof_expr_operand(void);
 static long parse_const_long_expr(void);
 
@@ -3070,10 +3184,10 @@ static long parse_const_long_primary(void)
         if (accept('(')) {
             if (starts_type()) {
                 int t;
-                t = parse_base_type();
-                while (accept('*')) { skip_type_qualifiers(); t = type_add_ptr(t); }
-                v = type_size(t);
-                if (v <= 0) v = 1;
+                int sz;
+                parse_type_name_decl(&t, &sz);
+                v = sz;
+                (void)t;
             } else {
                 v = parse_sizeof_expr_operand();
             }
@@ -3907,11 +4021,10 @@ static int sizeof_parse_primary_type(int *typep, int *sizep)
     if (tok.kind == '(') {
         next_token();
         if (starts_type()) {
-            type = parse_type();
-            skip_type_qualifiers();
+            parse_type_name_decl(&type, &sz);
             expect(')');
             *typep = type;
-            *sizep = type_size(type);
+            *sizep = sz;
             return 1;
         }
 
@@ -6465,50 +6578,8 @@ static void gen_unary(void)
 
     if (paren_starts_cast()) {
         expect('(');
-        t = parse_type();
-        while (accept('*')) {
-            skip_type_qualifiers();
-            t = type_add_ptr(t);
-        }
-        skip_type_qualifiers();
-
-        if (tok.kind != ')') {
-            int depth;
-            int saw_star;
-
-            /*
-             * Accept C89 function-pointer casts such as:
-             *     ((void (*)(void)) p)()
-             * DCC's compact type model only needs to know that the result is
-             * pointer-sized; skip the remaining declarator syntax inside the
-             * cast parentheses.
-             */
-            depth = 0;
-            saw_star = 0;
-            while (tok.kind != TOK_EOF) {
-                if (tok.kind == '*')
-                    saw_star = 1;
-                if (tok.kind == '(') {
-                    depth++;
-                    next_token();
-                    continue;
-                }
-                if (tok.kind == ')') {
-                    if (depth == 0) {
-                        next_token();
-                        break;
-                    }
-                    depth--;
-                    next_token();
-                    continue;
-                }
-                next_token();
-            }
-            if (saw_star)
-                t = type_add_ptr(t);
-        } else {
-            expect(')');
-        }
+        parse_type_name_decl(&t, &sz);
+        expect(')');
 
         gen_unary();
         if (type_is_float(t)) {
@@ -6544,8 +6615,7 @@ static void gen_unary(void)
 
         if (accept('(')) {
             if (starts_type()) {
-                t = parse_type();
-                sz = type_size(t);
+                parse_type_name_decl(&t, &sz);
                 expect(')');
             } else {
                 sz = parse_sizeof_expr_operand();

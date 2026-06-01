@@ -526,45 +526,47 @@ _memmove:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      e,(ix+4)
-        ld      d,(ix+5)        ; DE = dst
+
+        ; if n == 0, done
+        ld      c,(ix+8)
+        ld      b,(ix+9)
+        ld      a,b
+        or      c
+        jr      z,mmv_ret_dst
+
+        ; if dst == src, done
+        ld      a,(ix+4)
+        cp      (ix+6)
+        jr      nz,mmv_cmp
+        ld      a,(ix+5)
+        cp      (ix+7)
+        jr      z,mmv_ret_dst
+
+mmv_cmp:
+        ; Compare dst - src unsigned. If dst < src, copy forward.
+        ld      l,(ix+4)
+        ld      h,(ix+5)        ; HL = dst
+        ld      e,(ix+6)
+        ld      d,(ix+7)        ; DE = src
+        or      a
+        sbc     hl,de
+        jr      c,mmv_do_forward
+
+        ; Backward copy: HL = src+n, DE = dst+n, BC = n.
         ld      l,(ix+6)
         ld      h,(ix+7)        ; HL = src
         ld      c,(ix+8)
-        ld      b,(ix+9)        ; BC = n
-        push    de              ; return dst
-
-        ; if n == 0, done
-        ld      a,b
-        or      c
-        jr      z,mmv_done
-
-        ; if dst < src, copy forward. Compare DE - HL unsigned.
-        push    hl
-        ex      de,hl           ; HL = dst, DE = src
-        or      a
-        sbc     hl,de
-        pop     hl              ; HL = src, DE = dst
-        jr      c,mmv_forward
-
-        ; if dst == src, done
-        ld      a,h
-        cp      d
-        jr      nz,mmv_backward
-        ld      a,l
-        cp      e
-        jr      z,mmv_done
-
-mmv_backward:
-        ; copy from end: src += n, dst += n, then predecrement
+        ld      b,(ix+9)
         add     hl,bc           ; HL = src+n
+        ld      e,(ix+4)
+        ld      d,(ix+5)        ; DE = dst
         ex      de,hl           ; HL = dst, DE = src+n
         add     hl,bc           ; HL = dst+n
         ex      de,hl           ; HL = src+n, DE = dst+n
 mmv_back_loop:
         ld      a,b
         or      c
-        jr      z,mmv_done
+        jr      z,mmv_ret_dst
         dec     hl
         dec     de
         ld      a,(hl)
@@ -572,11 +574,19 @@ mmv_back_loop:
         dec     bc
         jr      mmv_back_loop
 
-mmv_forward:
-        ; HL = src, DE = dst, BC = n
+mmv_do_forward:
+        ; Forward copy: HL = src, DE = dst, BC = n.
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      e,(ix+4)
+        ld      d,(ix+5)
+        ld      c,(ix+8)
+        ld      b,(ix+9)
         ldir
-mmv_done:
-        pop     hl              ; return dst
+
+mmv_ret_dst:
+        ld      l,(ix+4)
+        ld      h,(ix+5)
         pop     ix
         ret
 

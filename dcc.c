@@ -13748,8 +13748,6 @@ int main(int argc, char **argv)
      * or add_global() preserves the wrong storage class and M80 sees
      * ld hl,_stdout without a preceding EXTRN. */
     add_define("NULL", "0");
-    if (find_define("BUFSIZ") < 0)
-        add_define("BUFSIZ", "512");
     if (find_define("EOF") < 0)
         add_define("EOF", "-1");
 

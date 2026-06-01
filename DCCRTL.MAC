@@ -278,6 +278,60 @@ _strerror:
 __strerror_msg:
         db      'Error',0
 
+
+        public  _putc
+_putc:
+        ; int putc(int c, FILE *fp) -- same calling convention as fputc
+        jp      _fputc
+
+        public  _getc
+_getc:
+        ; int getc(FILE *fp)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ld      hl,1
+        push    hl              ; count
+        ld      hl,__getc_ch
+        push    hl              ; buf
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        push    hl              ; fp/fd
+        call    _read
+        ex      de,hl
+        ld      hl,6
+        add     hl,sp
+        ld      sp,hl
+        ex      de,hl
+
+        ; success iff _read returned 1
+        ld      a,h
+        or      a
+        jr      nz,getc_bad
+        ld      a,l
+        cp      1
+        jr      nz,getc_bad
+
+        ld      h,0
+        ld      a,(__getc_ch)
+        ld      l,a
+        pop     ix
+        ret
+
+getc_bad:
+        ld      hl,0ffffh       ; EOF
+        pop     ix
+        ret
+
+__getc_ch:
+        db      0
+
+        public  _remove
+_remove:
+        ; int remove(const char *path)
+        jp      _unlink
+
         public  _getchar
 _getchar:
         ld      c,1
@@ -390,8 +444,181 @@ sp2:
 sp4:
         pop     ix
         ret
+
 sp3:
         ld      hl,0
+        pop     ix
+        ret
+
+        public  _strrchr
+_strrchr:
+        ; char *strrchr(const char *s, int c)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)        ; HL = scan pointer
+        ld      c,(ix+6)        ; C = target char
+        ld      de,0            ; DE = last match / NULL
+src_loop:
+        ld      a,(hl)
+        cp      c
+        jr      nz,src_no_match
+        ld      e,l
+        ld      d,h
+src_no_match:
+        ld      a,(hl)
+        or      a
+        jr      z,src_done
+        inc     hl
+        jr      src_loop
+src_done:
+        ex      de,hl           ; return last match
+        pop     ix
+        ret
+
+        public  _memcmp
+_memcmp:
+        ; int memcmp(const void *s1, const void *s2, size_t n)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)        ; HL = s1
+        ld      e,(ix+6)
+        ld      d,(ix+7)        ; DE = s2
+        ld      c,(ix+8)
+        ld      b,(ix+9)        ; BC = n
+mcmp_loop:
+        ld      a,b
+        or      c
+        jr      z,mcmp_eq
+        ld      a,(de)
+        push    bc
+        ld      b,a             ; B = *s2
+        ld      a,(hl)          ; A = *s1
+        cp      b
+        jr      nz,mcmp_diff
+        pop     bc
+        inc     hl
+        inc     de
+        dec     bc
+        jr      mcmp_loop
+mcmp_diff:
+        ; A still has s1 byte, B has s2 byte. Return signed byte difference.
+        sub     b
+        ld      l,a
+        ld      h,0
+        jr      nc,mcmp_diff_done
+        ld      h,0ffh
+mcmp_diff_done:
+        pop     bc
+        pop     ix
+        ret
+mcmp_eq:
+        ld      hl,0
+        pop     ix
+        ret
+
+        public  _memmove
+_memmove:
+        ; void *memmove(void *dst, const void *src, size_t n)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      e,(ix+4)
+        ld      d,(ix+5)        ; DE = dst
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; HL = src
+        ld      c,(ix+8)
+        ld      b,(ix+9)        ; BC = n
+        push    de              ; return dst
+
+        ; if n == 0, done
+        ld      a,b
+        or      c
+        jr      z,mmv_done
+
+        ; if dst < src, copy forward. Compare DE - HL unsigned.
+        push    hl
+        ex      de,hl           ; HL = dst, DE = src
+        or      a
+        sbc     hl,de
+        pop     hl              ; HL = src, DE = dst
+        jr      c,mmv_forward
+
+        ; if dst == src, done
+        ld      a,h
+        cp      d
+        jr      nz,mmv_backward
+        ld      a,l
+        cp      e
+        jr      z,mmv_done
+
+mmv_backward:
+        ; copy from end: src += n, dst += n, then predecrement
+        add     hl,bc           ; HL = src+n
+        ex      de,hl           ; HL = dst, DE = src+n
+        add     hl,bc           ; HL = dst+n
+        ex      de,hl           ; HL = src+n, DE = dst+n
+mmv_back_loop:
+        ld      a,b
+        or      c
+        jr      z,mmv_done
+        dec     hl
+        dec     de
+        ld      a,(hl)
+        ld      (de),a
+        dec     bc
+        jr      mmv_back_loop
+
+mmv_forward:
+        ; HL = src, DE = dst, BC = n
+        ldir
+mmv_done:
+        pop     hl              ; return dst
+        pop     ix
+        ret
+
+        public  _strncat
+_strncat:
+        ; char *strncat(char *dst, const char *src, size_t n)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      e,(ix+4)
+        ld      d,(ix+5)        ; DE = dst
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; HL = src
+        ld      c,(ix+8)
+        ld      b,(ix+9)        ; BC = n
+        push    de              ; return dst
+
+        ; find terminating NUL in dst, leaving DE at append position
+snc_find_end:
+        ld      a,(de)
+        or      a
+        jr      z,snc_copy
+        inc     de
+        jr      snc_find_end
+
+snc_copy:
+        ld      a,b
+        or      c
+        jr      z,snc_term
+        ld      a,(hl)
+        or      a
+        jr      z,snc_term
+        ld      (de),a
+        inc     hl
+        inc     de
+        dec     bc
+        jr      snc_copy
+
+snc_term:
+        xor     a
+        ld      (de),a
+        pop     hl              ; return dst
         pop     ix
         ret
 

@@ -2692,56 +2692,193 @@ static int parse_type(void)
     return t;
 }
 
-static int parse_const_int_expr(void)
+static int parse_sizeof_expr_operand(void);
+static long parse_const_long_expr(void);
+
+static long parse_const_long_primary(void)
 {
     long v;
-    int op;
+    int sign;
+
+    sign = 1;
+    if (tok.kind == '-') {
+        sign = -1;
+        next_token();
+    } else if (tok.kind == '+') {
+        next_token();
+    }
 
     if (tok.kind == TOK_SIZEOF) {
-        /* sizeof(type) as a constant expression, e.g. char c[sizeof(long)] */
         next_token();
         if (accept('(')) {
             if (starts_type()) {
-                int t = parse_base_type();
+                int t;
+                t = parse_base_type();
                 while (accept('*')) { skip_type_qualifiers(); t = type_add_ptr(t); }
                 v = type_size(t);
+                if (v <= 0) v = 1;
             } else {
-                error_here("type expected in sizeof");
-                v = 2;
+                v = parse_sizeof_expr_operand();
             }
             expect(')');
         } else {
             error_here("'(' expected after sizeof in constant expression");
             v = 2;
         }
-        return (int)(v & 0xffffL);
+        return sign * v;
     }
 
-    if (tok.kind != TOK_NUM) {
-        error_here("constant integer expression expected");
-        return 0;
+    if (tok.kind == '(') {
+        next_token();
+
+        /*
+         * Casts are allowed in C constant expressions, and lzpack uses
+         * forms such as (size_t)(MAXDIST * 2).  DCC's small integer model
+         * does not need to distinguish the cast for sizing/initializers, so
+         * parse and ignore the type, then evaluate the cast operand.
+         */
+        if (starts_type()) {
+            int t;
+            (void)t;
+            t = parse_type();
+            while (accept('*')) { skip_type_qualifiers(); t = type_add_ptr(t); }
+            expect(')');
+            v = parse_const_long_primary();
+            return sign * v;
+        }
+
+        v = parse_const_long_expr();
+        expect(')');
+        return sign * v;
     }
 
-    v = tok.val;
-    next_token();
+    if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) {
+        v = tok.val;
+        next_token();
+        return sign * v;
+    }
 
+    if (tok.kind == TOK_ID) {
+        int i;
+        for (i = 0; i < nenum_consts; ++i) {
+            if (!strcmp(enum_const_names[i], tok.text)) {
+                v = enum_const_values[i];
+                next_token();
+                return sign * v;
+            }
+        }
+    }
+
+    error_here("constant integer expression expected");
+    return 0;
+}
+
+static long parse_const_long_mul(void)
+{
+    long v;
+    int op;
+    long r;
+
+    v = parse_const_long_primary();
+    while (tok.kind == '*' || tok.kind == '/' || tok.kind == '%') {
+        op = tok.kind;
+        next_token();
+        r = parse_const_long_primary();
+        if (op == '*') v *= r;
+        else if (op == '/') {
+            if (r == 0) {
+                error_here("division by zero in constant expression");
+                r = 1;
+            }
+            v /= r;
+        } else {
+            if (r == 0) {
+                error_here("division by zero in constant expression");
+                r = 1;
+            }
+            v %= r;
+        }
+    }
+    return v;
+}
+
+static long parse_const_long_add(void)
+{
+    long v;
+    int op;
+    long r;
+
+    v = parse_const_long_mul();
     while (tok.kind == '+' || tok.kind == '-') {
         op = tok.kind;
         next_token();
-
-        if (tok.kind != TOK_NUM) {
-            error_here("constant integer expression expected");
-            return (int)(v & 0xffffL);
-        }
-
-        if (op == '+') v += tok.val;
-        else v -= tok.val;
-
-        next_token();
+        r = parse_const_long_mul();
+        if (op == '+') v += r;
+        else v -= r;
     }
-
-    return (int)(v & 0xffffL);
+    return v;
 }
+
+static long parse_const_long_shift(void)
+{
+    long v;
+    int op;
+    long r;
+
+    v = parse_const_long_add();
+    while (tok.kind == TOK_SHL || tok.kind == TOK_SHR) {
+        op = tok.kind;
+        next_token();
+        r = parse_const_long_add();
+        if (r < 0) r = 0;
+        if (r > 31) r = 31;
+        if (op == TOK_SHL) v <<= (int)r;
+        else v = (long)((unsigned long)v >> (int)r);
+    }
+    return v;
+}
+
+static long parse_const_long_band(void)
+{
+    long v;
+
+    v = parse_const_long_shift();
+    while (tok.kind == '&') {
+        next_token();
+        v &= parse_const_long_shift();
+    }
+    return v;
+}
+
+static long parse_const_long_xor(void)
+{
+    long v;
+
+    v = parse_const_long_band();
+    while (tok.kind == '^') {
+        next_token();
+        v ^= parse_const_long_band();
+    }
+    return v;
+}
+
+static long parse_const_long_expr(void)
+{
+    long v;
+
+    v = parse_const_long_xor();
+    while (tok.kind == '|') {
+        next_token();
+        v |= parse_const_long_xor();
+    }
+    return v;
+}
+
+static int parse_const_int_expr(void)
+{
+    return (int)(parse_const_long_expr() & 0xffffL);
+}
+
 
 static int starts_type(void)
 {
@@ -4258,6 +4395,40 @@ static int try_gen_deref_postinc_lvalue_addr(int *ptype)
     return 1;
 }
 
+
+static int try_parse_const_subscript(long *out)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    long v;
+
+    if (tok.kind != TOK_NUM && tok.kind != TOK_CHARLIT)
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    v = tok.val;
+    next_token();
+    if (accept(']')) {
+        out[0] = v;
+        return 1;
+    }
+
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return 0;
+}
+
 static void gen_lvalue_addr(int *ptype)
 {
     current_field_bit_width = 0;
@@ -4306,12 +4477,10 @@ static void gen_lvalue_addr(int *ptype)
             if (!s->is_array && type_ptr_depth(cur_type) > 0)
                 emit_load_from_hl(cur_type);
 
-            if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) {
+            {
                 long const_index;
 
-                const_index = tok.val;
-                next_token();
-                expect(']');
+                if (try_parse_const_subscript(&const_index)) {
 
                 if (s->is_array && addr_array_index_count == 0)
                     elem_size = s->elem_size ? s->elem_size : type_size(cur_type);
@@ -4322,7 +4491,7 @@ static void gen_lvalue_addr(int *ptype)
                 addr_array_index_count++;
 
                 emit_add_const_to_hl(const_index * elem_size);
-            } else {
+                } else {
                 emit("\tpush hl\n");
                 gen_expr();
                 expect(']');
@@ -4344,6 +4513,7 @@ static void gen_lvalue_addr(int *ptype)
                 emit("\tex de,hl\n");
                 emit("\tpop hl\n");
                 emit("\tadd hl,de\n");
+                }
             }
 
             if (ptype) {
@@ -4374,12 +4544,10 @@ static void gen_lvalue_addr(int *ptype)
             if (!addr_is_array && type_ptr_depth(cur_type) > 0)
                 emit_load_from_hl(cur_type);
 
-            if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) {
+            {
                 long const_index;
 
-                const_index = tok.val;
-                next_token();
-                expect(']');
+                if (try_parse_const_subscript(&const_index)) {
 
                 if (addr_is_array)
                     elem_size = type_size(cur_type);
@@ -4387,7 +4555,7 @@ static void gen_lvalue_addr(int *ptype)
                     elem_size = type_index_elem_size(cur_type);
 
                 emit_add_const_to_hl(const_index * elem_size);
-            } else {
+                } else {
                 emit("\tpush hl\n");
                 gen_expr();
                 expect(']');
@@ -4406,6 +4574,7 @@ static void gen_lvalue_addr(int *ptype)
                 emit("\tex de,hl\n");
                 emit("\tpop hl\n");
                 emit("\tadd hl,de\n");
+                }
             }
 
             if (addr_is_array) {
@@ -5266,6 +5435,20 @@ static void gen_primary(void)
                 }
             }
         }
+
+        if (tok.kind == '(' && type_ptr_depth(g_expr_type) > 0) {
+            long fp_arg_start[MAX_SNAPSHOT];
+            long fp_arg_end[MAX_SNAPSHOT];
+            int fp_argc;
+            int fp_arg_bytes;
+
+            parse_call_args_after_lparen(fp_arg_start, fp_arg_end, &fp_argc);
+            emit("\tpush hl\n");
+            fp_arg_bytes = emit_default_call_args(fp_arg_start, fp_arg_end, fp_argc);
+            emit_call_hl_from_stack_offset(fp_arg_bytes);
+            emit_cleanup_stack_bytes(fp_arg_bytes + 2);
+            g_expr_type = type_decay_ptr(g_expr_type);
+        }
         return;
     }
 
@@ -5483,12 +5666,10 @@ static void gen_primary(void)
             if (!s->is_array && type_ptr_depth(cur_type) > 0)
                 emit_load_from_hl(cur_type);
 
-            if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) {
+            {
                 long const_index;
 
-                const_index = tok.val;
-                next_token();
-                expect(']');
+                if (try_parse_const_subscript(&const_index)) {
 
                 if (val_is_array)
                     elem_size = s->elem_size ? s->elem_size : type_size(cur_type);
@@ -5496,7 +5677,7 @@ static void gen_primary(void)
                     elem_size = type_index_elem_size(cur_type);
 
                 emit_add_const_to_hl(const_index * elem_size);
-            } else {
+                } else {
                 emit("\tpush hl\n");
                 gen_expr();
                 expect(']');
@@ -5515,6 +5696,7 @@ static void gen_primary(void)
                 emit("\tex de,hl\n");
                 emit("\tpop hl\n");
                 emit("\tadd hl,de\n");
+                }
             }
 
             if (s->is_array)
@@ -5547,12 +5729,10 @@ static void gen_primary(void)
             if (!val_is_array && type_ptr_depth(cur_type) > 0)
                 emit_load_from_hl(cur_type);
 
-            if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) {
+            {
                 long const_index;
 
-                const_index = tok.val;
-                next_token();
-                expect(']');
+                if (try_parse_const_subscript(&const_index)) {
 
                 if (val_is_array) {
                     elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
@@ -5567,7 +5747,7 @@ static void gen_primary(void)
                 }
 
                 emit_add_const_to_hl(const_index * elem_size);
-            } else {
+                } else {
                 emit("\tpush hl\n");
                 gen_expr();
                 expect(']');
@@ -5589,6 +5769,7 @@ static void gen_primary(void)
                 emit("\tex de,hl\n");
                 emit("\tpop hl\n");
                 emit("\tadd hl,de\n");
+                }
             }
 
             if (val_is_array) {
@@ -5754,7 +5935,45 @@ static void gen_unary(void)
             t = type_add_ptr(t);
         }
         skip_type_qualifiers();
-        expect(')');
+
+        if (tok.kind != ')') {
+            int depth;
+            int saw_star;
+
+            /*
+             * Accept C89 function-pointer casts such as:
+             *     ((void (*)(void)) p)()
+             * DCC's compact type model only needs to know that the result is
+             * pointer-sized; skip the remaining declarator syntax inside the
+             * cast parentheses.
+             */
+            depth = 0;
+            saw_star = 0;
+            while (tok.kind != TOK_EOF) {
+                if (tok.kind == '*')
+                    saw_star = 1;
+                if (tok.kind == '(') {
+                    depth++;
+                    next_token();
+                    continue;
+                }
+                if (tok.kind == ')') {
+                    if (depth == 0) {
+                        next_token();
+                        break;
+                    }
+                    depth--;
+                    next_token();
+                    continue;
+                }
+                next_token();
+            }
+            if (saw_star)
+                t = type_add_ptr(t);
+        } else {
+            expect(')');
+        }
+
         gen_unary();
         if (type_is_float(t)) {
             if (!type_is_float(g_expr_type))
@@ -11530,18 +11749,20 @@ static int parse_global_init_atom(long *val, char *label, int labelsz)
 
     sign = 1;
 
-    if (tok.kind == '-') {
-        sign = -1;
-        next_token();
-    } else if (tok.kind == '+') {
-        next_token();
-    }
-
-    if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) {
-        val[0] = sign * tok.val;
+    /*
+     * Numeric scalar initializers may be full C constant expressions, not just
+     * a single token.  This handles forms used by lzpack such as:
+     *
+     *     static long s_win_start = (MAXDIST * 2);
+     *
+     * and array bounds using parenthesized macro expressions.
+     */
+    if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT ||
+        tok.kind == '-' || tok.kind == '+' || tok.kind == '(' ||
+        tok.kind == TOK_SIZEOF) {
+        val[0] = parse_const_long_expr();
         if (label) label[0] = 0;
-        next_token();
-        return 1;       /* numeric */
+        return 1;
     }
 
     if (sign != 1) {
@@ -11551,11 +11772,6 @@ static int parse_global_init_atom(long *val, char *label, int labelsz)
 
     if (tok.kind == TOK_STR || tok.kind == TOK_WSTR) {
         int sid;
-
-        if (sign != 1) {
-            error_here("string literal cannot have a sign");
-            return 0;
-        }
 
         {
             char *lit;
@@ -11581,6 +11797,7 @@ static int parse_global_init_atom(long *val, char *label, int labelsz)
     error_here("constant initializer expected");
     return 0;
 }
+
 
 
 static void append_global_init(struct Sym *s, const char *label, long v, int bytes, int is_label)
@@ -11727,6 +11944,75 @@ static int parse_simple_global_initializer(int *has_init)
     return (int)(v & 0xffffL);
 }
 
+
+static void parse_global_scalar_array_init_level(struct Sym *s, int *np)
+{
+    long v;
+    int k;
+    int n;
+    int elem_bytes;
+
+    if (accept('{')) {
+        while (tok.kind != TOK_EOF && tok.kind != '}') {
+            parse_global_scalar_array_init_level(s, np);
+            if (!accept(','))
+                break;
+            if (tok.kind == '}')
+                break;
+        }
+        expect('}');
+        return;
+    }
+
+    n = np[0];
+    if (n >= 256) {
+        error_here("too many initializer elements");
+        if (tok.kind != ',' && tok.kind != '}')
+            next_token();
+        return;
+    }
+
+    s->init_labels[n][0] = 0;
+
+    /*
+     * Nested braces in scalar arrays are only grouping.  Flatten values using
+     * the scalar element width, not s->elem_size: for multidimensional arrays
+     * s->elem_size may be the first-dimension stride (for a[][2], 4 bytes),
+     * but each initializer atom here is still one unsigned short/int/etc.
+     */
+    elem_bytes = type_size(s->type);
+    if (elem_bytes <= 0)
+        elem_bytes = 2;
+
+    if ((s->type & 15) == TYPE_FLOAT && type_ptr_depth(s->type) == 0) {
+        unsigned long bits;
+        if (parse_float_init_literal(&bits)) {
+            sprintf(s->init_labels[n], "%lu", bits);
+            s->init_sizes[n] = 4;
+            np[0] = n + 1;
+        } else {
+            error_here("float initializer must be constant");
+            if (tok.kind != ',' && tok.kind != '}')
+                next_token();
+        }
+    } else {
+        k = parse_global_init_atom(&v, s->init_labels[n],
+                                   sizeof(s->init_labels[n]));
+        if (k == 1) {
+            sprintf(s->init_labels[n], "%ld", v);
+            s->init_sizes[n] = elem_bytes;
+            np[0] = n + 1;
+        } else if (k == 2) {
+            s->init_sizes[n] = elem_bytes;
+            np[0] = n + 1;
+        } else {
+            if (tok.kind != ',' && tok.kind != '}')
+                next_token();
+        }
+    }
+}
+
+
 static void parse_global_init_list(struct Sym *s)
 {
     int n;
@@ -11832,40 +12118,11 @@ static void parse_global_init_list(struct Sym *s)
 
     n = 0;
     while (tok.kind != TOK_EOF && tok.kind != '}') {
-        if (n >= 256) {
-            error_here("too many initializer elements");
+        parse_global_scalar_array_init_level(s, &n);
+        if (!accept(','))
             break;
-        }
-
-        s->init_labels[n][0] = 0;
-        if ((s->type & 15) == TYPE_FLOAT && type_ptr_depth(s->type) == 0) {
-            unsigned long bits;
-            if (parse_float_init_literal(&bits)) {
-                sprintf(s->init_labels[n], "%lu", bits);
-                s->init_sizes[n] = 4;
-                n++;
-            } else {
-                error_here("float initializer must be constant");
-                if (tok.kind != ',' && tok.kind != '}') next_token();
-            }
-        } else {
-            k = parse_global_init_atom(&v, s->init_labels[n],
-                                       sizeof(s->init_labels[n]));
-            if (k == 1) {
-                sprintf(s->init_labels[n], "%ld", v);
-                s->init_sizes[n] = s->elem_size ? s->elem_size : type_size(s->type);
-                if (s->init_sizes[n] <= 0) s->init_sizes[n] = 2;
-                n++;
-            } else if (k == 2) {
-                s->init_sizes[n] = s->elem_size ? s->elem_size : 2;
-                if (s->init_sizes[n] <= 0) s->init_sizes[n] = 2;
-                n++;
-            } else {
-                next_token();
-            }
-        }
-
-        accept(',');
+        if (tok.kind == '}')
+            break;
     }
 
     expect('}');

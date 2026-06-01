@@ -179,8 +179,8 @@ __conout_raw:
         call    5
         ret
 
-        public  _putchar
-_putchar:
+        public  __pchr
+__pchr:
         push    ix
         ld      ix,0
         add     ix,sp
@@ -191,8 +191,8 @@ _putchar:
         pop     ix
         ret
 
-        public  _fputc
-_fputc:
+        public  __fpc
+__fpc:
         push    ix
         ld      ix,0
         add     ix,sp
@@ -207,11 +207,11 @@ _fputc:
 
         ; file path: store char in a one-byte buffer and call _write(fp,&ch,1)
         ld      a,(ix+4)
-        ld      (__fputc_ch),a
+        ld      (___fpc_ch),a
 
         ld      hl,1
         push    hl              ; count
-        ld      hl,__fputc_ch
+        ld      hl,___fpc_ch
         push    hl              ; buf
         ld      l,(ix+6)
         ld      h,(ix+7)
@@ -251,7 +251,7 @@ fputc_bad:
         pop     ix
         ret
 
-__fputc_ch:
+___fpc_ch:
         db      0
 
         public  _clearerr
@@ -279,13 +279,13 @@ __strerror_msg:
         db      'Error',0
 
 
-        public  _putc
-_putc:
+        public  __putc
+__putc:
         ; int putc(int c, FILE *fp) -- same calling convention as fputc
-        jp      _fputc
+        jp      __fpc
 
-        public  _getc
-_getc:
+        public  __getc
+__getc:
         ; int getc(FILE *fp)
         push    ix
         ld      ix,0
@@ -293,7 +293,7 @@ _getc:
 
         ld      hl,1
         push    hl              ; count
-        ld      hl,__getc_ch
+        ld      hl,___getc_ch
         push    hl              ; buf
         ld      l,(ix+4)
         ld      h,(ix+5)
@@ -314,7 +314,7 @@ _getc:
         jr      nz,getc_bad
 
         ld      h,0
-        ld      a,(__getc_ch)
+        ld      a,(___getc_ch)
         ld      l,a
         pop     ix
         ret
@@ -324,7 +324,7 @@ getc_bad:
         pop     ix
         ret
 
-__getc_ch:
+___getc_ch:
         db      0
 
         public  _remove
@@ -332,8 +332,8 @@ _remove:
         ; int remove(const char *path)
         jp      _unlink
 
-        public  _getchar
-_getchar:
+        public  ___gchr
+___gchr:
         ld      c,1
         call    5
         ld      h,0
@@ -372,8 +372,8 @@ _bdos:
         ret
 
 
-        public  _strlen
-_strlen:
+        public  __slen
+__slen:
         push    ix
         ld      ix,0
         add     ix,sp
@@ -392,8 +392,8 @@ sl2:
         pop     ix
         ret
 
-        public  _strcpy
-_strcpy:
+        public  __scpy
+__scpy:
         push    ix
         ld      ix,0
         add     ix,sp
@@ -413,8 +413,8 @@ sc1:
         pop     ix
         ret
 
-        public  _strcmp
-_strcmp:
+        public  __scmp
+__scmp:
         push    ix
         ld      ix,0
         add     ix,sp
@@ -450,8 +450,8 @@ sp3:
         pop     ix
         ret
 
-        public  _strrchr
-_strrchr:
+        public  __srch
+__srch:
         ; char *strrchr(const char *s, int c)
         push    ix
         ld      ix,0
@@ -477,8 +477,224 @@ src_done:
         pop     ix
         ret
 
-        public  _memcmp
-_memcmp:
+
+        public  __schr
+__schr:
+        ; char *strchr(const char *s, int c)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      c,(ix+6)
+schr_loop:
+        ld      a,(hl)
+        cp      c
+        jr      z,schr_found
+        or      a
+        jr      z,schr_not_found
+        inc     hl
+        jr      schr_loop
+schr_found:
+        pop     ix
+        ret
+schr_not_found:
+        ld      hl,0
+        pop     ix
+        ret
+
+        public  __sstr
+__sstr:
+        ; char *strstr(const char *haystack, const char *needle)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      e,(ix+4)
+        ld      d,(ix+5)        ; DE = haystack
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; HL = needle
+        ld      a,(hl)
+        or      a
+        jr      nz,sstr_search
+        ex      de,hl           ; empty needle => haystack
+        pop     ix
+        ret
+sstr_search:
+        ld      a,(de)
+        or      a
+        jr      z,sstr_not_found
+        push    de              ; candidate
+        push    hl              ; needle start
+sstr_cmp:
+        ld      a,(hl)
+        or      a
+        jr      z,sstr_found
+        ld      c,a             ; needle char
+        ld      a,(de)          ; haystack char
+        cp      c
+        jr      nz,sstr_fail
+        inc     de
+        inc     hl
+        jr      sstr_cmp
+sstr_fail:
+        pop     hl              ; restore needle start
+        pop     de              ; restore candidate
+        inc     de
+        jr      sstr_search
+sstr_found:
+        pop     hl              ; discard needle start
+        pop     hl              ; return candidate
+        pop     ix
+        ret
+sstr_not_found:
+        ld      hl,0
+        pop     ix
+        ret
+
+        public  __ncmp
+__ncmp:
+        ; int strncmp(const char *s1, const char *s2, size_t n)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      e,(ix+4)
+        ld      d,(ix+5)
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      c,(ix+8)
+        ld      b,(ix+9)
+sncmp_loop:
+        ld      a,b
+        or      c
+        jr      z,sncmp_equal
+        ld      a,(de)
+        cp      (hl)
+        jr      nz,sncmp_diff
+        or      a
+        jr      z,sncmp_equal
+        inc     de
+        inc     hl
+        dec     bc
+        jr      sncmp_loop
+sncmp_diff:
+        ld      c,a
+        ld      a,(hl)
+        ld      b,a
+        ld      a,c
+        sub     b
+        ld      l,a
+        ld      h,0
+        jr      nc,sncmp_ret
+        ld      h,0ffh
+sncmp_ret:
+        pop     ix
+        ret
+sncmp_equal:
+        ld      hl,0
+        pop     ix
+        ret
+
+        public  __mchr
+__mchr:
+        ; void *memchr(const void *s, int c, size_t n)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      e,(ix+6)
+        ld      c,(ix+8)
+        ld      b,(ix+9)
+mchr_loop:
+        ld      a,b
+        or      c
+        jr      z,mchr_none
+        ld      a,(hl)
+        cp      e
+        jr      z,mchr_found
+        inc     hl
+        dec     bc
+        jr      mchr_loop
+mchr_found:
+        pop     ix
+        ret
+mchr_none:
+        ld      hl,0
+        pop     ix
+        ret
+
+        public  __scat
+__scat:
+        ; char *strcat(char *dst, const char *src)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      e,(ix+4)
+        ld      d,(ix+5)
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        push    de
+scat_end:
+        ld      a,(de)
+        or      a
+        jr      z,scat_copy
+        inc     de
+        jr      scat_end
+scat_copy:
+        ld      a,(hl)
+        ld      (de),a
+        inc     hl
+        inc     de
+        or      a
+        jr      nz,scat_copy
+        pop     hl
+        pop     ix
+        ret
+
+        public  __ncpy
+__ncpy:
+        ; char *strncpy(char *dst, const char *src, size_t n)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      e,(ix+4)
+        ld      d,(ix+5)
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      c,(ix+8)
+        ld      b,(ix+9)
+        push    de
+sncpy_loop:
+        ld      a,b
+        or      c
+        jr      z,sncpy_done
+        ld      a,(hl)
+        ld      (de),a
+        inc     de
+        dec     bc
+        or      a
+        jr      z,sncpy_pad
+        inc     hl
+        jr      sncpy_loop
+sncpy_pad:
+        ld      a,b
+        or      c
+        jr      z,sncpy_done
+        xor     a
+sncpy_pad_loop:
+        ld      (de),a
+        inc     de
+        dec     bc
+        ld      a,b
+        or      c
+        jr      nz,sncpy_pad_loop
+sncpy_done:
+        pop     hl
+        pop     ix
+        ret
+
+        public  __mcmp
+__mcmp:
         ; int memcmp(const void *s1, const void *s2, size_t n)
         push    ix
         ld      ix,0
@@ -520,8 +736,8 @@ mcmp_eq:
         pop     ix
         ret
 
-        public  _memmove
-_memmove:
+        public  __mmov
+__mmov:
         ; void *memmove(void *dst, const void *src, size_t n)
         push    ix
         ld      ix,0
@@ -590,8 +806,8 @@ mmv_ret_dst:
         pop     ix
         ret
 
-        public  _strncat
-_strncat:
+        public  __ncat
+__ncat:
         ; char *strncat(char *dst, const char *src, size_t n)
         push    ix
         ld      ix,0
@@ -632,8 +848,8 @@ snc_term:
         pop     ix
         ret
 
-        public  _memcpy
-_memcpy:
+        public  __mcpy
+__mcpy:
         push    ix
         ld      ix,0
         add     ix,sp
@@ -659,8 +875,8 @@ mc2:
         pop     ix
         ret
 
-        public  _memset
-_memset:
+        public  __mset
+__mset:
         ; void *memset(void *dest, int c, int count)
         ; Uses Z80 LDIR block-fill: write first byte, then LDIR propagates it.
         push    ix
@@ -1147,7 +1363,7 @@ pf_s:
         call    pf_arg_hl
         push    de
         push    hl
-        call    pf_strlen_hl       ; A = strlen(HL), HL preserved by stack below
+        call    pf__slen_hl       ; A = strlen(HL), HL preserved by stack below
         call    pf_pad_a
         pop     hl
 pf_s_loop:
@@ -1384,7 +1600,7 @@ pfe_con:
         inc     bc
         ret
 
-pf_strlen_hl:
+pf__slen_hl:
         push    hl
         push    bc
         ld      bc,0
@@ -1882,7 +2098,7 @@ qf_s:
         call    qf_arg_hl
         push    de
         push    hl
-        call    qf_strlen_hl       ; A = strlen(HL), HL preserved by stack below
+        call    qf__slen_hl       ; A = strlen(HL), HL preserved by stack below
         call    qf_pad_a
         pop     hl
 qf_s_loop:
@@ -2312,7 +2528,7 @@ qfe_con:
         inc     bc
         ret
 
-qf_strlen_hl:
+qf__slen_hl:
         push    hl
         push    bc
         ld      bc,0
@@ -5246,11 +5462,11 @@ _fclose:
         ret                             ; HL = 0 (ok) or -1 (error)
 
 ; ============================================================
-; _fputs(str, fp)
+; __fps(str, fp)
 ; fp < 3 → console output;  fp >= 3 → _write to file.
 ; ============================================================
-        public  _fputs
-_fputs:
+        public  __fps
+__fps:
         push    ix
         ld      ix,0
         add     ix,sp

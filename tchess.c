@@ -6,9 +6,6 @@
 #include <string.h>
 #include <ctype.h>
 
-// until separate compilation is a thing, include dependencies
-#include <string.c>
-
 #define EMPTY '.'
 #define WHITE 1
 #define BLACK -1

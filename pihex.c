@@ -10,9 +10,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// until separate compilation is a thing, include dependencies
-#include <string.c>
-
 long atol(const char *str)
 {
     long result = 0;

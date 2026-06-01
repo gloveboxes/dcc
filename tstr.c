@@ -3,9 +3,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-// until separate compilation is a thing, include dependencies
-#include <string.c>
-
 char ac[ 4096 ];
 char other[ 4096 ];
 char zeroes[ 4096 ]; // will be put in bss and guaranteed to be 0 by C89 and later

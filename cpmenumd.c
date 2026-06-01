@@ -17,7 +17,6 @@
 
 #include <bsearch.c>
 #include <qsort.c>
-#include <string.c>
 
 extern int bdos(int fn, int dearg);
 

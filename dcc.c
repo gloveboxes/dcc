@@ -224,12 +224,56 @@ static int asm_name_is_internal_public(const char *cname)
            !strcmp(cname, "__data_end");
 }
 
+
+static const char *asm_name_for_runtime(const char *cname)
+{
+    /*
+     * LINK-80/M80 style tools only preserve a short prefix of external
+     * names.  Keep ordinary C source and headers standard, but map known RTL
+     * entry points to deliberately short, collision-free assembler names.
+     * The returned names are final assembler labels, not C names to which
+     * another underscore should be prepended.
+     */
+    if (!strcmp(cname, "memcpy"))  return "__mcpy";
+    if (!strcmp(cname, "memcmp"))  return "__mcmp";
+    if (!strcmp(cname, "memchr"))  return "__mchr";
+    if (!strcmp(cname, "memmove")) return "__mmov";
+    if (!strcmp(cname, "memset"))  return "__mset";
+
+    if (!strcmp(cname, "strlen"))  return "__slen";
+    if (!strcmp(cname, "strcpy"))  return "__scpy";
+    if (!strcmp(cname, "strcmp"))  return "__scmp";
+    if (!strcmp(cname, "strchr"))  return "__schr";
+    if (!strcmp(cname, "strcat"))  return "__scat";
+    if (!strcmp(cname, "strrchr")) return "__srch";
+    if (!strcmp(cname, "strstr"))  return "__sstr";
+    if (!strcmp(cname, "strncpy")) return "__ncpy";
+    if (!strcmp(cname, "strncmp")) return "__ncmp";
+    if (!strcmp(cname, "strncat")) return "__ncat";
+
+    if (!strcmp(cname, "putchar")) return "__pchr";
+    if (!strcmp(cname, "putc"))    return "__putc";
+    if (!strcmp(cname, "fputc"))   return "__fpc";
+    if (!strcmp(cname, "fputs"))   return "__fps";
+    if (!strcmp(cname, "getc"))    return "__getc";
+    if (!strcmp(cname, "getchar")) return "__gchr";
+
+    return NULL;
+}
+
 static const char *asm_name_for(const char *cname)
 {
     int i;
 
     if (opt_floatio && !strcmp(cname, "printf"))
         return "_pffio";
+
+    {
+        const char *rtlname;
+        rtlname = asm_name_for_runtime(cname);
+        if (rtlname)
+            return rtlname;
+    }
 
     if (asm_name_is_internal_public(cname))
         return cname;
@@ -3998,6 +4042,73 @@ static void parse_array_declarator_dims(int base_type,
 }
 
 
+
+
+static int count_initializer_atoms_level(void)
+{
+    int n;
+    int depth;
+
+    n = 0;
+
+    if (accept('{')) {
+        while (tok.kind != TOK_EOF && tok.kind != '}') {
+            n += count_initializer_atoms_level();
+            if (!accept(','))
+                break;
+            if (tok.kind == '}')
+                break;
+        }
+        expect('}');
+        return n;
+    }
+
+    depth = 0;
+    while (tok.kind != TOK_EOF) {
+        if (depth == 0 && (tok.kind == ',' || tok.kind == '}'))
+            break;
+
+        if (tok.kind == '(' || tok.kind == '[' || tok.kind == '{') {
+            depth++;
+        } else if (tok.kind == ')' || tok.kind == ']' || tok.kind == '}') {
+            if (depth > 0)
+                depth--;
+            else
+                break;
+        }
+
+        next_token();
+    }
+
+    return 1;
+}
+
+static int count_omitted_array_initializer_atoms(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    int n;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    n = 0;
+    if (accept('=') && tok.kind == '{')
+        n = count_initializer_atoms_level();
+
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return n;
+}
 
 static void emit_init_auto_char_array_from_string(struct Sym *s, const char *str)
 {
@@ -10295,6 +10406,7 @@ static void emit_init_auto_array_from_list(struct Sym *s, int elem_type)
 static void gen_local_decl_after_type(int base)
 {
     int type, bytes, arrlen;
+    int total_elems;
     char name[64];
     struct Sym *s;
 
@@ -10316,11 +10428,42 @@ static void gen_local_decl_after_type(int base)
 
         arrlen = g_funcptr_decl_array_len;
         g_funcptr_decl_array_len = 0;
+        total_elems = arrlen;
         {
             int first_stride_bytes;
             first_stride_bytes = 0;
             if (arrlen == 0)
-                parse_array_declarator_dims(type, &arrlen, &first_stride_bytes, 1);
+                parse_array_declarator_dims(type, &total_elems, &first_stride_bytes, 1);
+            else
+                total_elems = arrlen;
+
+            arrlen = total_elems;
+
+            /*
+             * Local omitted-size arrays need the initializer count before
+             * allocation:
+             *     char data[] = { 'a', 'b', 0 };
+             */
+            if (arrlen == 0 && g_last_array_dim_count > 0 && tok.kind == '=') {
+                int atoms;
+                int inner;
+                int di;
+
+                atoms = count_omitted_array_initializer_atoms();
+                inner = 1;
+                for (di = 1; di < g_last_array_dim_count; ++di) {
+                    if (g_last_array_dims[di] > 0)
+                        inner *= g_last_array_dims[di];
+                }
+                if (inner <= 0) inner = 1;
+
+                if (atoms > 0) {
+                    total_elems = atoms;
+                    arrlen = (atoms + inner - 1) / inner;
+                    g_last_array_dims[0] = arrlen;
+                }
+            }
+
             if (first_stride_bytes > 0) {
                 /* stash temporarily in bytes; assigned to Sym below */
                 current_field_array_elem_size = first_stride_bytes;
@@ -10329,17 +10472,19 @@ static void gen_local_decl_after_type(int base)
             }
         }
         /* inherit array length from array typedef (e.g. typedef int T[4]) */
-        if (arrlen == 0 && g_typedef_array_len > 0)
+        if (arrlen == 0 && g_typedef_array_len > 0) {
             arrlen = g_typedef_array_len;
+            total_elems = g_typedef_array_len;
+        }
 
         s = find_local(name);
         if (!s) {
             bytes = type_size(type);
-            if (arrlen > 0)
-                bytes = object_array_size(type, arrlen);
+            if (total_elems > 0)
+                bytes = object_array_size(type, total_elems);
 
             s = add_local_alloc(name, type, bytes);
-            if (arrlen > 0) {
+            if (arrlen > 0 || g_last_array_dim_count > 0) {
                 s->is_array = 1;
                 s->array_len = arrlen;
                 s->elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(type);
@@ -11488,6 +11633,7 @@ static void skip_initializer_or_decl_tail(void)
 static void scan_local_decl_after_type(int base)
 {
     int type, bytes, arrlen;
+    int total_elems;
     char name[64];
     struct Sym *s;
 
@@ -11506,23 +11652,51 @@ static void scan_local_decl_after_type(int base)
 
         arrlen = g_funcptr_decl_array_len;
         g_funcptr_decl_array_len = 0;
+        total_elems = arrlen;
         {
             int first_stride_bytes;
             first_stride_bytes = 0;
             if (arrlen == 0)
-                parse_array_declarator_dims(type, &arrlen, &first_stride_bytes, 1);
+                parse_array_declarator_dims(type, &total_elems, &first_stride_bytes, 1);
+            else
+                total_elems = arrlen;
+
+            arrlen = total_elems;
+
+            if (arrlen == 0 && g_last_array_dim_count > 0 && tok.kind == '=') {
+                int atoms;
+                int inner;
+                int di;
+
+                atoms = count_omitted_array_initializer_atoms();
+                inner = 1;
+                for (di = 1; di < g_last_array_dim_count; ++di) {
+                    if (g_last_array_dims[di] > 0)
+                        inner *= g_last_array_dims[di];
+                }
+                if (inner <= 0) inner = 1;
+
+                if (atoms > 0) {
+                    total_elems = atoms;
+                    arrlen = (atoms + inner - 1) / inner;
+                    g_last_array_dims[0] = arrlen;
+                }
+            }
+
             current_field_array_elem_size = first_stride_bytes;
         }
         /* inherit array length from array typedef */
-        if (arrlen == 0 && g_typedef_array_len > 0)
+        if (arrlen == 0 && g_typedef_array_len > 0) {
             arrlen = g_typedef_array_len;
+            total_elems = g_typedef_array_len;
+        }
 
         bytes = type_size(type);
-        if (arrlen > 0) bytes *= arrlen;
+        if (total_elems > 0) bytes *= total_elems;
 
         if (!find_local(name)) {
             s = add_local_alloc(name, type, bytes);
-            if (arrlen > 0) {
+            if (arrlen > 0 || g_last_array_dim_count > 0) {
                 s->is_array = 1;
                 s->array_len = arrlen;
                 s->elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(type);

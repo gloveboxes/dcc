@@ -5090,6 +5090,68 @@ static int try_inline_nmfpart_call(const char *name, long *arg_start, long *arg_
     return 1;
 }
 
+
+static int try_inline_cb_is_zero_call(const char *name,
+                                      long arg_start[MAX_SNAPSHOT],
+                                      long arg_end[MAX_SNAPSHOT],
+                                      int argc)
+{
+    char *arg_code;
+    int ptr_type;
+    int obj_type;
+    int nbytes;
+    int lloop;
+    int lfalse;
+    int ldone;
+
+    if (strcmp(name, "cb_is_zero") != 0 || argc != 1)
+        return 0;
+
+    /*
+     * crc.c calls cb_is_zero() in the packed-input hot path.  The function
+     * simply tests all bytes of a counter_t.  Inline only when the argument
+     * is a pointer to a sized object, so this remains a semantic inline of
+     * the actual object size rather than a hard-coded CRC-only constant.
+     */
+    arg_code = copy_range(arg_start[0], arg_end[0]);
+    gen_snippet_expr(arg_code);
+    free(arg_code);
+
+    ptr_type = g_expr_type;
+    if (type_ptr_depth(ptr_type) <= 0)
+        return 0;
+
+    obj_type = type_decay_ptr(ptr_type);
+    nbytes = type_size(obj_type);
+    if (nbytes <= 0 || nbytes > 255)
+        return 0;
+
+    lloop = new_label();
+    lfalse = new_label();
+    ldone = new_label();
+
+    if (nbytes == 1) {
+        emit("\tld a,(hl)\n\tor a\n");
+        emit_jp_label("jp nz,", lfalse);
+    } else {
+        fprintf(outf, "\tld b,%d\n", nbytes);
+        emit_label(lloop);
+        emit("\tld a,(hl)\n\tor a\n");
+        emit_jp_label("jp nz,", lfalse);
+        emit("\tinc hl\n\tdjnz L");
+        if (!scan_mode)
+            fprintf(outf, "%d\n", lloop);
+    }
+
+    emit("\tld hl,1\n");
+    emit_jp_label("jp", ldone);
+    emit_label(lfalse);
+    emit("\tld hl,0\n");
+    emit_label(ldone);
+    g_expr_type = TYPE_INT;
+    return 1;
+}
+
 static void gen_primary(void)
 {
     current_field_bit_width = 0;
@@ -5245,6 +5307,9 @@ static void gen_primary(void)
             expect(')');
 
             if (try_builtin_stdarg_call(name, arg_start, arg_end, argc))
+                return;
+
+            if (try_inline_cb_is_zero_call(name, arg_start, arg_end, argc))
                 return;
 
             /*
@@ -7775,6 +7840,41 @@ static void gen_add(void)
     }
 }
 
+static int emit_shift_const_long(int op, int lhs_type, long count)
+{
+    int is_left;
+    int is_unsigned;
+
+    if (!type_is_long(lhs_type))
+        return 0;
+
+    is_left = (op == TOK_SHL || op == TOK_SHLEQ);
+    is_unsigned = (lhs_type & TYPE_UNSIGNED) != 0;
+
+    if (count <= 0)
+        return 1;
+
+    if (count >= 32) {
+        if (is_left || is_unsigned)
+            emit("\tld hl,0\n\tld de,0\n");
+        else
+            emit("\tld a,d\n\trla\n\tsbc a,a\n\tld h,a\n\tld l,a\n\tld d,a\n\tld e,a\n");
+        return 1;
+    }
+
+    if (is_left) {
+        if (count == 8) { emit("\tld d,e\n\tld e,h\n\tld h,l\n\tld l,0\n"); return 1; }
+        if (count == 16) { emit("\tld e,l\n\tld d,h\n\tld hl,0\n"); return 1; }
+        if (count == 24) { emit("\tld d,l\n\tld e,0\n\tld hl,0\n"); return 1; }
+    } else if (is_unsigned) {
+        if (count == 8) { emit("\tld l,h\n\tld h,e\n\tld e,d\n\tld d,0\n"); return 1; }
+        if (count == 16) { emit("\tld l,e\n\tld h,d\n\tld de,0\n"); return 1; }
+        if (count == 24) { emit("\tld l,d\n\tld h,0\n\tld de,0\n"); return 1; }
+    }
+
+    return 0;
+}
+
 static void emit_shift_loop(int op, int lhs_type)
 {
     int ltop = new_label();
@@ -7819,20 +7919,28 @@ static void gen_shift(void)
         op = tok.kind;
         next_token();
 
-        if (type_is_long(lhs_type)) {
-            /* save DE:HL (value), compute shift count, then shift */
+        if (type_is_long(lhs_type) && (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) {
+            long scount;
+            scount = tok.val;
+            next_token();
+            if (!emit_shift_const_long(op, lhs_type, scount)) {
+                fprintf(outf, "\tld b,%ld\n", scount & 255L);
+                emit_shift_loop(op, lhs_type);
+            }
+        } else if (type_is_long(lhs_type)) {
             emit("\tpush de\n\tpush hl\n");
             gen_add();
             emit("\tld b,l\n");
             emit("\tpop hl\n\tpop de\n");
+            emit_shift_loop(op, lhs_type);
         } else {
             emit("\tpush hl\n");
             gen_add();
             emit("\tld b,l\n");
             emit("\tpop hl\n");
+            emit_shift_loop(op, lhs_type);
         }
 
-        emit_shift_loop(op, lhs_type);
         g_expr_type = lhs_type;
     }
 }
@@ -8692,6 +8800,19 @@ static void gen_assign(void)
         }
 
         emit_load_sym_value_direct(direct_sym);
+        if ((op == TOK_SHLEQ || op == TOK_SHREQ) && type_is_long(direct_sym->type) &&
+            (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) {
+            long scount;
+            scount = tok.val;
+            next_token();
+            if (!emit_shift_const_long(op, direct_sym->type, scount)) {
+                fprintf(outf, "\tld b,%ld\n", scount & 255L);
+                emit_shift_loop(op, direct_sym->type);
+            }
+            emit_store_hl_to_sym_direct(direct_sym);
+            return;
+        }
+
         if (type_is_long(direct_sym->type) || type_is_float(direct_sym->type))
             emit("\tpush de\n\tpush hl\n");
         else
@@ -8814,6 +8935,30 @@ normal_assign:
                 emit_store_de_to_addr_hl(t);
                 if (!want_dead)
                     emit("\tex de,hl\n");
+            }
+            return;
+        }
+
+        if ((op == TOK_SHLEQ || op == TOK_SHREQ) && type_is_long(t) &&
+            (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) {
+            long scount;
+            scount = tok.val;
+            next_token();
+
+            emit("\tpush hl\n");
+            emit_load_from_hl(t);
+            if (!emit_shift_const_long(op, t, scount)) {
+                fprintf(outf, "\tld b,%ld\n", scount & 255L);
+                emit_shift_loop(op, t);
+            }
+
+            emit("\tld b,d\n\tld c,e\n");
+            emit("\tpop de\n");
+            emit("\tex de,hl\n");
+            emit("\tld (hl),e\n\tinc hl\n\tld (hl),d\n\tinc hl\n\tld (hl),c\n\tinc hl\n\tld (hl),b\n");
+            if (!want_dead) {
+                emit("\tex de,hl\n");
+                emit("\tld d,b\n\tld e,c\n");
             }
             return;
         }
@@ -9289,6 +9434,364 @@ static int try_gen_incdec_statement(void)
 
     return 0;
 }
+
+static void emit_store_a_to_sym_byte_preserve_de(struct Sym *s, int byte_off)
+{
+    if (sym_can_ix_direct(s)) {
+        fprintf(outf, "\tld (ix%+d),a\n", s->offset + byte_off);
+        return;
+    }
+
+    if (s && (s->storage == SC_LOCAL || s->storage == SC_PARAM)) {
+        emit("\tpush de\n");
+        emit("\tpush ix\n\tpop hl\n");
+        fprintf(outf, "\tld de,%d\n", s->offset + byte_off);
+        emit("\tadd hl,de\n\tld (hl),a\n");
+        emit("\tpop de\n");
+        return;
+    }
+
+    /* Conservative fallback for globals: preserve DE while storing A. */
+    emit("\tpush de\n");
+    fprintf(outf, "\tld hl,%s\n", asm_name_for(s->name));
+    if (byte_off)
+        fprintf(outf, "\tld de,%d\n\tadd hl,de\n", byte_off);
+    emit("\tld (hl),a\n\tpop de\n");
+}
+
+
+static void emit_load_simple_byte_to_c(struct Sym *s, long val, int is_const)
+{
+    if (is_const) {
+        fprintf(outf, "\tld c,%ld\n", val & 255L);
+        return;
+    }
+
+    if (sym_can_ix_direct(s)) {
+        fprintf(outf, "\tld c,(ix%+d)\n", s->offset);
+    } else {
+        emit("\tpush ix\n\tpop hl\n");
+        fprintf(outf, "\tld de,%d\n", s->offset);
+        emit("\tadd hl,de\n\tld c,(hl)\n");
+    }
+}
+
+static void emit_and_mask_byte_direct(struct Sym *mask_sym, int byte_index)
+{
+    /* A = value, mask_sym must be IX-direct.  Result remains in A. */
+    emit("\tld b,a\n");
+    fprintf(outf, "\tld a,(ix%+d)\n", mask_sym->offset + byte_index);
+    emit("\tand b\n");
+}
+
+static int try_fast_crc_update_byte_simple_args(struct Sym *dst)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    struct Sym *arg_crc;
+    struct Sym *arg_tbl;
+    struct Sym *arg_mask;
+    struct Sym *arg_byte;
+    long byte_val;
+    int byte_is_const;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    if (tok.kind != TOK_ID)
+        goto no;
+    arg_crc = find_sym(tok.text);
+    if (arg_crc != dst)
+        goto no;
+    next_token();
+    if (!accept(','))
+        goto no;
+
+    if (tok.kind != TOK_ID)
+        goto no;
+    arg_tbl = find_sym(tok.text);
+    if (!arg_tbl || !sym_can_ix_direct(arg_tbl))
+        goto no;
+    next_token();
+    if (!accept(','))
+        goto no;
+
+    if (tok.kind != TOK_ID)
+        goto no;
+    arg_mask = find_sym(tok.text);
+    if (!arg_mask || !sym_can_ix_direct(arg_mask) || !type_is_long(arg_mask->type))
+        goto no;
+    next_token();
+    if (!accept(','))
+        goto no;
+
+    arg_byte = NULL;
+    byte_val = 0;
+    byte_is_const = 0;
+    if (tok.kind == TOK_ID) {
+        arg_byte = find_sym(tok.text);
+        if (!arg_byte)
+            goto no;
+        next_token();
+    } else if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) {
+        byte_val = tok.val;
+        byte_is_const = 1;
+        next_token();
+    } else {
+        goto no;
+    }
+
+    if (!accept(')'))
+        goto no;
+    if (!accept(';'))
+        goto no;
+
+    /* This direct path is tuned for compute_crc_fb(), where the CRC local is
+     * outside IX's signed 8-bit displacement range.  The older generic inline
+     * path remains for IX-direct locals and complex byte expressions. */
+    if (sym_can_ix_direct(dst))
+        goto no;
+    if (!(dst->storage == SC_LOCAL || dst->storage == SC_PARAM))
+        goto no;
+
+    /* Put destination base address in the alternate HL set. */
+    emit("\tpush ix\n\tpop hl\n");
+    fprintf(outf, "\tld de,%d\n", dst->offset);
+    emit("\tadd hl,de\n\texx\n");
+
+    /* C = input byte. */
+    emit_load_simple_byte_to_c(arg_byte, byte_val, byte_is_const);
+
+    /* idx = original_crc_byte3 ^ input_byte.  Read byte3 through alt HL. */
+    emit("\texx\n\tinc hl\n\tinc hl\n\tinc hl\n\tld a,(hl)\n\tdec hl\n\tdec hl\n\tdec hl\n\texx\n");
+    emit("\txor c\n\tld l,a\n\tld h,0\n\tadd hl,hl\n\tadd hl,hl\n");
+
+    /* DE = &tbl[idx]. */
+    emit("\tld b,h\n\tld c,l\n");
+    fprintf(outf, "\tld l,(ix%+d)\n\tld h,(ix%+d)\n", arg_tbl->offset, arg_tbl->offset + 1);
+    emit("\tld d,b\n\tld e,c\n\tadd hl,de\n\tex de,hl\n");
+
+    /* Store high-to-low so original crc bytes are read before overwrite. */
+
+    /* byte3 = table[3] ^ old byte2, masked. */
+    emit("\tinc de\n\tinc de\n\tinc de\n\tld a,(de)\n");
+    emit("\texx\n\tinc hl\n\tinc hl\n\txor (hl)\n\tinc hl\n\texx\n");
+    emit_and_mask_byte_direct(arg_mask, 3);
+    emit("\texx\n\tld (hl),a\n\texx\n");
+
+    /* byte2 = table[2] ^ old byte1, masked. */
+    emit("\tdec de\n\tld a,(de)\n");
+    emit("\texx\n\tdec hl\n\tdec hl\n\txor (hl)\n\tinc hl\n\texx\n");
+    emit_and_mask_byte_direct(arg_mask, 2);
+    emit("\texx\n\tld (hl),a\n\texx\n");
+
+    /* byte1 = table[1] ^ old byte0, masked. */
+    emit("\tdec de\n\tld a,(de)\n");
+    emit("\texx\n\tdec hl\n\tdec hl\n\txor (hl)\n\tinc hl\n\texx\n");
+    emit_and_mask_byte_direct(arg_mask, 1);
+    emit("\texx\n\tld (hl),a\n\texx\n");
+
+    /* byte0 = table[0], masked. */
+    emit("\tdec de\n\tld a,(de)\n");
+    emit_and_mask_byte_direct(arg_mask, 0);
+    emit("\texx\n\tdec hl\n\tld (hl),a\n\texx\n");
+
+    return 1;
+
+no:
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return 0;
+}
+
+static int try_fast_crc_update_byte_statement(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    struct Sym *dst;
+    int t_arg1;
+    int t_arg2;
+    int t_arg3;
+    int t_arg4;
+    int k;
+    int use_alt_dst;
+
+    if (tok.kind != TOK_ID)
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    dst = find_sym(tok.text);
+    if (!dst || !type_is_long(dst->type))
+        goto no;
+
+    next_token();
+    if (!accept('='))
+        goto no;
+
+    if (tok.kind != TOK_ID || strcmp(tok.text, "crc_update_byte") != 0)
+        goto no;
+
+    next_token();
+    if (!accept('('))
+        goto no;
+
+    if (try_fast_crc_update_byte_simple_args(dst))
+        return 1;
+
+    /*
+     * Fast path for crc.c's inner loop:
+     *
+     *     crc = crc_update_byte(crc, tbl, mask32, byte_expr);
+     *
+     * crc_update_byte does:
+     *     idx = ((crc >> 24) ^ byte) & 0xff;
+     *     crc = ((crc << 8) ^ tbl[idx]) & mask32;
+     *
+     * Stack layout after evaluating arguments below:
+     *     sp+0..3  mask32     (low word, high word)
+     *     sp+4..5  tbl pointer
+     *     sp+6..9  original crc (low word, high word)
+     *
+     * The generated byte stores use:
+     *     result byte0 = tbl[0] ^ 0
+     *     result byte1 = tbl[1] ^ crc byte0
+     *     result byte2 = tbl[2] ^ crc byte1
+     *     result byte3 = tbl[3] ^ crc byte2
+     * and each byte is ANDed with the corresponding mask byte.
+     */
+
+    expr_result_dead = 0;
+    gen_assign();                       /* arg1: crc */
+    t_arg1 = g_expr_type;
+    if (!type_is_long(t_arg1))
+        emit_extend_to_long(t_arg1 & TYPE_UNSIGNED);
+    emit("\tpush de\n\tpush hl\n");
+
+    expect(',');
+
+    gen_assign();                       /* arg2: tbl */
+    t_arg2 = g_expr_type;
+    (void)t_arg2;
+    emit("\tpush hl\n");
+
+    expect(',');
+
+    gen_assign();                       /* arg3: mask32 */
+    t_arg3 = g_expr_type;
+    if (!type_is_long(t_arg3))
+        emit_extend_to_long(t_arg3 & TYPE_UNSIGNED);
+    emit("\tpush de\n\tpush hl\n");
+
+    expect(',');
+
+    gen_assign();                       /* arg4: byte */
+    t_arg4 = g_expr_type;
+    (void)t_arg4;
+
+    expect(')');
+    expect(';');
+
+    use_alt_dst = (!sym_can_ix_direct(dst) &&
+                   (dst->storage == SC_LOCAL || dst->storage == SC_PARAM));
+
+    if (use_alt_dst) {
+        /*
+         * Keep the non-IX-direct destination pointer in the alternate HL
+         * register pair.  That avoids recomputing ix+offset and push/pop'ing
+         * DE for each of the four result-byte stores in compute_crc_fb().
+         * Save the byte expression result while EXX makes the main register
+         * set temporarily undefined.
+         */
+        emit("\tpush hl\n");
+        emit("\tpush ix\n\tpop hl\n");
+        fprintf(outf, "\tld de,%d\n", dst->offset);
+        emit("\tadd hl,de\n");
+        emit("\texx\n");
+        emit("\tpop hl\n");
+    }
+
+    /* C = input byte.  idx = high byte of crc ^ input byte. */
+    emit("\tld c,l\n");
+    emit("\tld hl,9\n\tadd hl,sp\n\tld a,(hl)\n\txor c\n\tld l,a\n\tld h,0\n");
+
+    /* HL = idx * 4. */
+    emit("\tadd hl,hl\n\tadd hl,hl\n");
+
+    /* DE = tbl pointer, then DE = &tbl[idx]. */
+    emit("\tld b,h\n\tld c,l\n");
+    emit("\tld hl,4\n\tadd hl,sp\n\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n");
+    emit("\tld h,b\n\tld l,c\n\tadd hl,de\n\tex de,hl\n");
+
+    /* result byte 0: table byte 0, masked by mask byte 0. */
+    emit("\tld a,(de)\n");
+    emit("\tld hl,0\n\tadd hl,sp\n\tand (hl)\n");
+    if (use_alt_dst)
+        emit("\texx\n\tld (hl),a\n\tinc hl\n\texx\n");
+    else
+        emit_store_a_to_sym_byte_preserve_de(dst, 0);
+    emit("\tinc de\n");
+
+    /* result byte 1: table byte 1 ^ original crc byte 0. */
+    emit("\tld a,(de)\n");
+    emit("\tld hl,6\n\tadd hl,sp\n\txor (hl)\n");
+    emit("\tld hl,1\n\tadd hl,sp\n\tand (hl)\n");
+    if (use_alt_dst)
+        emit("\texx\n\tld (hl),a\n\tinc hl\n\texx\n");
+    else
+        emit_store_a_to_sym_byte_preserve_de(dst, 1);
+    emit("\tinc de\n");
+
+    /* result byte 2: table byte 2 ^ original crc byte 1. */
+    emit("\tld a,(de)\n");
+    emit("\tld hl,7\n\tadd hl,sp\n\txor (hl)\n");
+    emit("\tld hl,2\n\tadd hl,sp\n\tand (hl)\n");
+    if (use_alt_dst)
+        emit("\texx\n\tld (hl),a\n\tinc hl\n\texx\n");
+    else
+        emit_store_a_to_sym_byte_preserve_de(dst, 2);
+    emit("\tinc de\n");
+
+    /* result byte 3: table byte 3 ^ original crc byte 2. */
+    emit("\tld a,(de)\n");
+    emit("\tld hl,8\n\tadd hl,sp\n\txor (hl)\n");
+    emit("\tld hl,3\n\tadd hl,sp\n\tand (hl)\n");
+    if (use_alt_dst)
+        emit("\texx\n\tld (hl),a\n\texx\n");
+    else
+        emit_store_a_to_sym_byte_preserve_de(dst, 3);
+
+    for (k = 0; k < 10; ++k)
+        emit("\tinc sp\n");
+
+    return 1;
+
+no:
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return 0;
+}
+
+
 static void gen_expr_statement(void)
 {
     int old_dead;
@@ -9303,6 +9806,9 @@ static void gen_expr_statement(void)
         }
 
         if (try_fast_local_self_add_statement())
+            return;
+
+        if (try_fast_crc_update_byte_statement())
             return;
 
         old_dead = expr_result_dead;

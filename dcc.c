@@ -2907,142 +2907,133 @@ static int parse_base_type(void)
 {
     int t;
     int td;
-    int saw_sign;
+    int saw_any;
+    int saw_unsigned;
+    int saw_long;
+    int saw_short;
+    int saw_char;
+    int saw_void;
+    int saw_float;
 
     t = 0;
-    saw_sign = 0;
+    saw_any = 0;
+    saw_unsigned = 0;
+    saw_long = 0;
+    saw_short = 0;
+    saw_char = 0;
+    saw_void = 0;
+    saw_float = 0;
     g_typedef_array_len = 0;
     g_typedef_is_func = 0;
 
-    while (is_type_qualifier_token(tok.kind) || tok.kind == TOK_EXTERN || tok.kind == TOK_STATIC || tok.kind == TOK_REGISTER || tok.kind == TOK_AUTO || tok.kind == TOK_INLINE) {
-        if (tok.kind == TOK_EXTERN) {
-            decl_is_extern = 1;
-        } else if (tok.kind == TOK_STATIC) {
-            decl_is_static = 1;
+    /* C89 declaration specifiers are order-independent. */
+    for (;;) {
+        if (is_type_qualifier_token(tok.kind) || tok.kind == TOK_REGISTER ||
+            tok.kind == TOK_AUTO || tok.kind == TOK_INLINE) {
+            next_token();
+            continue;
         }
-        next_token();
-    }
+        if (tok.kind == TOK_EXTERN) { decl_is_extern = 1; next_token(); continue; }
+        if (tok.kind == TOK_STATIC) { decl_is_static = 1; next_token(); continue; }
+        if (tok.kind == TOK_UNSIGNED) { saw_unsigned = 1; saw_any = 1; next_token(); continue; }
+        if (tok.kind == TOK_SIGNED) { saw_any = 1; next_token(); continue; }
+        if (tok.kind == TOK_LONG) { saw_long = 1; saw_any = 1; next_token(); continue; }
+        if (tok.kind == TOK_SHORT) { saw_short = 1; saw_any = 1; next_token(); continue; }
+        if (tok.kind == TOK_INT) { saw_any = 1; next_token(); continue; }
+        if (tok.kind == TOK_FLOAT) { saw_float = 1; saw_any = 1; next_token(); continue; }
+        if (tok.kind == TOK_CHAR) { saw_char = 1; saw_any = 1; next_token(); continue; }
+        if (tok.kind == TOK_VOID) { saw_void = 1; saw_any = 1; next_token(); continue; }
 
-    if (tok.kind == TOK_UNSIGNED) {
-        t |= TYPE_UNSIGNED;
-        saw_sign = 1;
-        next_token();
-    } else if (tok.kind == TOK_SIGNED) {
-        saw_sign = 1;
-        next_token();
-    }
-
-    if (tok.kind == TOK_INT) {
-        t |= TYPE_INT;
-        next_token();
-    } else if (tok.kind == TOK_SHORT) {
-        t |= TYPE_INT;
-        next_token();
-        if (tok.kind == TOK_INT) next_token(); /* short int */
-    } else if (tok.kind == TOK_LONG) {
-        t |= TYPE_LONG;
-        next_token();
-        if (tok.kind == TOK_INT) next_token(); /* long int */
-    } else if (tok.kind == TOK_FLOAT) {
-        /* C89 keyword accepted as a 32-bit opaque object type.
-         * Arithmetic/literals are intentionally not implemented yet. */
-        t |= TYPE_FLOAT;
-        next_token();
-    } else if (tok.kind == TOK_CHAR) {
-        t |= TYPE_CHAR;
-        next_token();
-    } else if (tok.kind == TOK_VOID) {
-        t |= TYPE_VOID;
-        next_token();
-    } else if (tok.kind == TOK_STRUCT || tok.kind == TOK_UNION) {
-        int sid;
-        char sname[64];
-        int is_union_kw = (tok.kind == TOK_UNION);
-
-        next_token();
-
-        if (tok.kind == TOK_ID) {
-            strncpy(sname, tok.text, sizeof(sname) - 1);
-            sname[sizeof(sname) - 1] = 0;
+        if (tok.kind == TOK_STRUCT || tok.kind == TOK_UNION) {
+            int sid;
+            char sname[64];
+            int is_union_kw;
+            is_union_kw = (tok.kind == TOK_UNION);
             next_token();
-            sid = add_struct_def(sname);
-        } else if (tok.kind == '{') {
-            /* anonymous struct/union: give it a unique generated name */
-            sprintf(sname, "__anon_%d", ++g_anon_struct_counter);
-            sid = add_struct_def(sname);
-        } else {
-            error_here("struct/union name or '{' expected");
-            sprintf(sname, "__anon_%d", ++g_anon_struct_counter);
-            sid = add_struct_def(sname);
-        }
-
-        if (is_union_kw)
-            struct_defs[sid - 1].is_union = 1;
-
-        if (tok.kind == '{')
-            parse_struct_definition(sid);
-
-        t |= make_struct_type(sid);
-    } else if (tok.kind == TOK_ENUM) {
-        /* enum: parse optional tag and optional body; treat variables as int */
-        int cur_val = 0;
-        next_token();
-        /* optional tag name */
-        if (tok.kind == TOK_ID)
-            next_token();
-        if (tok.kind == '{') {
-            next_token();
-            while (tok.kind != '}' && tok.kind != TOK_EOF) {
-                char ename[64];
-                int ei;
-                int dup;
-                if (tok.kind != TOK_ID) {
-                    error_here("enum constant name expected");
-                    break;
-                }
-                strncpy(ename, tok.text, sizeof(ename) - 1);
-                ename[sizeof(ename) - 1] = 0;
+            if (tok.kind == TOK_ID) {
+                strncpy(sname, tok.text, sizeof(sname) - 1);
+                sname[sizeof(sname) - 1] = 0;
                 next_token();
-                if (accept('='))
-                    cur_val = parse_enum_const_value();
-                /* register constant — skip if already defined (idempotent re-parse) */
-                dup = 0;
-                for (ei = 0; ei < nenum_consts; ++ei) {
-                    if (!strcmp(enum_const_names[ei], ename)) {
-                        enum_const_values[ei] = cur_val;
-                        dup = 1;
-                        break;
-                    }
-                }
-                if (!dup && nenum_consts < MAX_ENUM_CONSTS) {
-                    strncpy(enum_const_names[nenum_consts], ename,
-                            sizeof(enum_const_names[nenum_consts]) - 1);
-                    enum_const_values[nenum_consts] = cur_val;
-                    nenum_consts++;
-                }
-                cur_val++;
-                if (!accept(',')) break;
-                /* allow trailing comma before '}' */
+                sid = add_struct_def(sname);
+            } else if (tok.kind == '{') {
+                sprintf(sname, "__anon_%d", ++g_anon_struct_counter);
+                sid = add_struct_def(sname);
+            } else {
+                error_here("struct/union name or '{' expected");
+                sprintf(sname, "__anon_%d", ++g_anon_struct_counter);
+                sid = add_struct_def(sname);
             }
-            expect('}');
+            if (is_union_kw) struct_defs[sid - 1].is_union = 1;
+            if (tok.kind == '{') parse_struct_definition(sid);
+            t = make_struct_type(sid);
+            saw_any = 1;
+            break;
         }
-        /* enum type is treated as int in this compiler */
-        t |= TYPE_INT;
-    } else if (tok.kind == TOK_ID && (td = find_typedef(tok.text)) >= 0) {
-        t |= typedefs[td].type;
-        g_typedef_array_len = typedefs[td].array_len;
-        g_typedef_is_func = typedefs[td].is_func;
-        next_token();
-    } else {
-        if (saw_sign) {
-            /* C89: plain 'unsigned' and plain 'signed' mean int. */
-            t |= TYPE_INT;
-        } else {
-            error_here("type expected");
-            t |= TYPE_INT;
+
+        if (tok.kind == TOK_ENUM) {
+            int cur_val;
+            cur_val = 0;
+            next_token();
+            if (tok.kind == TOK_ID) next_token();
+            if (tok.kind == '{') {
+                next_token();
+                while (tok.kind != '}' && tok.kind != TOK_EOF) {
+                    char ename[64];
+                    int ei;
+                    int dup;
+                    if (tok.kind != TOK_ID) { error_here("enum constant name expected"); break; }
+                    strncpy(ename, tok.text, sizeof(ename) - 1);
+                    ename[sizeof(ename) - 1] = 0;
+                    next_token();
+                    if (accept('=')) cur_val = parse_enum_const_value();
+                    dup = 0;
+                    for (ei = 0; ei < nenum_consts; ++ei) {
+                        if (!strcmp(enum_const_names[ei], ename)) {
+                            enum_const_values[ei] = cur_val;
+                            dup = 1;
+                            break;
+                        }
+                    }
+                    if (!dup && nenum_consts < MAX_ENUM_CONSTS) {
+                        strncpy(enum_const_names[nenum_consts], ename,
+                                sizeof(enum_const_names[nenum_consts]) - 1);
+                        enum_const_values[nenum_consts] = cur_val;
+                        nenum_consts++;
+                    }
+                    cur_val++;
+                    if (!accept(',')) break;
+                }
+                expect('}');
+            }
+            t = TYPE_INT;
+            saw_any = 1;
+            break;
         }
+
+        if (!saw_any && tok.kind == TOK_ID && (td = find_typedef(tok.text)) >= 0) {
+            t = typedefs[td].type;
+            g_typedef_array_len = typedefs[td].array_len;
+            g_typedef_is_func = typedefs[td].is_func;
+            saw_any = 1;
+            next_token();
+            break;
+        }
+        break;
     }
 
+    if (!saw_any) {
+        error_here("type expected");
+        t = TYPE_INT;
+    } else if (t == 0) {
+        if (saw_float) t = TYPE_FLOAT;
+        else if (saw_void) t = TYPE_VOID;
+        else if (saw_char) t = TYPE_CHAR;
+        else if (saw_long) t = TYPE_LONG;
+        else t = TYPE_INT;
+        (void)saw_short;
+        if (saw_unsigned && t != TYPE_FLOAT && t != TYPE_VOID)
+            t |= TYPE_UNSIGNED;
+    }
     skip_type_qualifiers();
     return t;
 }
@@ -12353,109 +12344,75 @@ static void scan_function_body(void)
 
 static void parse_typedef_decl(void)
 {
-    int type;
-    char name[64];
+    int base_type;
+    int done;
 
     expect(TOK_TYPEDEF);
 
-    type = parse_type();
-
-    /*
-     * Minimal forms supported:
-     *
-     *   typedef uint8_t ttt_t;
-     *   typedef ttt_t pfunc_t(void);
-     *   typedef ttt_t (*pfunc_t)(void);
-     *
-     * The current backend does not model true function types.  For the
-     * parenthesized function-pointer typedef, we record pfunc_t as a pointer
-     * type.  That makes declarations such as:
-     *
-     *   pfunc_t pf;
-     *   pfunc_t winner_functions[9];
-     *
-     * be treated as pointer-sized objects.  If old source says "pfunc_t *pf",
-     * that becomes a pointer-to-pointer as far as this tiny type model is
-     * concerned, so prefer the standard typedef usage above.
+    /* Parse C89 typedef declarator lists with per-declarator pointer and
+     * suffix handling:
+     *     typedef unsigned long UL, *PUL;
+     *     typedef int A4[4], FN(int), (*PF)(int);
      */
+    base_type = parse_base_type();
+    done = 0;
 
-    while (accept('*')) {
-        skip_type_qualifiers();
-        type = type_add_ptr(type);
-    }
+    while (!done && tok.kind != TOK_EOF) {
+        int type;
+        int typedef_array_len;
+        int is_func;
+        char name[64];
 
-    if (accept('(')) {
-        if (accept('*')) {
+        type = base_type;
+        typedef_array_len = 0;
+        is_func = 0;
+        name[0] = 0;
+
+        while (accept('*')) {
+            skip_type_qualifiers();
             type = type_add_ptr(type);
+        }
 
+        if (parse_funcptr_declarator(&type, name, sizeof(name))) {
+            /* Parenthesized function-pointer typedef. */
+        } else {
             if (tok.kind != TOK_ID) {
                 error_here("identifier expected in typedef");
                 while (tok.kind != ';' && tok.kind != TOK_EOF) next_token();
                 expect(';');
                 return;
             }
-
             strncpy(name, tok.text, sizeof(name) - 1);
             name[sizeof(name) - 1] = 0;
             next_token();
-
-            expect(')');
-
-            if (accept('(')) {
-                while (tok.kind != ')' && tok.kind != TOK_EOF)
-                    next_token();
-                expect(')');
-            }
-
-            while (tok.kind != ';' && tok.kind != TOK_EOF)
-                next_token();
-            expect(';');
-
-            add_typedef_name(name, type, 0);
-            return;
-        } else {
-            error_here("unsupported typedef declarator");
-            while (tok.kind != ';' && tok.kind != TOK_EOF) next_token();
-            expect(';');
-            return;
         }
-    }
 
-    if (tok.kind != TOK_ID) {
-        error_here("identifier expected in typedef");
-        while (tok.kind != ';' && tok.kind != TOK_EOF) next_token();
-        expect(';');
-        return;
-    }
-
-    strncpy(name, tok.text, sizeof(name) - 1);
-    name[sizeof(name) - 1] = 0;
-    next_token();
-
-    {
-        /* Handle array typedef: e.g. typedef unsigned int jmp_buf[4] */
-        int typedef_array_len = 0;
         if (tok.kind == '[') {
             next_token();
-            typedef_array_len = parse_const_int_expr();
-            expect(']');
-        } else if (accept('(')) {
-            while (tok.kind != ')' && tok.kind != TOK_EOF)
+            if (tok.kind == ']') {
+                typedef_array_len = 0;
                 next_token();
-            expect(')');
-            while (tok.kind != ';' && tok.kind != TOK_EOF)
+            } else {
+                typedef_array_len = parse_const_int_expr();
+                expect(']');
+            }
+            while (tok.kind == '[') {
                 next_token();
-            expect(';');
-            add_typedef_name_ex(name, type, 0, 1);
-            return;
+                if (tok.kind != ']')
+                    (void)parse_const_int_expr();
+                expect(']');
+            }
+        } else if (tok.kind == '(') {
+            skip_prototype_function_suffix();
+            is_func = (type_ptr_depth(type) == 0);
         }
 
-        while (tok.kind != ';' && tok.kind != TOK_EOF)
-            next_token();
+        add_typedef_name_ex(name, type, typedef_array_len, is_func);
 
+        if (accept(','))
+            continue;
         expect(';');
-
-        add_typedef_name(name, type, typedef_array_len);
+        done = 1;
     }
 }
 

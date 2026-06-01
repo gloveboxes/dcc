@@ -3051,7 +3051,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ Jun  1 2026
-__TIME__ 07:55:36
+__TIME__ 08:22:21
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3596,3 +3596,5 @@ test tstr2
 -15s: strncpy Pad1
 -15s: strncpy Pad2
 tstr2 completed with great success!
+test tstr3
+tstr3 completed with great success

@@ -247,6 +247,11 @@ static const char *asm_name_for_runtime(const char *cname)
     if (!strcmp(cname, "strcat"))  return "__scat";
     if (!strcmp(cname, "strrchr")) return "__srch";
     if (!strcmp(cname, "strstr"))  return "__sstr";
+    if (!strcmp(cname, "strcoll")) return "__scol";
+    if (!strcmp(cname, "strcspn")) return "__scsp";
+    if (!strcmp(cname, "strpbrk")) return "__spbr";
+    if (!strcmp(cname, "strspn"))  return "__sspn";
+    if (!strcmp(cname, "strdup"))  return "__sdup";
     if (!strcmp(cname, "strncpy")) return "__ncpy";
     if (!strcmp(cname, "strncmp")) return "__ncmp";
     if (!strcmp(cname, "strncat")) return "__ncat";

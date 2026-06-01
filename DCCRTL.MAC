@@ -651,6 +651,197 @@ scat_copy:
         pop     ix
         ret
 
+
+        public  __scol
+__scol:
+        ; int strcoll(const char *s1, const char *s2)
+        ; Current C locale: collation is bytewise strcmp.
+        jp      __scmp
+
+        public  __scsp
+__scsp:
+        ; size_t strcspn(const char *s, const char *reject)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ld      l,(ix+4)
+        ld      h,(ix+5)        ; HL = s
+        ld      de,0
+        ld      (__spn_count),de
+
+scsp_outer:
+        ld      a,(hl)
+        or      a
+        jr      z,scsp_ret_count
+
+        push    hl              ; save current s
+        ld      e,(ix+6)
+        ld      d,(ix+7)        ; DE = reject
+scsp_inner:
+        ld      a,(de)
+        or      a
+        jr      z,scsp_no_match
+        ld      c,a
+        ld      a,(hl)
+        cp      c
+        jr      z,scsp_match
+        inc     de
+        jr      scsp_inner
+
+scsp_no_match:
+        pop     hl
+        inc     hl
+        ld      de,(__spn_count)
+        inc     de
+        ld      (__spn_count),de
+        jr      scsp_outer
+
+scsp_match:
+        pop     hl
+        jr      scsp_ret_count
+
+scsp_ret_count:
+        ld      hl,(__spn_count)
+        pop     ix
+        ret
+
+        public  __spbr
+__spbr:
+        ; char *strpbrk(const char *s, const char *accept)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ld      l,(ix+4)
+        ld      h,(ix+5)        ; HL = s
+
+spbr_outer:
+        ld      a,(hl)
+        or      a
+        jr      z,spbr_none
+
+        push    hl
+        ld      e,(ix+6)
+        ld      d,(ix+7)        ; DE = accept
+spbr_inner:
+        ld      a,(de)
+        or      a
+        jr      z,spbr_no_match
+        ld      c,a
+        ld      a,(hl)
+        cp      c
+        jr      z,spbr_found
+        inc     de
+        jr      spbr_inner
+
+spbr_no_match:
+        pop     hl
+        inc     hl
+        jr      spbr_outer
+
+spbr_found:
+        pop     hl              ; return current s pointer
+        pop     ix
+        ret
+
+spbr_none:
+        ld      hl,0
+        pop     ix
+        ret
+
+        public  __sspn
+__sspn:
+        ; size_t strspn(const char *s, const char *accept)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ld      l,(ix+4)
+        ld      h,(ix+5)        ; HL = s
+        ld      de,0
+        ld      (__spn_count),de
+
+sspn_outer:
+        ld      a,(hl)
+        or      a
+        jr      z,sspn_ret_count
+
+        push    hl              ; save current s
+        ld      e,(ix+6)
+        ld      d,(ix+7)        ; DE = accept
+sspn_inner:
+        ld      a,(de)
+        or      a
+        jr      z,sspn_no_match
+        ld      c,a
+        ld      a,(hl)
+        cp      c
+        jr      z,sspn_match
+        inc     de
+        jr      sspn_inner
+
+sspn_match:
+        pop     hl
+        inc     hl
+        ld      de,(__spn_count)
+        inc     de
+        ld      (__spn_count),de
+        jr      sspn_outer
+
+sspn_no_match:
+        pop     hl
+        jr      sspn_ret_count
+
+sspn_ret_count:
+        ld      hl,(__spn_count)
+        pop     ix
+        ret
+
+__spn_count:
+        dw      0
+
+
+        public  __sdup
+__sdup:
+        ; char *strdup(const char *s)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ; Compute length including NUL.
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        push    hl              ; save src
+        call    __slen
+        inc     hl
+        ld      (__sdup_len),hl
+
+        ; malloc(len)
+        push    hl
+        call    _malloc
+        pop     de              ; clean malloc arg
+        pop     de              ; DE = src
+
+        ; If malloc failed, return NULL.
+        ld      a,h
+        or      l
+        jr      z,sdup_ret
+
+        ; Copy len bytes from DE=src to HL=dest.
+        push    hl              ; save dest for return
+        ex      de,hl           ; HL = src, DE = dest
+        ld      bc,(__sdup_len)
+        ldir
+        pop     hl              ; return dest
+
+sdup_ret:
+        pop     ix
+        ret
+
+__sdup_len:
+        dw      0
+
         public  __ncpy
 __ncpy:
         ; char *strncpy(char *dst, const char *src, size_t n)

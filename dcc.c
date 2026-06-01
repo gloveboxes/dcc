@@ -125,7 +125,9 @@ struct Sym {
     int init_sizes[256];
     int is_array;
     int array_len;
-    int elem_size; /* stride per element; for multi-dim arrays = inner_dims * base_size */
+    int elem_size; /* stride per first-dimension element */
+    int dim_count; /* C array dimensions, e.g. a[2][3] -> 2 */
+    int dims[8];   /* dims[0] may be 0 until inferred for a[][N] */
     int needs_extrn; /* 1 = symbol has external linkage and may need EXTRN if referenced */
     int is_defined;  /* 1 = this translation unit emits storage/PUBLIC for the symbol */
     int is_static;   /* file-scope static: internal linkage, mangle and do not PUBLIC */
@@ -385,6 +387,8 @@ static int g_proto_nargs;
 static int g_proto_variadic;
 static int g_proto_types[MAX_PROTO_PARAMS];
 static int g_funcptr_decl_array_len;
+static int g_last_array_dim_count;
+static int g_last_array_dims[8];
 
 static void fatal(const char *msg)
 {
@@ -2325,6 +2329,70 @@ static int type_index_elem_size(int type)
     return type_size(type);
 }
 
+
+static void copy_last_array_dims_to_sym(struct Sym *s)
+{
+    int i;
+
+    s->dim_count = g_last_array_dim_count;
+    for (i = 0; i < 8; ++i)
+        s->dims[i] = (i < g_last_array_dim_count) ? g_last_array_dims[i] : 0;
+}
+
+static int sym_array_inner_count_from(struct Sym *s, int from_dim)
+{
+    int i;
+    int n;
+
+    n = 1;
+    if (!s || s->dim_count <= 0)
+        return 1;
+
+    for (i = from_dim; i < s->dim_count; ++i) {
+        if (s->dims[i] <= 0)
+            return 1;
+        n *= s->dims[i];
+    }
+
+    return n;
+}
+
+static int sym_array_index_elem_size(struct Sym *s, int index_count)
+{
+    int elem;
+
+    elem = type_size(s->type);
+    if (elem <= 0)
+        elem = 2;
+
+    if (!s || s->dim_count <= 1)
+        return s && s->elem_size > 0 ? s->elem_size : elem;
+
+    return sym_array_inner_count_from(s, index_count + 1) * elem;
+}
+
+static void infer_omitted_first_dim_from_init(struct Sym *s, int init_elems)
+{
+    int inner;
+
+    if (!s || !s->is_array || s->dim_count <= 0 || s->dims[0] != 0)
+        return;
+
+    inner = sym_array_inner_count_from(s, 1);
+    if (inner <= 0)
+        inner = 1;
+
+    s->dims[0] = (init_elems + inner - 1) / inner;
+    s->array_len = s->dims[0];
+
+    if (s->elem_size <= 0) {
+        int elem = type_size(s->type);
+        if (elem <= 0) elem = 2;
+        s->elem_size = inner * elem;
+    }
+}
+
+
 static int find_struct_def(const char *name)
 {
     int i;
@@ -2937,6 +3005,11 @@ static void emit_global_char_index_addr(struct Sym *s)
 static int emit_simple_local_index_to_hl(void)
 {
     struct Sym *idx;
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
 
     if (tok.kind != TOK_ID)
         return 0;
@@ -2951,9 +3024,24 @@ static int emit_simple_local_index_to_hl(void)
     if (type_size(idx->type) != 2)
         return 0;
 
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    next_token();
+    if (tok.kind != ']') {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        tok = save_tok;
+        return 0;
+    }
+
     fprintf(outf, "\tld l,(ix%+d)\n", idx->offset);
     fprintf(outf, "\tld h,(ix%+d)\n", idx->offset + 1);
-    next_token();
     return 1;
 }
 
@@ -3853,6 +3941,8 @@ static void parse_array_declarator_dims(int base_type,
     int inner;
 
     ndims = 0;
+    g_last_array_dim_count = 0;
+    memset(g_last_array_dims, 0, sizeof(g_last_array_dims));
 
     while (accept('[')) {
         if (tok.kind == ']') {
@@ -3901,6 +3991,10 @@ static void parse_array_declarator_dims(int base_type,
 
     total_len[0] = total;
     first_stride_bytes[0] = (ndims > 1 && inner > 0) ? inner * elem_bytes : elem_bytes;
+
+    g_last_array_dim_count = ndims;
+    for (i = 0; i < ndims && i < 8; ++i)
+        g_last_array_dims[i] = dims[i];
 }
 
 
@@ -4256,8 +4350,14 @@ static int try_fast_global_char_array_store(void)
         return 0;
     }
 
-    if (!emit_simple_local_index_to_hl())
-        gen_expr();             /* index result in HL */
+    if (!emit_simple_local_index_to_hl()) {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        tok = save_tok;
+        return 0;
+    }
     expect(']');
 
     op = tok.kind;
@@ -4482,10 +4582,8 @@ static void gen_lvalue_addr(int *ptype)
 
                 if (try_parse_const_subscript(&const_index)) {
 
-                if (s->is_array && addr_array_index_count == 0)
-                    elem_size = s->elem_size ? s->elem_size : type_size(cur_type);
-                else if (s->is_array)
-                    elem_size = type_size(cur_type);
+                if (s->is_array)
+                    elem_size = sym_array_index_elem_size(s, addr_array_index_count);
                 else
                     elem_size = type_index_elem_size(cur_type);
                 addr_array_index_count++;
@@ -4496,10 +4594,8 @@ static void gen_lvalue_addr(int *ptype)
                 gen_expr();
                 expect(']');
 
-                if (s->is_array && addr_array_index_count == 0)
-                    elem_size = s->elem_size ? s->elem_size : type_size(cur_type);
-                else if (s->is_array)
-                    elem_size = type_size(cur_type);
+                if (s->is_array)
+                    elem_size = sym_array_index_elem_size(s, addr_array_index_count);
                 else
                     elem_size = type_index_elem_size(cur_type);
                 addr_array_index_count++;
@@ -5672,7 +5768,7 @@ static void gen_primary(void)
                 if (try_parse_const_subscript(&const_index)) {
 
                 if (val_is_array)
-                    elem_size = s->elem_size ? s->elem_size : type_size(cur_type);
+                    elem_size = sym_array_index_elem_size(s, val_array_index_count);
                 else
                     elem_size = type_index_elem_size(cur_type);
 
@@ -5683,7 +5779,7 @@ static void gen_primary(void)
                 expect(']');
 
                 if (val_is_array)
-                    elem_size = s->elem_size ? s->elem_size : type_size(cur_type);
+                    elem_size = sym_array_index_elem_size(s, val_array_index_count);
                 else
                     elem_size = type_index_elem_size(cur_type);
 
@@ -5699,17 +5795,14 @@ static void gen_primary(void)
                 }
             }
 
-            if (s->is_array)
+            if (s->is_array) {
                 val_type = cur_type;
-            else
+                val_array_index_count++;
+                if (s->dim_count <= 0 || val_array_index_count >= s->dim_count)
+                    val_is_array = 0;
+            } else {
                 val_type = type_decay_ptr(cur_type);
-
-            /*
-             * After indexing a real array once, the expression now denotes an
-             * element, not the original array.  Leaving val_is_array set made
-             * a[n] decay to an address instead of loading the element value.
-             */
-            val_is_array = 0;
+            }
         }
 
         while (tok.kind == '.' || tok.kind == TOK_ARROW) {
@@ -10251,6 +10344,7 @@ static void gen_local_decl_after_type(int base)
                 s->array_len = arrlen;
                 s->elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(type);
                 if (s->elem_size <= 0) s->elem_size = 2;
+                copy_last_array_dims_to_sym(s);
             }
         }
 
@@ -11433,6 +11527,7 @@ static void scan_local_decl_after_type(int base)
                 s->array_len = arrlen;
                 s->elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(type);
                 if (s->elem_size <= 0) s->elem_size = 2;
+                copy_last_array_dims_to_sym(s);
             }
         }
 
@@ -11495,6 +11590,7 @@ static void scan_static_local_decl_after_type(int base)
             g->array_len = arrlen > 0 ? arrlen : 0;
             g->elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(type);
             if (g->elem_size <= 0) g->elem_size = 2;
+            copy_last_array_dims_to_sym(g);
         }
 
         if (!find_local(name)) {
@@ -11503,6 +11599,8 @@ static void scan_static_local_decl_after_type(int base)
                 l->is_array = 1;
                 l->array_len = arrlen > 0 ? arrlen : 0;
                 l->elem_size = g->elem_size;
+                l->dim_count = g->dim_count;
+                memcpy(l->dims, g->dims, sizeof(l->dims));
             }
         }
 
@@ -11517,6 +11615,8 @@ static void scan_static_local_decl_after_type(int base)
             l->size = g->size;
             l->array_len = g->array_len;
             l->elem_size = g->elem_size;
+            l->dim_count = g->dim_count;
+            memcpy(l->dims, g->dims, sizeof(l->dims));
         }
 
         if (!accept(',')) break;
@@ -12130,10 +12230,17 @@ static void parse_global_init_list(struct Sym *s)
     s->init_count = n;
     if (s->is_array && (s->array_len == 0 || s->size == 0)) {
         int elem_bytes;
-        elem_bytes = s->elem_size ? s->elem_size : type_size(s->type);
+        elem_bytes = type_size(s->type);
         if (elem_bytes <= 0) elem_bytes = 2;
-        s->array_len = n;
-        s->size = n * elem_bytes;
+
+        infer_omitted_first_dim_from_init(s, n);
+
+        if (s->array_len == 0)
+            s->array_len = n;
+        if (s->size == 0)
+            s->size = n * elem_bytes;
+        if (s->elem_size <= 0)
+            s->elem_size = elem_bytes;
     }
 }
 
@@ -12301,9 +12408,19 @@ static void parse_function_or_global(int base_type)
             int total_count = 1;
             int first_dim = g_funcptr_decl_array_len;
             int base_size = type_size(type);
+            int dim_count = 0;
+            int dims[8];
+            int i;
+            int inner_count;
 
-            if (g_funcptr_decl_array_len > 0)
+            for (i = 0; i < 8; ++i)
+                dims[i] = 0;
+
+            if (g_funcptr_decl_array_len > 0) {
                 total_count = g_funcptr_decl_array_len;
+                dim_count = 1;
+                dims[0] = g_funcptr_decl_array_len;
+            }
             g_funcptr_decl_array_len = 0;
 
             while (tok.kind == '[') {
@@ -12316,16 +12433,41 @@ static void parse_function_or_global(int base_type)
                     d = parse_const_int_expr();
                     expect(']');
                 }
-                if (!first_dim) first_dim = d;
-                if (d > 0) total_count *= d;
-                else total_count = 0;
+                if (dim_count < 8)
+                    dims[dim_count++] = d;
+            }
+
+            if (dim_count > 0) {
+                first_dim = dims[0];
+
+                total_count = 1;
+                for (i = 0; i < dim_count; ++i) {
+                    if (dims[i] <= 0) {
+                        total_count = 0;
+                        break;
+                    }
+                    total_count *= dims[i];
+                }
             }
 
             arrlen = first_dim;
-            if (arrlen == 0 && g_typedef_array_len > 0) {
+            if (arrlen == 0 && dim_count == 0 && g_typedef_array_len > 0) {
                 arrlen = g_typedef_array_len;
                 first_dim = g_typedef_array_len;
                 total_count = g_typedef_array_len;
+                dim_count = 1;
+                dims[0] = g_typedef_array_len;
+            }
+
+            inner_count = 1;
+            if (dim_count > 1) {
+                for (i = 1; i < dim_count; ++i) {
+                    if (dims[i] <= 0) {
+                        inner_count = 1;
+                        break;
+                    }
+                    inner_count *= dims[i];
+                }
             }
 
             if (decl_is_extern) {
@@ -12351,16 +12493,23 @@ static void parse_function_or_global(int base_type)
             if (decl_is_static)
                 s->is_static = 1;
 
-            if (arrlen || total_count == 0) {
+            if (dim_count > 0 || arrlen || total_count == 0) {
                 s->is_array = 1;
                 s->array_len = arrlen;
-                if (arrlen > 0 && first_dim > 0) {
-                    s->elem_size = (total_count / first_dim) * base_size;
-                    s->size = object_array_size(type, total_count);
-                } else {
+                s->dim_count = dim_count;
+                for (i = 0; i < 8; ++i)
+                    s->dims[i] = (i < dim_count) ? dims[i] : 0;
+
+                if (dim_count > 1)
+                    s->elem_size = inner_count * base_size;
+                else
                     s->elem_size = base_size;
+                if (s->elem_size <= 0) s->elem_size = 2;
+
+                if (total_count > 0)
+                    s->size = object_array_size(type, total_count);
+                else
                     s->size = 0;
-                }
             }
 
             parse_global_init_list(s);

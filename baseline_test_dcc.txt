@@ -3051,7 +3051,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ Jun  1 2026
-__TIME__ 05:21:41
+__TIME__ 05:54:50
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3581,3 +3581,5 @@ test tcrcfix
 tcrcfix_c89: all tests passed
 test trtl2
 trtl_lzpack: all tests passed
+test tsyntax
+tsyntax: all tests passed

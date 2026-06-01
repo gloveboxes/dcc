@@ -14,7 +14,7 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              tc89pp tc89fnty tc89flt tc89fltc tc89flta tc89fptr tc89fs tc89fcmp ^
              tc89fcnv tc89fadd tc89fmul tc89fdiv tc89ffio tc89flng tc89fmat ^
              ttrig tlog tphi tap cpmenumd tbits tfo pihex tstrify tlcont primes ^
-             tpreproc trwold tlimits spsmash tcrcfix trtl2
+             tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax
 
 echo --- optimized (ma peep) ---
 set "outputfile=test_dcc.txt"

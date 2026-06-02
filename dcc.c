@@ -3511,9 +3511,14 @@ static struct Sym *add_param_alloc(const char *name, int type)
 
 static int add_string_ex(const char *s, int is_wide)
 {
+    int i;
+    is_wide = is_wide ? 1 : 0;
+    for (i = 0; i < nstrings; i++)
+        if (string_wide[i] == is_wide && strcmp(strings[i], s) == 0)
+            return i;
     if (nstrings >= MAX_STRINGS) fatal("too many strings");
     strings[nstrings] = xstrdup2(s);
-    string_wide[nstrings] = is_wide ? 1 : 0;
+    string_wide[nstrings] = is_wide;
     return nstrings++;
 }
 
@@ -3845,7 +3850,12 @@ static int base_struct_id_from_type(int type)
 
 static void emit_add_field_offset(struct FieldDef *fd)
 {
-    if (fd->offset) {
+    int i;
+    /* inc hl is 1 byte; ld de,N + add hl,de is 4 bytes regardless of N */
+    if (fd->offset >= 1 && fd->offset <= 3) {
+        for (i = 0; i < fd->offset; i++)
+            emit("\tinc hl\n");
+    } else if (fd->offset) {
         fprintf(outf, "\tld de,%d\n", fd->offset);
         emit("\tadd hl,de\n");
     }
@@ -5718,15 +5728,15 @@ static void emit_cleanup_stack_bytes(int bytes)
     int k;
 
     /*
-     * Do not use HL/DE to adjust SP here.  A function may have just returned
-     * a 32-bit value in DE:HL, and the old:
-     *
-     *     ex de,hl / ld hl,n / add hl,sp / ld sp,hl / ex de,hl
-     *
-     * preserved only HL and destroyed the high word in DE.  A few INC SP
-     * instructions are larger/slower but correct for all return types.
+     * POP BC is 1 byte and discards 2 bytes from the stack without touching
+     * HL, DE, or flags — safe regardless of whether the callee returned a
+     * 16-bit value (in HL) or a 32-bit value (in DE:HL).  Arguments are
+     * always pushed in 2- or 4-byte units so bytes is always even; the
+     * trailing inc sp is a safety net only.
      */
-    for (k = 0; k < bytes; ++k)
+    for (k = bytes; k >= 2; k -= 2)
+        emit("\tpop bc\n");
+    if (k > 0)
         emit("\tinc sp\n");
 }
 

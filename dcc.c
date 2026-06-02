@@ -2040,6 +2040,7 @@ static int macro_number_should_expand_textually(const char *s)
     const char *p;
     unsigned long v;
     int saw_digit;
+    int is_nondecimal;
 
     p = s;
     while (*p && isspace((unsigned char)*p))
@@ -2049,9 +2050,17 @@ static int macro_number_should_expand_textually(const char *s)
         p++;
 
     saw_digit = 0;
+    is_nondecimal = 0;
     if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+        is_nondecimal = 1;
         p += 2;
         while (isxdigit((unsigned char)*p)) {
+            saw_digit = 1;
+            p++;
+        }
+    } else if (p[0] == '0' && isdigit((unsigned char)p[1])) {
+        is_nondecimal = 1; /* octal */
+        while (isdigit((unsigned char)*p)) {
             saw_digit = 1;
             p++;
         }
@@ -2070,6 +2079,14 @@ static int macro_number_should_expand_textually(const char *s)
      * literal lexer preserves long type.  Also keep values above 16 bits
      * textual; otherwise define_number_value() truncates object-like numeric
      * macros to the target int width.  That broke LONG_MAX/LONG_MIN.
+     *
+     * Also expand non-decimal (hex/octal) constants with values in
+     * 0x8000..0xFFFF textually so the normal lexer sets g_tok_unsigned_suffix,
+     * giving them type 'unsigned int' per C89.  Without this, the fast-path
+     * through define_number_value() leaves g_tok_unsigned_suffix unset and
+     * the constant is sign-extended to long instead of zero-extended, causing
+     * comparisons like (long_var > 0xBDFF) to compare against -16897 instead
+     * of 48639.
      */
     if (*p == 'l' || *p == 'L')
         return 1;
@@ -2080,7 +2097,7 @@ static int macro_number_should_expand_textually(const char *s)
     }
 
     v = strtoul(s, NULL, 0);
-    return v > 0xffffUL;
+    return v > 0xffffUL || (is_nondecimal && v > 32767UL);
 }
 
 static int define_number_value(const char *name, long *out, int depth)

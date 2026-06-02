@@ -3062,8 +3062,8 @@ argv[ 4 ]: 'DDDD'
 argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
-__DATE__ Jun  1 2026
-__TIME__ 11:10:24
+__DATE__ Jun  2 2026
+__TIME__ 09:35:40
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3622,3 +3622,5 @@ test ttypesr
 ttypereg: all tests passed
 test ttype2
 ttype2: all tests passed
+test tdecinit
+tdeclinit: all tests passed

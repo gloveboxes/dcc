@@ -4243,6 +4243,7 @@ static void emit_store_de_to_addr_hl(int type)
 }
 
 static void gen_expr(void);
+static void gen_expr_no_comma(void);
 static int snippet_is_single_pointer_id(const char *s);
 static void gen_statement(void);
 static int parse_funcptr_declarator(int *ptype, char *name, int namesz)
@@ -10031,6 +10032,23 @@ normal_assign:
 
     gen_conditional();
 }
+static void gen_expr_no_comma(void)
+{
+    /*
+     * Assignment-expression, not full expression.  Declaration initializers
+     * use assignment-expression grammar, so a comma at this level separates
+     * declarators rather than becoming the comma operator:
+     *
+     *     int a = 0, b = 1;
+     *
+     * The comma operator is still available when parenthesized because
+     * gen_primary() calls gen_expr() for the expression inside parentheses:
+     *
+     *     int a = (0, 1);
+     */
+    gen_assign();
+}
+
 static void gen_expr(void)
 {
     gen_assign();
@@ -11086,7 +11104,7 @@ static void gen_local_decl_after_type(int base)
                 next_token();
                 emit_load_sym_addr(s);
                 emit("\tpush hl\n");
-                gen_expr();
+                gen_expr_no_comma();
                 if (type_is_long(type)) {
                     if (!type_is_long(g_expr_type))
                         emit_extend_to_long(g_expr_type & TYPE_UNSIGNED);
@@ -11115,7 +11133,7 @@ static void gen_local_decl_after_type(int base)
                      */
                     emit_load_sym_addr(s);
                     emit("\tpush hl\n");
-                    gen_expr();
+                    gen_expr_no_comma();
                     if (!type_is_float(g_expr_type))
                         emit_convert_int_to_float(g_expr_type);
                     emit_store_de_to_addr_hl(type);
@@ -11123,7 +11141,7 @@ static void gen_local_decl_after_type(int base)
             } else {
                 emit_load_sym_addr(s);
                 emit("\tpush hl\n");
-                gen_expr();
+                gen_expr_no_comma();
                 if (type_is_long(type)) {
                     /* For long locals, emit_store_de_to_addr_hl pops the
                      * address itself via "pop de", so don't consume it here. */

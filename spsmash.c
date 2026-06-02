@@ -11,7 +11,7 @@
 // memory layout high to low:
 //    reserved for the OS
 //    sp at app start
-//    bottom of stack -- sp at app start - DEFAULT_STACK in dccrtl.mac
+//    bottom of stack -- sp at app start minus -stack value from dcc
 //    top of malloc() heap (_hlimit)
 //    brk (top of currently used malloc() heap) (_brk)
 //    bottom of malloc() heap

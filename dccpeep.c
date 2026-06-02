@@ -882,7 +882,231 @@ static void peep_format_ix_off(char *buf, int off)
         sprintf(buf, "%d", off);
 }
 
+/*
+ * Dead IX-frame store elimination.
+ *
+ * Performs a forward-scan within each function/segment body.  A store to
+ * (ix+N) is dead when it is overwritten by a later store to the same offset
+ * before any read of that offset, or when the function returns (ret) without
+ * ever reading the offset again.
+ *
+ * Conservative behaviour:
+ *   - Internal labels (L\d+:) and forward/backward jumps flush all pending
+ *     stores (we can no longer prove they are overwritten before read).
+ *   - Segment boundaries (_Z...: labels etc.) also flush — the new segment's
+ *     IX frame is different from the old one.
+ *
+ * Fires on crc_update_byte: ix-8..ix-5 (temp "t") are written but never read
+ * (16 dead stores); earlier writes to ix-4..ix-1 (idx) and ix+4..ix+7 (crc)
+ * are killed by subsequent writes without intervening reads (20 more).
+ */
+static int pass_elim_dead_ix_stores(void)
+{
+    static char is_dead[MAX_LINES];
+    int last_store[256];  /* last_store[offset+128] = line index; -1 = none */
+    int i, idx, changed;
+    char tmp[MAX_LINE];
+    const char *p;
+    char *endp;
+    long v;
+    int n;
 
+    memset(is_dead, 0, sizeof(is_dead));
+    memset(last_store, -1, sizeof(last_store));
+    changed = 0;
+
+    for (i = 0; i < nlines; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        n = (int)strlen(tmp);
+
+        /* Any label ending in ':' that is not an internal 'L<digits>:' label
+           is a segment boundary (new function or data).  Reset all state. */
+        if (n > 1 && tmp[n-1] == ':' && tmp[0] != ' ' && tmp[0] != '\t') {
+            /* Check whether it is an internal local label L\d+: */
+            int is_local = 0;
+            if (tmp[0] == 'L') {
+                int j;
+                is_local = 1;
+                for (j = 1; j < n-1; j++)
+                    if (tmp[j] < '0' || tmp[j] > '9') { is_local = 0; break; }
+            }
+            if (!is_local) {
+                /* Segment boundary: flush (remaining stores from previous
+                   segment are addressed by the old IX — not our problem) */
+                memset(last_store, -1, sizeof(last_store));
+            } else {
+                /* Internal label: conservative flush — a branch from elsewhere
+                   might rely on a pending store being present. */
+                memset(last_store, -1, sizeof(last_store));
+            }
+            continue;
+        }
+
+        /* ret: end of function — any pending store was never read → dead */
+        if (strcmp(tmp, "ret") == 0) {
+            for (idx = 0; idx < 256; idx++)
+                if (last_store[idx] >= 0)
+                    is_dead[last_store[idx]] = 1;
+            memset(last_store, -1, sizeof(last_store));
+            continue;
+        }
+
+        /* Jump instructions: flush — can't prove overwrite on all paths */
+        if (strncmp(tmp, "jp ", 3) == 0 || strncmp(tmp, "jr ", 3) == 0 ||
+            strncmp(tmp, "djnz ", 5) == 0) {
+            memset(last_store, -1, sizeof(last_store));
+            continue;
+        }
+
+        /* Indirect IX-frame access pattern: push ix / pop hl / ld de,K / add hl,de
+         * This computes HL = IX+K and then subsequent (hl) accesses read IX+K.
+         * The (hl) instructions contain no "(ix" text, so we must handle this
+         * 4-instruction sequence explicitly to avoid false dead-store deletions. */
+        if (strcmp(tmp, "push ix") == 0 &&
+            i + 3 < nlines) {
+            char t1[MAX_LINE], t2[MAX_LINE], t3[MAX_LINE];
+            long kv;
+            char *ep;
+            strip_peep_comment_copy(t1, lines[i + 1]);
+            strip_peep_comment_copy(t2, lines[i + 2]);
+            strip_peep_comment_copy(t3, lines[i + 3]);
+            if (strcmp(t1, "pop hl") == 0 &&
+                strncmp(t2, "ld de,", 6) == 0 &&
+                strcmp(t3, "add hl,de") == 0) {
+                kv = strtol(t2 + 6, &ep, 0);
+                if (*ep == 0 && kv >= -128 && kv <= 127) {
+                    int b;
+                    /* Address of frame offset K is taken via HL.  We do not
+                     * know how many bytes will be accessed through the
+                     * resulting pointer, so conservatively mark up to 4
+                     * consecutive bytes as live.  This covers char (1 byte),
+                     * int (2 bytes), and long/float (4 bytes) objects. */
+                    for (b = 0; b < 4; b++) {
+                        if (kv + b >= -128 && kv + b <= 127) {
+                            idx = (int)(kv + b) + 128;
+                            last_store[idx] = -1;
+                        }
+                    }
+                }
+            }
+            /* Fall through: also treat push ix as a regular no-(ix) instruction */
+        }
+
+        /* Check whether this instruction touches an IX-indexed address */
+        if (strstr(tmp, "(ix") == NULL)
+            continue;
+
+        if (strncmp(tmp, "ld (ix", 6) == 0) {
+            /* Store: ld (ix+N),something  — track as pending store */
+            p = tmp + 6;
+            v = strtol(p, &endp, 0);
+            if (*endp == ')' && *(endp+1) == ',' && v >= -128 && v <= 127) {
+                idx = (int)v + 128;
+                if (last_store[idx] >= 0)
+                    is_dead[last_store[idx]] = 1;  /* overwritten → dead */
+                last_store[idx] = i;
+            }
+        } else {
+            /* Any other use of (ix+N): mark the pending store as live */
+            p = strstr(tmp, "(ix");
+            if (p) {
+                p += 3;
+                if (*p == '+' || *p == '-' ||
+                    (*p >= '0' && *p <= '9')) {
+                    v = strtol(p, &endp, 0);
+                    if (*endp == ')' && v >= -128 && v <= 127) {
+                        idx = (int)v + 128;
+                        last_store[idx] = -1;  /* store is live */
+                    }
+                }
+            }
+        }
+    }
+
+    /* Delete dead stores in reverse line order to preserve lower indices */
+    for (i = nlines - 1; i >= 0; i--) {
+        if (is_dead[i]) {
+            delete_n(i, 1);
+            changed = 1;
+        }
+    }
+
+    return changed;
+}
+
+/*
+ * Eliminate: store 32-bit DEHL to (ix+N)..(ix+N+3) immediately followed by
+ * reload of the same four bytes back into l/h/e/d.  Since stores to memory do
+ * not change the source registers, DEHL still holds the correct value after
+ * the stores and the reload is redundant.
+ *
+ *   ld (ix+N),l      |  ld (ix+N),l
+ *   ld (ix+N+1),h    |  ld (ix+N+1),h
+ *   ld (ix+N+2),e    |  ld (ix+N+2),e
+ *   ld (ix+N+3),d    |  ld (ix+N+3),d
+ *   ld l,(ix+N)      |  (deleted)
+ *   ld h,(ix+N+1)    |  (deleted)
+ *   ld e,(ix+N+2)    |  (deleted)
+ *   ld d,(ix+N+3)    |  (deleted)
+ *
+ * This fires heavily in 32-bit (long) expression code where the compiler
+ * spills an intermediate to a local and then immediately reloads it.
+ */
+static int pass_elim_long_store_reload(void)
+{
+    int i, changed, ival, k;
+    char tmp[MAX_LINE];
+    char off0[32], off1[32], off2[32], off3[32];
+    char expect[MAX_LINE];
+    const char *p;
+
+    changed = 0;
+
+    for (i = 0; i + 7 < nlines; i++) {
+        /* Match first store: ld (ix+N),l */
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strncmp(tmp, "ld (ix", 6) != 0)
+            continue;
+        p = tmp + 6;
+        k = 0;
+        while (*p && *p != ')' && k < 30)
+            off0[k++] = *p++;
+        off0[k] = 0;
+        if (*p != ')' || p[1] != ',' || p[2] != 'l' || p[3] != 0 || k == 0)
+            continue;
+
+        /* Compute adjacent offsets */
+        ival = (int)strtol(off0, NULL, 0);
+        peep_format_ix_off(off1, ival + 1);
+        peep_format_ix_off(off2, ival + 2);
+        peep_format_ix_off(off3, ival + 3);
+
+        /* Check remaining 3 stores */
+        sprintf(expect, "ld (ix%s),h", off1);
+        if (!eq(i + 1, expect)) continue;
+        sprintf(expect, "ld (ix%s),e", off2);
+        if (!eq(i + 2, expect)) continue;
+        sprintf(expect, "ld (ix%s),d", off3);
+        if (!eq(i + 3, expect)) continue;
+
+        /* Check 4 reloads of the same bytes */
+        sprintf(expect, "ld l,(ix%s)", off0);
+        if (!eq(i + 4, expect)) continue;
+        sprintf(expect, "ld h,(ix%s)", off1);
+        if (!eq(i + 5, expect)) continue;
+        sprintf(expect, "ld e,(ix%s)", off2);
+        if (!eq(i + 6, expect)) continue;
+        sprintf(expect, "ld d,(ix%s)", off3);
+        if (!eq(i + 7, expect)) continue;
+
+        /* Delete the 4 reload lines; stores stay in case the value is accessed
+         * later via ix addressing. */
+        delete_n(i + 4, 4);
+        changed = 1;
+    }
+
+    return changed;
+}
 
 static int peep_is_pos_func_label(const char *s)
 {
@@ -5264,7 +5488,9 @@ int main(int argc, char **argv)
         if (pass_recover_index_from_sbc()) changed = 1;
         if (pass_ix_frame_ptr_load()) changed = 1;
         if (pass_deref_byte_cmp()) changed = 1;
+        if (pass_elim_dead_ix_stores()) changed = 1;
         if (pass_remove_ix_store_reload_a()) changed = 1;
+        if (pass_elim_long_store_reload()) changed = 1;
         if (pass_branch_over_jump()) changed = 1;
         if (pass_global_board_const_offsets()) changed = 1;
         if (pass_posfunc_ix1_to_b()) changed = 1;

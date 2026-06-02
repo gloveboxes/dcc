@@ -7852,6 +7852,31 @@ static int emit_cmp_const_branch_for_signed_local16(struct Sym *s, int op, long 
      *   positive hi != 0   => lhs >= 256, so lhs < c is false
      *   hi == 0            => compare low byte with c
      */
+    if (op == TOK_GE) {
+        /*
+         * var >= c  — only c == 0 is handled here.
+         * var >= 0  ↔  var is non-negative  ↔  sign bit clear in hi byte.
+         * This catches  for (i = N; 0 <= i; i--)  written as  const <= var.
+         */
+        if (c != 0)
+            return 0;
+        if (branch_when_true) {
+            /* branch to label when var >= 0 (non-negative) */
+            ldone = new_label();
+            fprintf(outf, "\tld a,(ix%+d)\n", s->offset + 1);
+            emit("\tor a\n");
+            emit_jp_label("jp m,", ldone);   /* negative: not >= 0, skip */
+            emit_jp_label("jp", label);
+            emit_label(ldone);
+        } else {
+            /* branch to label when var < 0 (negative) */
+            fprintf(outf, "\tld a,(ix%+d)\n", s->offset + 1);
+            emit("\tor a\n");
+            emit_jp_label("jp m,", label);   /* negative: branch */
+        }
+        return 1;
+    }
+
     if (op != '<')
         return 0;
 
@@ -7899,10 +7924,10 @@ static int gen_direct_small_const_int_rel_branch_until(int label, int branch_whe
     save_tok = tok;
 
     if (tok.kind != TOK_ID)
-        goto fail;
+        goto try_const_op_var;
     s = find_sym(tok.text);
     if (!s)
-        goto fail;
+        goto try_const_op_var;
     next_token();
 
     if (!is_relop_token(tok.kind))
@@ -7920,6 +7945,45 @@ static int gen_direct_small_const_int_rel_branch_until(int label, int branch_whe
         goto fail;
 
     return 1;
+
+try_const_op_var:
+    /* Handle const op var forms by flipping the operator:
+     *   const >  var  →  var <  const  (e.g., 12 > i)
+     *   const <= var  →  var >= const  (e.g.,  0 <= i, reverse loops)
+     */
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+
+    if (!parse_byte_const_operand(&c))
+        goto fail;
+
+    /* Accept '>' (const > var → var < const) or TOK_LE (const <= var → var >= const) */
+    if (tok.kind == '>') {
+        int flipped_op = '<';
+        next_token();
+        if (tok.kind != TOK_ID) goto fail;
+        s = find_sym(tok.text); if (!s) goto fail;
+        next_token();
+        if (tok.kind != stop_kind) goto fail;
+        if (!emit_cmp_const_branch_for_signed_local16(s, flipped_op, c, label, branch_when_true))
+            goto fail;
+        return 1;
+    }
+
+    if (tok.kind == TOK_LE) {
+        int flipped_op = TOK_GE;
+        next_token();
+        if (tok.kind != TOK_ID) goto fail;
+        s = find_sym(tok.text); if (!s) goto fail;
+        next_token();
+        if (tok.kind != stop_kind) goto fail;
+        if (!emit_cmp_const_branch_for_signed_local16(s, flipped_op, c, label, branch_when_true))
+            goto fail;
+        return 1;
+    }
 
 fail:
     posi = save_pos;

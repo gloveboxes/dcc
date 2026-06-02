@@ -96,6 +96,11 @@ int main()
     printf( "size_t zd: %zd\n", st );
     printf( "size_t zx: %zx\n", st );
 
+    /* left justification */
+    printf("[%5s]\n", "ab");       /* [   ab] */
+    printf("[%-5s]\n", "ab");      /* [ab   ] */
+    printf("[%-3s:%3d:%6ld]\n", "x", 7, 12345L); /* [x  :  7: 12345] */
+
     // no real attempt to make printf conformant on a Z80 cppreference();
 
     printf("tprintf ok\n");

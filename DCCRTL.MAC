@@ -845,41 +845,40 @@ __sdup_len:
         public  __ncpy
 __ncpy:
         ; char *strncpy(char *dst, const char *src, size_t n)
+        ; Copy at most n bytes and, if src ends first, pad the rest with NUL.
+        ; Keep private labels short/unique for M80/L80 symbol significance.
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      e,(ix+4)
+        ld      e,(ix+4)        ; DE = dst
         ld      d,(ix+5)
-        ld      l,(ix+6)
+        ld      l,(ix+6)        ; HL = src
         ld      h,(ix+7)
-        ld      c,(ix+8)
+        ld      c,(ix+8)        ; BC = n
         ld      b,(ix+9)
-        push    de
-sncpy_loop:
+        push    de              ; return dst
+nc1lp:
         ld      a,b
         or      c
-        jr      z,sncpy_done
+        jr      z,nc1dn
         ld      a,(hl)
+        inc     hl
         ld      (de),a
         inc     de
         dec     bc
         or      a
-        jr      z,sncpy_pad
-        inc     hl
-        jr      sncpy_loop
-sncpy_pad:
+        jr      nz,nc1lp
+        xor     a
+nc1pd:
         ld      a,b
         or      c
-        jr      z,sncpy_done
+        jr      z,nc1dn
         xor     a
-sncpy_pad_loop:
         ld      (de),a
         inc     de
         dec     bc
-        ld      a,b
-        or      c
-        jr      nz,sncpy_pad_loop
-sncpy_done:
+        jr      nc1pd
+nc1dn:
         pop     hl
         pop     ix
         ret
@@ -1405,6 +1404,7 @@ pf_percent:
         xor     a
         ld      (pf_width),a
         ld      (pf_prec),a
+        ld      (pf_left),a
 
 pf_pct_next:
         ld      a,(hl)
@@ -1414,6 +1414,9 @@ pf_pct_next:
 
         cp      '%'
         jp      z,pf_emit_and_loop
+
+        cp      '-'
+        jp      z,pf_pct_left
 
         cp      '.'
         jp      z,pf_pct_dot
@@ -1443,6 +1446,11 @@ pf_pct_next:
         add     a,e
         ld      (pf_width),a
         pop     de
+        jp      pf_pct_next
+
+pf_pct_left:
+        ld      a,1
+        ld      (pf_left),a
         jp      pf_pct_next
 
 pf_pct_dot:
@@ -1541,10 +1549,20 @@ pf_c:
         push    hl
         call    pf_arg_hl
         push    de
+        ld      a,(pf_left)
+        or      a
+        jr      nz,pf_c_emit
         ld      a,1
         call    pf_pad_a
+pf_c_emit:
         ld      a,l
         call    pf_emit_a
+        ld      a,(pf_left)
+        or      a
+        jr      z,pf_c_done
+        ld      a,1
+        call    pf_pad_a
+pf_c_done:
         pop     de
         pop     hl
         jp      pf_loop
@@ -1555,7 +1573,13 @@ pf_s:
         push    de
         push    hl
         call    pf__slen_hl       ; A = strlen(HL), HL preserved by stack below
+        ld      (pf_digit),a
+        ld      a,(pf_left)
+        or      a
+        jr      nz,pf_s_no_prepad
+        ld      a,(pf_digit)
         call    pf_pad_a
+pf_s_no_prepad:
         pop     hl
 pf_s_loop:
         ld      a,(hl)
@@ -1565,6 +1589,12 @@ pf_s_loop:
         call    pf_emit_a
         jr      pf_s_loop
 pf_s_done:
+        ld      a,(pf_left)
+        or      a
+        jr      z,pf_s_no_postpad
+        ld      a,(pf_digit)
+        call    pf_pad_a
+pf_s_no_postpad:
         pop     de
         pop     hl
         jp      pf_loop
@@ -1890,6 +1920,8 @@ pf_digit:
         db      0
 pf_prec:
         db      0
+pf_left:
+        db      0
 
 pf_decbuf:
         ds      7
@@ -2138,6 +2170,7 @@ qf_percent:
         xor     a
         ld      (qf_width),a
         ld      (qf_prec),a
+        ld      (qf_left),a
 
 qf_pct_next:
         ld      a,(hl)
@@ -2147,6 +2180,9 @@ qf_pct_next:
 
         cp      '%'
         jp      z,qf_emit_and_loop
+
+        cp      '-'
+        jp      z,qf_pct_left
 
         cp      '.'
         jp      z,qf_pct_dot
@@ -2176,6 +2212,11 @@ qf_pct_next:
         add     a,e
         ld      (qf_width),a
         pop     de
+        jp      qf_pct_next
+
+qf_pct_left:
+        ld      a,1
+        ld      (qf_left),a
         jp      qf_pct_next
 
 qf_pct_dot:
@@ -2276,10 +2317,20 @@ qf_c:
         push    hl
         call    qf_arg_hl
         push    de
+        ld      a,(qf_left)
+        or      a
+        jr      nz,qf_c_emit
         ld      a,1
         call    qf_pad_a
+qf_c_emit:
         ld      a,l
         call    qf_emit_a
+        ld      a,(qf_left)
+        or      a
+        jr      z,qf_c_done
+        ld      a,1
+        call    qf_pad_a
+qf_c_done:
         pop     de
         pop     hl
         jp      qf_loop
@@ -2290,7 +2341,13 @@ qf_s:
         push    de
         push    hl
         call    qf__slen_hl       ; A = strlen(HL), HL preserved by stack below
+        ld      (qf_digit),a
+        ld      a,(qf_left)
+        or      a
+        jr      nz,qf_s_no_prepad
+        ld      a,(qf_digit)
         call    qf_pad_a
+qf_s_no_prepad:
         pop     hl
 qf_s_loop:
         ld      a,(hl)
@@ -2300,6 +2357,12 @@ qf_s_loop:
         call    qf_emit_a
         jr      qf_s_loop
 qf_s_done:
+        ld      a,(qf_left)
+        or      a
+        jr      z,qf_s_no_postpad
+        ld      a,(qf_digit)
+        call    qf_pad_a
+qf_s_no_postpad:
         pop     de
         pop     hl
         jp      qf_loop
@@ -2817,6 +2880,8 @@ qf_width:
 qf_digit:
         db      0
 qf_prec:
+        db      0
+qf_left:
         db      0
 
 qf_decbuf:
@@ -5162,13 +5227,22 @@ mh_extend:
         ld      (__ml_p),hl     ; save old brk (reuse __ml_p)
         ld      de,(__ml_need)
         add     hl,de
+        jp      c,mh_oom        ; 16-bit wrap means the block cannot fit
         ld      de,HDRSIZE
         add     hl,de           ; HL = brk + need + HDRSIZE
+        jp      c,mh_oom        ; header addition wrapped past 0ffffh
+        ; Require new_brk <= __hlimit.  HL is the exclusive end of
+        ; the allocation (old brk + header + user size).
+        ; This comparison deliberately avoids computing hlimit+1, which
+        ; itself can wrap when the CP/M stack starts near FFFFh.
         ld      de,(__hlimit)
-        inc     de              ; allow == heap_limit (> not >=)
         or      a
-        sbc     hl,de           ; carry if brk+need+HDRSIZE < heap_limit+1 (fits)
-        jr      nc,mh_oom       ; no carry: out of memory
+        sbc     hl,de           ; carry if end < limit, z if end == limit
+        jr      c,mh_extend_ok
+        jr      z,mh_extend_ok
+        jr      mh_oom
+
+mh_extend_ok:
 
         ; Write used header at old brk
         ld      hl,(__ml_p)     ; HL = old brk
@@ -5513,6 +5587,16 @@ _fprintf:
         add     ix,sp
         push    bc
         push    de
+
+        ; For stdout/stderr, stream directly to the console.  The old path
+        ; formatted into the fixed 256-byte __pf_fbuf and then called _write;
+        ; that was fragile for status/progress output and any longer fprintf.
+        ld      a,(ix+4)
+        cp      1
+        jr      z,fpcn
+        cp      2
+        jr      z,fpcn
+
         ld      hl,__pf_fbuf
         ld      (pf_bufptr),hl          ; output to static buffer
         ld      hl,0FFFFh
@@ -5541,6 +5625,21 @@ _fprintf:
         add     hl,sp
         ld      sp,hl                   ; clean 3 args
         ld      hl,(__pf_cnt)           ; return char count
+        pop     de
+        pop     bc
+        pop     ix
+        ret
+
+fpcn:
+        ld      hl,0
+        ld      (pf_sink),hl            ; direct console mode
+        ld      l,(ix+6)
+        ld      h,(ix+7)                ; HL = fmt
+        ld      de,8
+        ld      bc,0
+        call    __pf_run
+        ld      h,b
+        ld      l,c
         pop     de
         pop     bc
         pop     ix

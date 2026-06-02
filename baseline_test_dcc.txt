@@ -140,6 +140,9 @@ ABC
 size_t zu: 33333
 size_t zd: -32203
 size_t zx: 8235
+[   ab]
+[ab   ]
+[x  :  7: 12345]
 tprintf ok
 test ts
 top of app
@@ -3063,7 +3066,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ Jun  2 2026
-__TIME__ 09:53:03
+__TIME__ 10:54:07
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3596,17 +3599,17 @@ trtl_lzpack: all tests passed
 test tsyntax
 tsyntax: all tests passed
 test tstr2
--15s: memchr Basic
--15s: memchr Null
--15s: memchr Missing
--15s: memchr Bounded
--15s: memchr OOB
--15s: strcat Basic
--15s: strcat Empty
--15s: strncpy Fit
--15s: strncpy Trunc
--15s: strncpy Pad1
--15s: strncpy Pad2
+memchr Basic   : PASS
+memchr Null    : PASS
+memchr Missing : PASS
+memchr Bounded : PASS
+memchr OOB     : PASS
+strcat Basic   : PASS
+strcat Empty   : PASS
+strncpy Fit    : PASS
+strncpy Trunc  : PASS
+strncpy Pad1   : PASS
+strncpy Pad2   : PASS
 tstr2 completed with great success!
 test tstr3
 tstr3 completed with great success
@@ -3625,4 +3628,4 @@ ttype2: all tests passed
 test tdecinit
 tdeclinit: all tests passed
 test tmalloch
-tmallochi2: all tests passed
+tmalloch: all tests passed

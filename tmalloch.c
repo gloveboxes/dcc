@@ -6,6 +6,7 @@ int main(void)
 {
     unsigned char *p;
     unsigned char *q;
+    void *r;
     unsigned int i;
     unsigned long sum;
 
@@ -40,6 +41,28 @@ int main(void)
     }
 
     free(q);
-    printf("tmallochi2: all tests passed\n");
+
+    p = malloc(32768U);
+    if (p != 0) {
+        free(p);
+    }
+
+    q = malloc(1U);
+    if (q == 0) {
+        printf("FAIL small malloc failed\n");
+        return 1;
+    }
+
+    /* This must fail on any valid CP/M .COM heap after one live allocation:
+       it cannot fit without 16-bit address wrap or colliding with the stack. */
+    r = malloc(65000U);
+    if (r != 0) {
+        printf("FAIL malloc wrap accepted impossible heap growth\n");
+        return 1;
+    }
+
+    free(q);
+
+    printf("tmalloch: all tests passed\n");
     return 0;
 }

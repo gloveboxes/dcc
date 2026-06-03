@@ -307,6 +307,26 @@ static int line_is_label_name(int i, const char *name)
     return strcmp(lines[i], tmp) == 0;
 }
 
+
+
+static int is_global_asm_label_line(int i)
+{
+    const char *s;
+    int n;
+
+    if (i < 0 || i >= nlines)
+        return 0;
+    s = lines[i];
+    n = (int)strlen(s);
+    if (n < 2 || s[n - 1] != ':')
+        return 0;
+
+    /* DCC emits global/static function and data labels at column 0 as
+     * _name: or _Znnn:. Local control-flow labels are Lnnn:, so they
+     * must not end a function range. */
+    return s[0] == '_';
+}
+
 static void replace_block_with_5(int i,
                                  const char *a, const char *b,
                                  const char *c, const char *d,
@@ -2201,7 +2221,7 @@ static int pass_elim_ix_frame(void)
         /* Find the function boundary: next "public" directive or EOF */
         next_func = nlines;
         for (j = i + 3; j < nlines; j++) {
-            if (strncmp(lines[j], "public ", 7) == 0) {
+            if (strncmp(lines[j], "public ", 7) == 0 || is_global_asm_label_line(j)) {
                 next_func = j;
                 break;
             }
@@ -2304,7 +2324,7 @@ static int pass_shared_frame_stubs(void)
         /* Find next function boundary. */
         next_func = nlines;
         for (j = i + 3; j < nlines; j++) {
-            if (strncmp(lines[j], "public ", 7) == 0) {
+            if (strncmp(lines[j], "public ", 7) == 0 || is_global_asm_label_line(j)) {
                 next_func = j;
                 break;
             }

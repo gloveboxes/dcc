@@ -399,6 +399,7 @@ static int label_id;
 static int current_return_label;
 static int current_return_type;
 static int current_local_bytes;
+static int max_function_local_bytes;
 
 static int break_stack[MAX_FLOW];
 static int cont_stack[MAX_FLOW];
@@ -4972,6 +4973,7 @@ static void gen_post_update_symbol_addr_value(struct Sym *s, int op)
     emit("\tex (sp),hl\n");         /* HL = pointer variable address, stack = old pointer */
     emit_store_de_to_addr_hl(t);    /* store new pointer */
     emit("\tpop hl\n");             /* HL = old pointer, used as lvalue address */
+    g_expr_type = t;
 }
 
 /*
@@ -5293,6 +5295,7 @@ static void gen_post_update_from_addr(int type, int op)
     emit("\tex (sp),hl\n");          /* HL = addr, stack = old */
     emit_store_de_to_addr_hl(type);
     emit("\tpop hl\n");              /* expression result = old */
+    g_expr_type = type;
 }
 
 
@@ -7629,6 +7632,16 @@ static int snippet_simple_type(const char *s, int *typep)
     name[n] = 0;
 
     p = skip_snippet_ws_and_lines(s);
+    if (*p == '[') {
+        /* Subscripted expression: return element type of the array/pointer.
+         * This allows snippet_needs_long_compare to detect that expressions
+         * like o_cost[jc] have type long when o_cost is long *. */
+        sym = find_sym(name);
+        if (!sym || type_ptr_depth(sym->type) == 0)
+            return 0;
+        typep[0] = type_decay_ptr(sym->type);
+        return 1;
+    }
     if (*p != 0 && *p != ';')
         return 0;
 
@@ -13147,6 +13160,8 @@ static void parse_function_or_global(int base_type)
                 body_end_tok_line = tok_line;
                 body_end_tok = tok;
                 current_local_bytes = local_size;
+                if (current_local_bytes > max_function_local_bytes)
+                    max_function_local_bytes = current_local_bytes;
 
                 posi = saved_pos;
                 tok_start_pos = saved_tok_start;
@@ -13610,8 +13625,23 @@ static void emit_data(void)
         }
 
         bss_off = 0;
-        emit("\n\tpublic\t__stack_size\n");
-        fprintf(outf, "__stack_size\tequ\t%d\n", opt_stack_size);
+        {
+            int effective_stack_size;
+            int min_stack_size;
+
+            effective_stack_size = opt_stack_size;
+            min_stack_size = max_function_local_bytes + 128;
+            if (min_stack_size < 0)
+                min_stack_size = max_function_local_bytes;
+            if (effective_stack_size < min_stack_size)
+                effective_stack_size = min_stack_size;
+
+            emit("\n\tpublic\t__stack_size\n");
+            fprintf(outf, "__stack_size\tequ\t%d\n", effective_stack_size);
+            if (effective_stack_size != opt_stack_size)
+                fprintf(outf, "\t; dcc: raised stack reserve from %d to %d; max local frame is %d bytes\n",
+                        opt_stack_size, effective_stack_size, max_function_local_bytes);
+        }
         emit("\n\tpublic\t__data_end\n__data_end:\n");
         emit("\tpublic\t__bssb\n__bssb:\n");
 
@@ -14469,6 +14499,7 @@ int main(int argc, char **argv)
     output_name = NULL;
     opt_module = 0;
     opt_stack_size = 512;
+    max_function_local_bytes = 0;
 
     add_define("_DCC_", "1");
 

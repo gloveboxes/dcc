@@ -3458,8 +3458,8 @@ do_compress_stream (const char *fn, const char *oname, int verbose,
       {
         unsigned tt, nn, p10;
         tt = (unsigned)total; nn = (unsigned)n;
-        while (tt > 655u && nn > 1u) { tt >>= 1; nn >>= 1; }
-        p10 = nn ? (unsigned)(tt * 100u) / nn : 0u;
+        while (tt > 65u && nn > 1u) { tt >>= 1; nn >>= 1; }
+        p10 = nn ? (unsigned)(tt * 1000u) / nn : 0u;
         (void)printf ("  %-12s %6u => %6u  (%u.%u%%)  [%s%s]  -> %s\n", fn,
                       (unsigned)n, (unsigned)total,
                       p10 / 10u, p10 % 10u,
@@ -3828,8 +3828,8 @@ do_list (const char *fn)
   {
     unsigned tt, nn, p10;
     tt = (unsigned)n; nn = (unsigned)outlen;
-    while (tt > 655u && nn > 1u) { tt >>= 1; nn >>= 1; }
-    p10 = nn ? (unsigned)(tt * 100u) / nn : 0u;
+    while (tt > 65u && nn > 1u) { tt >>= 1; nn >>= 1; }
+    p10 = nn ? (unsigned)(tt * 1000u) / nn : 0u;
     (void)printf ("  %-16s compressed %6u   original %6u   (%u.%u%%)\n",
                   fn, (unsigned)n, (unsigned)outlen, p10 / 10u, p10 % 10u);
   }

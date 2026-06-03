@@ -2,9 +2,9 @@
 setlocal EnableExtensions
 
 if "%~1"=="" (
-    echo usage: ma name [peep^|nopeep]
-    echo example: ma e peep
-    echo example: ma e nopeep
+    echo usage: mlz lzpack [peep^|nopeep]
+    echo example: mlz lzpack peep
+    echo example: mlz lzpack nopeep
     exit /b 1
 )
 
@@ -48,7 +48,8 @@ dcc.exe -DHSZ=1024 -DMZXFILE=65535L -D__Z80 -DLZPACK_STREAM=1 -DCPM80 %DCC_FLAGS
 if errorlevel 1 exit /b 1
 
 if "%USE_PEEP%"=="1" (
-    dccpeep "%name%.mac" _peepout.mac
+    rem optimize for size, not speed (the default -Ot)
+    dccpeep -Os "%name%.mac" _peepout.mac
     if errorlevel 1 exit /b 1
     del "%name%.mac"
     ren _peepout.mac "%name%.mac"

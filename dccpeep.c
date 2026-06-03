@@ -11,6 +11,7 @@
 
 static char *lines[MAX_LINES];
 static int nlines;
+static int opt_size = 0;  /* -Os: use RTL helper stubs; default -Ot: inline */
 
 static char *xstrdup2(const char *s)
 {
@@ -5450,6 +5451,107 @@ static int pass_deref_byte_cmp(void)
 
 
 /*
+ * pass_lvar_stubs — replace ld l,(ix-N) / ld h,(ix-N+1) with call __lv1..8.
+ * pass_svar_stubs — replace ld (ix-N),l / ld (ix-N+1),h with call __sv1..6.
+ *
+ * Mirror of pass_larg_stubs but for local variables (negative IX offsets).
+ * Stubs __lv1..__lv8 load the 1st..8th local word into HL.
+ * Stubs __sv1..__sv6 store HL into the 1st..6th local word.
+ * Each stub is 7 bytes; the inline pair is 6 bytes.  Break-even is 3 calls.
+ */
+static int pass_lvar_stubs(void)
+{
+    static const char * const names[] = {
+        "__lv1","__lv2","__lv3","__lv4","__lv5","__lv6","__lv7","__lv8"
+    };
+    static char low[8][20], high[8][20];
+    static int inited = 0;
+    int i, k, changed;
+    int used[8];
+
+    if (!inited) {
+        for (k = 0; k < 8; k++) {
+            sprintf(low[k],  "ld l,(ix-%d)", (k+1)*2);
+            sprintf(high[k], "ld h,(ix-%d)", (k+1)*2-1);
+        }
+        inited = 1;
+    }
+
+    for (k = 0; k < 8; k++) used[k] = 0;
+    changed = 0;
+
+    for (i = 0; i + 1 < nlines; i++) {
+        for (k = 0; k < 8; k++) {
+            if (eq(i, low[k]) && eq(i+1, high[k])) {
+                char stub[24];
+                sprintf(stub, "call %s", names[k]);
+                replace1_tagged(i, stub, "lvar");
+                delete_n(i+1, 1);
+                used[k] = 1; changed = 1;
+                break;
+            }
+        }
+    }
+
+    if (changed) {
+        for (k = 7; k >= 0; k--) {
+            if (used[k]) {
+                char extrn[24];
+                sprintf(extrn, "extrn %s", names[k]);
+                insert_line(0, extrn);
+            }
+        }
+    }
+    return changed;
+}
+
+static int pass_svar_stubs(void)
+{
+    static const char * const names[] = {
+        "__sv1","__sv2","__sv3","__sv4","__sv5","__sv6"
+    };
+    static char low[6][24], high[6][24];
+    static int inited = 0;
+    int i, k, changed;
+    int used[6];
+
+    if (!inited) {
+        for (k = 0; k < 6; k++) {
+            sprintf(low[k],  "ld (ix-%d),l", (k+1)*2);
+            sprintf(high[k], "ld (ix-%d),h", (k+1)*2-1);
+        }
+        inited = 1;
+    }
+
+    for (k = 0; k < 6; k++) used[k] = 0;
+    changed = 0;
+
+    for (i = 0; i + 1 < nlines; i++) {
+        for (k = 0; k < 6; k++) {
+            if (eq(i, low[k]) && eq(i+1, high[k])) {
+                char stub[24];
+                sprintf(stub, "call %s", names[k]);
+                replace1_tagged(i, stub, "svar");
+                delete_n(i+1, 1);
+                used[k] = 1; changed = 1;
+                break;
+            }
+        }
+    }
+
+    if (changed) {
+        for (k = 5; k >= 0; k--) {
+            if (used[k]) {
+                char extrn[24];
+                sprintf(extrn, "extrn %s", names[k]);
+                insert_line(0, extrn);
+            }
+        }
+    }
+    return changed;
+}
+
+/*
  * pass_larg_stubs — replace ld l,(ix+N) / ld h,(ix+N+1) with call __la1/2/3.
  *
  * The shared RTL stubs are 7 bytes each; the inline pair is 6 bytes.  With
@@ -5652,13 +5754,29 @@ int main(int argc, char **argv)
 {
     int changed;
     int passes;
+    const char *infile;
+    const char *outfile;
 
-    if (argc != 3) {
-        fprintf(stderr, "usage: peep input.mac output.mac\n");
+    if (argc == 4) {
+        if (strcmp(argv[1], "-Os") == 0)
+            opt_size = 1;
+        else if (strcmp(argv[1], "-Ot") == 0)
+            opt_size = 0;
+        else {
+            fprintf(stderr, "usage: dccpeep [-Ot|-Os] input.mac output.mac\n");
+            return 1;
+        }
+        infile  = argv[2];
+        outfile = argv[3];
+    } else if (argc == 3) {
+        infile  = argv[1];
+        outfile = argv[2];
+    } else {
+        fprintf(stderr, "usage: dccpeep [-Ot|-Os] input.mac output.mac\n");
         return 1;
     }
 
-    read_file(argv[1]);
+    read_file(infile);
 
     passes = 0;
     do {
@@ -5718,7 +5836,7 @@ int main(int argc, char **argv)
      * Runs after frame elimination so only functions that genuinely need IX
      * are transformed.  A follow-up branch/label pass collapses any return
      * labels that now just contain "jp __lve" into direct jumps. */
-    if (pass_shared_frame_stubs()) {
+    if (opt_size && pass_shared_frame_stubs()) {
         pass_branch_over_jump();
         pass_labels();
     }
@@ -5726,9 +5844,13 @@ int main(int argc, char **argv)
     /* Load-arg stubs and frame-pointer copy stub run last: they remove "ix"
      * text from lines, so they must not run before pass_elim_ix_frame (which
      * uses that text to detect live frame usage). */
-    pass_larg_stubs();
-    pass_phix_stub();
+    if (opt_size) {
+        pass_larg_stubs();
+        pass_phix_stub();
+        pass_lvar_stubs();
+        pass_svar_stubs();
+    }
 
-    write_file(argv[2]);
+    write_file(outfile);
     return 0;
 }

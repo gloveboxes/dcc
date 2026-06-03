@@ -1445,6 +1445,81 @@ __phix:
         pop     hl              ; HL = IX
         ret                     ; return; old HL now sits at top of stack
 
+; __lv1-__lv8: load local variable word into HL.
+; Analogous to __la1/__la2/__la3 for parameters but uses negative IX offsets.
+; Each stub saves 3 bytes per replaced ld l,(ix-N) / ld h,(ix-N+1) pair.
+        public  __lv1
+__lv1:  ld      l,(ix-2)
+        ld      h,(ix-1)
+        ret
+
+        public  __lv2
+__lv2:  ld      l,(ix-4)
+        ld      h,(ix-3)
+        ret
+
+        public  __lv3
+__lv3:  ld      l,(ix-6)
+        ld      h,(ix-5)
+        ret
+
+        public  __lv4
+__lv4:  ld      l,(ix-8)
+        ld      h,(ix-7)
+        ret
+
+        public  __lv5
+__lv5:  ld      l,(ix-10)
+        ld      h,(ix-9)
+        ret
+
+        public  __lv6
+__lv6:  ld      l,(ix-12)
+        ld      h,(ix-11)
+        ret
+
+        public  __lv7
+__lv7:  ld      l,(ix-14)
+        ld      h,(ix-13)
+        ret
+
+        public  __lv8
+__lv8:  ld      l,(ix-16)
+        ld      h,(ix-15)
+        ret
+
+; __sv1-__sv6: store HL to local variable word.
+; Replaces ld (ix-N),l / ld (ix-N+1),h pairs; caller loads HL first.
+        public  __sv1
+__sv1:  ld      (ix-2),l
+        ld      (ix-1),h
+        ret
+
+        public  __sv2
+__sv2:  ld      (ix-4),l
+        ld      (ix-3),h
+        ret
+
+        public  __sv3
+__sv3:  ld      (ix-6),l
+        ld      (ix-5),h
+        ret
+
+        public  __sv4
+__sv4:  ld      (ix-8),l
+        ld      (ix-7),h
+        ret
+
+        public  __sv5
+__sv5:  ld      (ix-10),l
+        ld      (ix-9),h
+        ret
+
+        public  __sv6
+__sv6:  ld      (ix-12),l
+        ld      (ix-11),h
+        ret
+
         public  _printf
 _printf:
         push    ix

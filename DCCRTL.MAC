@@ -1520,6 +1520,64 @@ __sv6:  ld      (ix-12),l
         ld      (ix-11),h
         ret
 
+; __ldwl — dereference 16-bit pointer in HL (4 inline bytes -> 3).
+;   Replaces:  ld e,(hl) / inc hl / ld d,(hl) / ex de,hl
+;   Input: HL = pointer.  Output: HL = *HL, DE trashed.  Flags unchanged.
+        public  __ldwl
+__ldwl: ld      e,(hl)
+        inc     hl
+        ld      d,(hl)
+        ex      de,hl
+        ret
+
+; __wand — HL &= DE, 16-bit AND (6 inline bytes -> 3).
+;   Replaces:  ld a,h / and d / ld h,a / ld a,l / and e / ld l,a
+;   Input: HL, DE.  Output: HL = HL & DE.  Flags set by low-byte AND.
+        public  __wand
+__wand: ld      a,h
+        and     d
+        ld      h,a
+        ld      a,l
+        and     e
+        ld      l,a
+        ret
+
+; __icmp — signed 16-bit compare, set flags for signed subtraction (8 inline bytes -> 3).
+;   Replaces: ld a,h/xor 80h/ld h,a/ld a,d/xor 80h/ld d,a/or a/sbc hl,de
+;   Input: HL, DE = signed 16-bit operands.
+;   Output: flags set for signed HL-DE, HL and DE trashed.  ret preserves flags.
+        public  __icmp
+__icmp: ld      a,h
+        xor     80h
+        ld      h,a
+        ld      a,d
+        xor     80h
+        ld      d,a
+        or      a
+        sbc     hl,de
+        ret
+
+; __sxde — sign-extend HL: produce DE = 0FFFFh if HL negative, 0 otherwise (5 bytes -> 3).
+;   Replaces:  ld a,h / rlca / sbc a,a / ld d,a / ld e,a
+;   Input: HL = signed 16-bit value.  Output: DE = sign-extension word, HL unchanged.
+        public  __sxde
+__sxde: ld      a,h
+        rlca
+        sbc     a,a
+        ld      d,a
+        ld      e,a
+        ret
+
+; __sxhl — sign-extend L into H: HL = (int16_t)(int8_t)L (4 inline bytes -> 3).
+;   Replaces:  ld a,l / rlca / sbc a,a / ld h,a
+;   Input: L = signed 8-bit value.  Output: H = sign of L, HL = 16-bit signed value.
+        public  __sxhl
+__sxhl: ld      a,l
+        rlca
+        sbc     a,a
+        ld      h,a
+        ret
+
         public  _printf
 _printf:
         push    ix

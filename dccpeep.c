@@ -5641,6 +5641,197 @@ static int pass_phix_stub(void)
     return changed;
 }
 
+/*
+ * pass_larg_direct_store — fold "ld hl,ADDR / push hl / call __la[123] or __lv[1-8] /
+ *   ex de,hl / pop hl / ld (hl),e / inc hl / ld (hl),d" into
+ *   "call __la[123]/__lv[1-8] / ld (ADDR),hl".
+ *
+ * Pattern generated for C like:  global_var = argN;
+ * The destination is always a fixed global address (_Z label = BSS equ),
+ * so ld (ADDR),hl (Z80 direct store) is valid.
+ *
+ * 8 instructions / 12 bytes -> 2 instructions / 6 bytes: saves 6 bytes per site.
+ */
+static int pass_larg_direct_store(void)
+{
+    int i, changed = 0;
+    char addr[MAX_LINE], newline[MAX_LINE];
+
+    for (i = 0; i + 7 < nlines; i++) {
+        char tmp[MAX_LINE];
+        const char *stub;
+
+        if (!parse_ld_hl_imm(lines[i], addr))
+            continue;
+        /* addr must be a label/symbol (not a register or computed value) */
+        if (addr[0] == '(' || (addr[0] >= '0' && addr[0] <= '9'))
+            continue;
+        if (!eq(i+1, "push hl"))
+            continue;
+
+        strip_peep_comment_copy(tmp, lines[i+2]);
+        if (strncmp(tmp, "call __la", 9) == 0 || strncmp(tmp, "call __lv", 9) == 0)
+            stub = tmp + 5; /* "call " is 5 chars, stub = "__la1" etc. */
+        else
+            continue;
+
+        if (!eq(i+3, "ex de,hl") ||
+            !eq(i+4, "pop hl") ||
+            !eq(i+5, "ld (hl),e") ||
+            !eq(i+6, "inc hl") ||
+            !eq(i+7, "ld (hl),d"))
+            continue;
+
+        /* Replace: keep stub call at i, replace i+1 with ld (ADDR),hl */
+        snprintf(newline, sizeof(newline), "call %s", stub);
+        replace1_tagged(i, newline, "larg_dstore");
+        snprintf(newline, sizeof(newline), "ld (%s),hl", addr);
+        replace1(i+1, newline);
+        delete_n(i+2, 6);
+        changed = 1;
+    }
+
+    return changed;
+}
+
+/*
+ * pass_ldwl_stub — replace ld e,(hl)/inc hl/ld d,(hl)/ex de,hl with call __ldwl.
+ * Dereferences a 16-bit pointer in HL into HL.  4 inline bytes -> 3.
+ * Stub is 5 bytes; break-even at 5 uses.
+ */
+static int pass_ldwl_stub(void)
+{
+    int i, changed = 0, used = 0;
+
+    for (i = 0; i + 3 < nlines; i++) {
+        if (eq(i,   "ld e,(hl)") &&
+            eq(i+1, "inc hl") &&
+            eq(i+2, "ld d,(hl)") &&
+            eq(i+3, "ex de,hl")) {
+            replace1_tagged(i, "call __ldwl", "ldwl");
+            delete_n(i+1, 3);
+            used = 1; changed = 1;
+        }
+    }
+
+    if (used)
+        insert_line(0, "extrn __ldwl");
+
+    return changed;
+}
+
+/*
+ * pass_wand_stub — replace ld a,h/and d/ld h,a/ld a,l/and e/ld l,a with call __wand.
+ * 16-bit HL &= DE.  6 inline bytes -> 3.  Stub is 7 bytes; break-even at 3 uses.
+ */
+static int pass_wand_stub(void)
+{
+    int i, changed = 0, used = 0;
+
+    for (i = 0; i + 5 < nlines; i++) {
+        if (eq(i,   "ld a,h") &&
+            eq(i+1, "and d") &&
+            eq(i+2, "ld h,a") &&
+            eq(i+3, "ld a,l") &&
+            eq(i+4, "and e") &&
+            eq(i+5, "ld l,a")) {
+            replace1_tagged(i, "call __wand", "wand");
+            delete_n(i+1, 5);
+            used = 1; changed = 1;
+        }
+    }
+
+    if (used)
+        insert_line(0, "extrn __wand");
+
+    return changed;
+}
+
+/*
+ * pass_icmp_stub — replace 8-byte signed 16-bit compare sequence with call __icmp.
+ * ld a,h/xor 80h/ld h,a/ld a,d/xor 80h/ld d,a/or a/sbc hl,de -> call __icmp.
+ * 8 inline bytes -> 3.  Stub is 9 bytes; break-even at 2 uses.
+ * Runs after the main loop so pass_e_signed_le_zero and pass_signed_cmp_small_const
+ * (which recognise the same sub-sequence) have already fired.
+ */
+static int pass_icmp_stub(void)
+{
+    int i, changed = 0, used = 0;
+
+    for (i = 0; i + 7 < nlines; i++) {
+        if (eq(i,   "ld a,h") &&
+            eq(i+1, "xor 80h") &&
+            eq(i+2, "ld h,a") &&
+            eq(i+3, "ld a,d") &&
+            eq(i+4, "xor 80h") &&
+            eq(i+5, "ld d,a") &&
+            eq(i+6, "or a") &&
+            eq(i+7, "sbc hl,de")) {
+            replace1_tagged(i, "call __icmp", "icmp");
+            delete_n(i+1, 7);
+            used = 1; changed = 1;
+        }
+    }
+
+    if (used)
+        insert_line(0, "extrn __icmp");
+
+    return changed;
+}
+
+/*
+ * pass_sxde_stub — replace ld a,h/rlca/sbc a,a/ld d,a/ld e,a with call __sxde.
+ * Sign-extends HL to DEHL by producing DE = 0FFFFh if HL<0, 0 otherwise.
+ * 5 inline bytes -> 3.  Stub is 6 bytes; break-even at 3 uses.
+ */
+static int pass_sxde_stub(void)
+{
+    int i, changed = 0, used = 0;
+
+    for (i = 0; i + 4 < nlines; i++) {
+        if (eq(i,   "ld a,h") &&
+            eq(i+1, "rlca") &&
+            eq(i+2, "sbc a,a") &&
+            eq(i+3, "ld d,a") &&
+            eq(i+4, "ld e,a")) {
+            replace1_tagged(i, "call __sxde", "sxde");
+            delete_n(i+1, 4);
+            used = 1; changed = 1;
+        }
+    }
+
+    if (used)
+        insert_line(0, "extrn __sxde");
+
+    return changed;
+}
+
+/*
+ * pass_sxhl_stub — replace ld a,l/rlca/sbc a,a/ld h,a with call __sxhl.
+ * Sign-extends 8-bit L into H so HL = (int16_t)(int8_t)L.
+ * 4 inline bytes -> 3.  Stub is 5 bytes; break-even at 5 uses.
+ */
+static int pass_sxhl_stub(void)
+{
+    int i, changed = 0, used = 0;
+
+    for (i = 0; i + 3 < nlines; i++) {
+        if (eq(i,   "ld a,l") &&
+            eq(i+1, "rlca") &&
+            eq(i+2, "sbc a,a") &&
+            eq(i+3, "ld h,a")) {
+            replace1_tagged(i, "call __sxhl", "sxhl");
+            delete_n(i+1, 3);
+            used = 1; changed = 1;
+        }
+    }
+
+    if (used)
+        insert_line(0, "extrn __sxhl");
+
+    return changed;
+}
+
 static int pass_global_board_const_offsets(void)
 {
     int i;
@@ -5869,6 +6060,33 @@ int main(int argc, char **argv)
         pass_phix_stub();
         pass_lvar_stubs();
         pass_svar_stubs();
+        /* Generic sequence stubs: run after all other passes so that more
+         * specific transforms (pass_e_signed_le_zero, pass_signed_cmp_small_const,
+         * pass_once "and1_bool", etc.) have already fired on sub-patterns.
+         *
+         * Perf/size tradeoffs measured on lzpack with lzcost_t change applied
+         * (baseline: 31360 bytes, 3017M cycles on wumpus.com).
+         * Each stub adds 27 T-states call/ret overhead per dynamically executed site.
+         *
+         *   pass_icmp_stub:  -251 bytes, +1.8% perf (52 sites, hot: ~86k exec/site)
+         *   pass_sxde_stub:  -130 bytes, ~0%   perf (68 sites, cold)
+         *   pass_sxhl_stub:  - 46 bytes, ~0%   perf (51 sites, cold)
+         *   pass_wand_stub:  -200 bytes, +5%   perf (69 sites, hot: ~85k exec/site)
+         *   pass_ldwl_stub:  -231 bytes, +8%   perf (236 sites, warm: ~40k exec/site)
+         */
+        /* Fold "ld hl,ADDR / push hl / call __laX/__lvX / ex de,hl / pop hl / store"
+         * into "call __laX/__lvX / ld (ADDR),hl" using Z80 direct-store.
+         * Must run after larg/lvar stubs have produced the "call __laX" form.
+         * Saves 6 bytes per site, no perf cost.  ~10 sites on lzpack. */
+        pass_larg_direct_store();
+        pass_icmp_stub();
+        pass_sxde_stub();
+        pass_sxhl_stub();
+        /* Enable for more size at some perf cost: */
+#if 1
+        pass_wand_stub();    /* -200 bytes, +5% perf */
+        pass_ldwl_stub();    /* -231 bytes, +8% perf */
+#endif
     }
 
     write_file(outfile);

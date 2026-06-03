@@ -158,16 +158,31 @@ static int opt_lrbc_isx = 0;
  * On all other targets lzpos_t is long, preserving existing behaviour.
  *
  * Variables that must stay long regardless of platform:
- *   - o_cost[] elements   (bit-cost DP values; can exceed 65535 for large files)
- *   - c2                  (same)
  *   - ming                (signed gap; initialised to 0x7fffffffL sentinel)
  *   - p10                 (total * 1000L intermediate product overflows 16 bits)
  *   - records / last_ext  (cpm_file_size: 24-bit CP/M record counts)
+ *
+ * o_cost / c2: on CP/M, o_blk <= LZ_OPTBLK = 2048, so the maximum
+ * accumulated cost is 2048 * 9 = 18432 bits -- well within unsigned range.
+ * lzcost_t follows lzpos_t width so the cost table is 2 bytes/entry on CP/M
+ * instead of 4, halving the heap it consumes.
  */
 #ifdef LZ_CPM
   typedef unsigned lzpos_t;
 #else
   typedef long lzpos_t;
+#endif
+
+/* lzcost_t: element type for the parse-DP cost table.  Matches lzpos_t width.
+ * COST_INF: sentinel for unvisited nodes; must satisfy:
+ *   COST_INF > max_real_cost  (= o_blk * 9 <= 2048 * 9 = 18432 on CP/M)
+ *   COST_INF + max_single_step <= type_max  (max step ~27 bits; no overflow) */
+#ifdef LZ_CPM
+  typedef unsigned lzcost_t;
+# define COST_INF ((lzcost_t)0x7fff)
+#else
+  typedef long lzcost_t;
+# define COST_INF ((lzcost_t)0x3fffffffL)
 #endif
 
 /******************************************************************************/
@@ -2091,11 +2106,20 @@ do_compress (const char *fn, const char *oname, int verbose, int use8080,
  * can be packed on a 64K machine.  Match choices may differ from the in-RAM
  * path, but the emitted format is identical and self-extracts the same way.
  *
- * The sliding window (window bytes + a 2-byte link per slot, = 3*WINSZ of
- * RAM) is allocated dynamically: at startup the largest power-of-two window
- * that fits in the available heap is chosen, from WIN_MAX down to WINMIN,
- * so the compressor uses as big a window -- and packs as tightly -- as the
- * host's TPA allows.
+ * The sliding window is allocated dynamically: at startup the largest
+ * power-of-two window that fits in the available heap is chosen, from
+ * WIN_MAX down to WINMIN, so the compressor uses as big a window -- and
+ * packs as tightly -- as the host's TPA allows.
+ *
+ * s_lnk[] stores hash-chain back-links as unsigned-byte backward deltas
+ * rather than int indices.  Each entry holds how many window slots back
+ * (circularly) the previous entry in the same hash chain was inserted;
+ * 0 means end-of-chain (or the chain was truncated because the gap
+ * exceeded 254 slots).  This halves the link array vs int[]: 1 byte per
+ * slot instead of 2, so the window + links together cost 2*WINSZ bytes
+ * of heap rather than 3*WINSZ.  Chains with large gaps (far-back matches
+ * that produce longer distance codes anyway) are truncated with negligible
+ * quality loss.
  *
  * The effective match distance is min(WINSZ - MAXLEN - 1, MAXDIST).
  *
@@ -2126,7 +2150,7 @@ static int parse_header (const unsigned char *data, long n, unsigned *stubv,
 /******************************************************************************/
 
 static unsigned char *s_win;
-static int *s_lnk;
+static unsigned char *s_lnk;  /* byte backward-delta chain; 0 = end-of-chain */
 static lzpos_t s_winsz, s_wmask, s_maxback;
 static FILE *s_in;
 static lzpos_t s_N, s_loaded;
@@ -2141,7 +2165,7 @@ win_alloc (void)
   for (s_winsz = s_win_start; s_winsz >= (lzpos_t)WINMIN; s_winsz >>= 1)
     {
       s_win = (unsigned char *)malloc ((size_t)s_winsz);
-      s_lnk = (int *)malloc ((size_t)s_winsz * sizeof (int));
+      s_lnk = (unsigned char *)malloc ((size_t)s_winsz);
 
       if (s_win && s_lnk)
         {
@@ -2230,23 +2254,43 @@ static void
 s_hinsert (lzpos_t i)
 {
   int h;
+  lzpos_t p_new;
+  int p_old;
+  lzpos_t back;
 
   if (i + 2 >= s_N)
     return;
 
   h = s_hash3 (i);
-  s_lnk[i & s_wmask] = head[h];
-  head[h] = (int)(i & s_wmask);
+  p_new = i & s_wmask;
+  p_old = head[h];
+
+  if (p_old >= 0)
+    {
+      /* Circular backward distance from p_new to p_old.  If the slot has
+       * wrapped (p_new == p_old the old data is stale) or the gap exceeds
+       * 254, store 0 to terminate the chain there. */
+      back = (p_new - (lzpos_t)p_old) & s_wmask;
+      if (back > 0 && back <= 254)
+        s_lnk[p_new] = (unsigned char)back;
+      else
+        s_lnk[p_new] = 0;
+    }
+  else
+    s_lnk[p_new] = 0;
+
+  head[h] = (int)p_new;
 }
 
 /******************************************************************************/
 
 /*
- * Hash chains store positions as window-relative indices (0..s_winsz-1);
- * the absolute position is reconstructed from the current position i,
- * which is always within s_winsz of any live chain entry.  Entries older
- * than s_maxback have been overwritten in the window and are pruned by the
- * distance test.
+ * head[h] holds the most-recent window slot (0..s_winsz-1) with hash h,
+ * or -1 if none.  s_lnk[slot] holds a byte backward delta (1..254) to
+ * the previous entry in the same hash chain, or 0 for end-of-chain.
+ * The absolute stream position is reconstructed by combining the window
+ * slot with the high bits of apos (base = apos & ~s_wmask).  Entries
+ * older than s_maxback are pruned by the distance test.
  */
 
 /******************************************************************************/
@@ -2279,7 +2323,7 @@ s_hinsert (lzpos_t i)
 
 #  ifndef LZ_STD_RESERVE
 #   define LZ_STD_RESERVE \
-  ((long)(LZ_STDBLK_MIN + 1) * (sizeof (long) + 3 * sizeof (int)) + 512L)
+  ((long)(LZ_STDBLK_MIN + 1) * (sizeof (lzcost_t) + 3 * sizeof (int)) + 512L)
 #  endif
 
 #  ifndef LZ_OPTDEPTH
@@ -2300,7 +2344,7 @@ s_hinsert (lzpos_t i)
     (p) = NULL;        \
   } while (never)
 
-static long *o_cost;  /* bit-cost DP values: can exceed 65535, must stay long */
+static lzcost_t *o_cost;  /* bit-cost DP values; lzcost_t = unsigned on CP/M */
 static int *o_tlen;
 static int *o_tdist;
 static int *o_stk;
@@ -2347,7 +2391,7 @@ opt_alloc (lzpos_t want, lzpos_t lo)
     {
       size_t s = (size_t)(o_blk + 1);
 
-      o_cost = (long *)LZ_OPT_ALLOC (s * sizeof (long));
+      o_cost = (lzcost_t *)LZ_OPT_ALLOC (s * sizeof (lzcost_t));
       o_tlen = (int *)LZ_OPT_ALLOC (s * sizeof (int));
       o_tdist = (int *)LZ_OPT_ALLOC (s * sizeof (int));
       o_stk = (int *)LZ_OPT_ALLOC (s * sizeof (int));
@@ -2424,7 +2468,7 @@ compress_stream (FILE *in, lzpos_t n, int start, FILE *out, int depth,
 
       for (j = 0; j <= span; j++)
         {
-          o_cost[j] = 0x3fffffffL;
+          o_cost[j] = COST_INF;
           o_tlen[j] = 0;
           o_tdist[j] = 0;
         }
@@ -2471,6 +2515,7 @@ compress_stream (FILE *in, lzpos_t n, int start, FILE *out, int depth,
                   lzpos_t p = base | (lzpos_t)stored;
                   lzpos_t d;
                   int ml;
+                  unsigned char lnkd;
 
                   if (p > apos)
                     p -= s_winsz;
@@ -2484,7 +2529,11 @@ compress_stream (FILE *in, lzpos_t n, int start, FILE *out, int depth,
                       && s_win[(p + maxml) & s_wmask]
                            != s_win[(apos + maxml) & s_wmask])
                     {
-                      stored = s_lnk[p & s_wmask];
+                      lnkd = s_lnk[stored];
+                      if (lnkd)
+                        stored = (int)(((unsigned)stored - (unsigned)lnkd) & (unsigned)s_wmask);
+                      else
+                        stored = -1;
 
                       continue;
                     }
@@ -2509,7 +2558,11 @@ compress_stream (FILE *in, lzpos_t n, int start, FILE *out, int depth,
                         break;
                     }
 
-                  stored = s_lnk[p & s_wmask];
+                  lnkd = s_lnk[stored];
+                  if (lnkd)
+                    stored = (int)(((unsigned)stored - (unsigned)lnkd) & (unsigned)s_wmask);
+                  else
+                    stored = -1;
                 }
 
               {
@@ -2518,7 +2571,7 @@ compress_stream (FILE *in, lzpos_t n, int start, FILE *out, int depth,
                 for (L = 3; L <= maxml; L++)
                   {
                     int d = o_l2d[L];
-                    long c2 = o_cost[jc] + OMBITS (d, L);
+                    lzcost_t c2 = o_cost[jc] + OMBITS (d, L);
 
                     if (c2 < o_cost[jc + L])
                       {
@@ -2545,7 +2598,7 @@ compress_stream (FILE *in, lzpos_t n, int start, FILE *out, int depth,
                     && s_win[(p + 1) & s_wmask] == s_win[(apos + 1) & s_wmask])
                   {
                     int d2 = (int)(apos - p);
-                    long c2 = o_cost[jc] + OMBITS (d2, 2);
+                    lzcost_t c2 = o_cost[jc] + OMBITS (d2, 2);
 
                     if (c2 < o_cost[jc + 2])
                       {

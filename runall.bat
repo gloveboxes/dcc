@@ -3,7 +3,7 @@ setlocal EnableExtensions
 
 :: Set the default emulator if no argument is provided.
 set "_emulator=%~1"
-if "%_emulator%"=="" set "_emulator=cpm"
+if "%_emulator%"=="" set "_emulator=ntvcm"
 :: the cpm and ntvcm emulators produce identical results
 
 set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^

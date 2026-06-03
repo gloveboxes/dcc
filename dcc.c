@@ -12218,6 +12218,10 @@ static void emit_function_prologue(const char *name, int local_bytes)
 static void emit_function_epilogue(void)
 {
     emit_label(current_return_label);
+    /* Always emit ld sp,ix so that gen_switch_chain's push/pop of the switch
+     * value does not corrupt the stack when a return fires inside a case body.
+     * pass_elim_ix_frame and pass_shared_frame_stubs clean up the extra
+     * instruction for functions that never actually need the stack restore. */
     emit("\tld sp,ix\n");
     emit("\tpop ix\n");
     emit("\tret\n");

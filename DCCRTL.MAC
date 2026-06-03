@@ -1364,6 +1364,87 @@ __ms_done:
         pop     bc
         ret
 
+; Shared function-frame entry/exit stubs used by the dccpeep pass_shared_frame_stubs
+; optimisation.  Each is a separate public block so dccrtlstrip includes only what
+; the application actually references.
+;
+; Names are <= 6 characters so they remain distinct in L80's 6-character
+; symbol-table (L80 truncates longer names for matching purposes).
+;
+; __en0 — frame setup with no local-variable allocation (8 inline bytes -> 3).
+;   Caller emits:   call __en0
+;   Stack on entry: [body_ret, ret_addr, params...]
+;
+        public  __en0
+__en0:
+        pop     de              ; DE = return-to-body address
+        push    ix              ; save caller's frame pointer
+        ld      ix,0
+        add     ix,sp           ; IX = frame  (params at IX+4, IX+6, ...)
+        ex      de,hl           ; HL = body address (DE = old HL, discarded)
+        jp      (hl)
+
+; __entr — frame setup WITH local-variable allocation (13 inline bytes -> 6).
+;   Caller emits:   ld hl,-N  /  call __entr
+;   Stack on entry: [body_ret, ret_addr, params...]  HL = -local_size
+;
+        public  __entr
+__entr:
+        pop     de              ; DE = return-to-body address
+        push    ix              ; save caller's frame pointer
+        ld      ix,0
+        add     ix,sp           ; IX = frame pointer
+        add     hl,sp           ; HL = SP - local_size
+        ld      sp,hl           ; allocate locals
+        ex      de,hl           ; HL = body address
+        jp      (hl)
+
+; __lve — shared epilogue for functions that have locals (5 inline bytes -> 3).
+;   Caller emits:   jp __lve
+;
+        public  __lve
+__lve:
+        ld      sp,ix
+        pop     ix
+        ret
+
+; __la1/__la2/__la3 — load first/second/third word parameter into HL.
+;   Replaces 6-byte inline: ld l,(ix+N) / ld h,(ix+N+1)
+;   Caller emits:  call __la1  (or __la2, __la3)
+;   Returns: HL = parameter value.  All other registers and flags unchanged.
+;
+        public  __la1
+__la1:
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ret
+
+        public  __la2
+__la2:
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ret
+
+        public  __la3
+__la3:
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ret
+
+; __phix — save HL on the stack, then copy IX into HL (4 inline bytes -> 3).
+;   Replaces:  push hl / push ix / pop hl
+;   Caller emits:  call __phix
+;   Returns: HL = IX (frame pointer); old HL value pushed onto the stack.
+;   All other registers and flags unchanged.
+;
+        public  __phix
+__phix:
+        ex      (sp),hl         ; HL = return addr, [SP] = old HL
+        push    hl              ; push return addr (below old HL on stack)
+        push    ix              ; push IX value
+        pop     hl              ; HL = IX
+        ret                     ; return; old HL now sits at top of stack
+
         public  _printf
 _printf:
         push    ix
@@ -1509,6 +1590,11 @@ pf_pct_done_width:
         jp      z,pf_x
         cp      'l'
         jp      z,pf_l
+        cp      'f'
+        jr      nz,pf_emit_and_loop
+        push    hl                      ; save fmt ptr before clobbering HL
+        ld      hl,(pf_float_hook)
+        jp      (hl)                    ; handler pops HL to restore fmt ptr
 
 pf_emit_and_loop:
         call    pf_emit_a
@@ -2128,6 +2214,14 @@ __pf32_quo_h:   dw      0
 __pf32_save_l:  dw      0
 __pf32_save_h:  dw      0
 
+pf_float_stub:
+        pop     hl                      ; restore fmt ptr pushed by dispatch
+        ld      a,'f'
+        call    pf_emit_a
+        jp      pf_loop
+pf_float_hook:
+        dw      pf_float_stub
+
 
 ; ---- float-enabled printf (-ffloatio) ------------------------------
         public  _pffio
@@ -2139,11 +2233,15 @@ _pffio:
         push    de
         ld      hl,0
         ld      (pf_sink),hl            ; console mode
+        ld      hl,pf_f                 ; install float handler
+        ld      (pf_float_hook),hl
         ld      l,(ix+4)
         ld      h,(ix+5)
         ld      de,6
         ld      bc,0
-        call    __qf_run
+        call    __pf_run
+        ld      hl,pf_float_stub        ; restore default handler
+        ld      (pf_float_hook),hl
         ld      h,b
         ld      l,c
         pop     de
@@ -2151,369 +2249,66 @@ _pffio:
         pop     ix
         ret
 
-; __qf_run: shared printf body.
-; IN:  HL=fmt, DE=vararg offset from IX, BC=0, pf_sink set.
-; IX must point to the caller's stack frame throughout.
-; OUT: BC = character count.
-__qf_run:
-qf_loop:
-        ld      a,(hl)
-        or      a
-        jp      z,qf_done
-        inc     hl
-        cp      '%'
-        jp      z,qf_percent
-        call    qf_emit_a
-        jp      qf_loop
-
-qf_percent:
-        xor     a
-        ld      (qf_width),a
-        ld      (qf_prec),a
-        ld      (qf_left),a
-
-qf_pct_next:
-        ld      a,(hl)
-        or      a
-        jp      z,qf_done
-        inc     hl
-
-        cp      '%'
-        jp      z,qf_emit_and_loop
-
-        cp      '-'
-        jp      z,qf_pct_left
-
-        cp      '.'
-        jp      z,qf_pct_dot
-
-        ; C99 size_t length modifier.  In dcc, size_t is 16-bit, so
-        ; %zu/%zd/%zi/%zx/%zX use the ordinary 16-bit integer handlers.
-        cp      'z'
-        jp      z,qf_pct_z
-
-        ; Decimal field width: %2d / %3u / %8s etc.
-        cp      '0'
-        jp      c,qf_pct_done_width
-        cp      '9'+1
-        jp      nc,qf_pct_done_width
-
-        sub     '0'
-        ld      (qf_digit),a
-        push    de              ; DE is the vararg byte offset; preserve it.
-        ld      a,(qf_width)
-        add     a,a             ; 2*w
-        ld      e,a
-        add     a,a             ; 4*w
-        add     a,a             ; 8*w
-        add     a,e             ; 10*w
-        ld      e,a
-        ld      a,(qf_digit)
-        add     a,e
-        ld      (qf_width),a
-        pop     de
-        jp      qf_pct_next
-
-qf_pct_left:
-        ld      a,1
-        ld      (qf_left),a
-        jp      qf_pct_next
-
-qf_pct_dot:
-        ; Parse digits after '.' into qf_prec (e.g. %.4d → prec=4).
-        ; '.' was already consumed by inc hl in qf_pct_next.
-qf_pct_prec_loop:
-        ld      a,(hl)
-        or      a
-        jp      z,qf_done
-        cp      '0'
-        jp      c,qf_pct_prec_done
-        cp      '9'+1
-        jp      nc,qf_pct_prec_done
-        inc     hl
-        sub     '0'
-        ld      (qf_digit),a
-        push    de
-        ld      a,(qf_prec)
-        add     a,a             ; 2*p
-        ld      e,a
-        add     a,a             ; 4*p
-        add     a,a             ; 8*p
-        add     a,e             ; 10*p
-        ld      e,a
-        ld      a,(qf_digit)
-        add     a,e
-        ld      (qf_prec),a
-        pop     de
-        jr      qf_pct_prec_loop
-qf_pct_prec_done:
-        ; A = format specifier char, HL points to it (not yet consumed)
-        inc     hl
-        jp      qf_pct_done_width
-
-qf_pct_z:
-        ld      a,(hl)
-        or      a
-        jp      z,qf_done
-        inc     hl
-        ; fall through into dispatch with A = conversion char after 'z'
-
-qf_pct_done_width:
-        cp      'c'
-        jp      z,qf_c
-        cp      's'
-        jp      z,qf_s
-        cp      'u'
-        jp      z,qf_u
-        cp      'd'
-        jp      z,qf_d
-        cp      'i'
-        jp      z,qf_d
-        cp      'x'
-        jp      z,qf_x
-        cp      'X'
-        jp      z,qf_x
-        cp      'f'
-        jp      z,qf_f
-        cp      'l'
-        jp      z,qf_l
-
-qf_emit_and_loop:
-        call    qf_emit_a
-        jp      qf_loop
-
-qf_arg_hl:
-        push    ix
-        pop     hl
-        add     hl,de
-        ld      a,(hl)
-        inc     hl
-        ld      h,(hl)
-        ld      l,a
-        inc     de
-        inc     de
-        ret
-
-; Emit (qf_width - A) spaces, if positive.  A is content length.
-qf_pad_a:
-        push    af
-        ld      a,(qf_width)
-        ld      e,a
-        pop     af
-        ld      d,a
-        ld      a,e
-        sub     d
-        ret     c
-        ret     z
-        ld      d,a
-qf_pad_loop:
-        ld      a,' '
-        call    qf_emit_a
-        dec     d
-        jr      nz,qf_pad_loop
-        ret
-
-qf_c:
-        push    hl
-        call    qf_arg_hl
-        push    de
-        ld      a,(qf_left)
-        or      a
-        jr      nz,qf_c_emit
-        ld      a,1
-        call    qf_pad_a
-qf_c_emit:
-        ld      a,l
-        call    qf_emit_a
-        ld      a,(qf_left)
-        or      a
-        jr      z,qf_c_done
-        ld      a,1
-        call    qf_pad_a
-qf_c_done:
-        pop     de
-        pop     hl
-        jp      qf_loop
-
-qf_s:
-        push    hl
-        call    qf_arg_hl
-        push    de
-        push    hl
-        call    qf__slen_hl       ; A = strlen(HL), HL preserved by stack below
-        ld      (qf_digit),a
-        ld      a,(qf_left)
-        or      a
-        jr      nz,qf_s_no_prepad
-        ld      a,(qf_digit)
-        call    qf_pad_a
-qf_s_no_prepad:
-        pop     hl
-qf_s_loop:
-        ld      a,(hl)
-        or      a
-        jr      z,qf_s_done
-        inc     hl
-        call    qf_emit_a
-        jr      qf_s_loop
-qf_s_done:
-        ld      a,(qf_left)
-        or      a
-        jr      z,qf_s_no_postpad
-        ld      a,(qf_digit)
-        call    qf_pad_a
-qf_s_no_postpad:
-        pop     de
-        pop     hl
-        jp      qf_loop
-
-qf_u:
-        push    hl
-        call    qf_arg_hl
-        push    de
-        push    hl
-        call    qf_count_u_digits  ; A = digit count, HL destroyed
-        call    qf_pad_a
-        pop     hl
-        call    qf_print_u
-        pop     de
-        pop     hl
-        jp      qf_loop
-
-qf_d:
-        push    hl
-        call    qf_arg_hl
+; pf_f is the %f handler installed via pf_float_hook when _pffio is active.
+; It lives in the _pffio block so dccrtlstrip omits it for non-float builds.
+; Uses __pf32_l/__pf32_h (shared with pf_ld/pf_lu/pf_lx) and pf_prec/pf_emit_a
+; from the _printf block.
+pf_f:
+        ; HL (fmt ptr) already pushed by the %f dispatch in pf_pct_done_width
+        call    pf_arg_dehl     ; loads __pf32_l/__pf32_h with raw float bits, advances DE by 4
         push    de
 
-        ; Compute display width first: digit count (saved) plus sign if negative.
-        push    hl
-        bit     7,h
-        jr      z,qf_d_count_pos
-        xor     a
-        sub     l
-        ld      l,a
-        ld      a,0
-        sbc     a,h
-        ld      h,a
-        call    qf_count_u_digits
-        ld      (qf_digit),a    ; save digit count of |value|
-        inc     a               ; +1 for '-'
-        jr      qf_d_count_done
-qf_d_count_pos:
-        call    qf_count_u_digits
-        ld      (qf_digit),a    ; save digit count
-qf_d_count_done:
-        call    qf_pad_a
-        pop     hl
-
-        ; Print sign and negate if negative
-        bit     7,h
-        jr      z,qf_d_pos
-        ld      a,'-'
-        call    qf_emit_a
-        xor     a
-        sub     l
-        ld      l,a
-        ld      a,0
-        sbc     a,h
-        ld      h,a
-qf_d_pos:
-        ; Zero-fill for precision: print (prec - digit_count) leading zeros
-        ld      a,(qf_prec)
-        or      a
-        jr      z,qf_d_print    ; prec=0: no zero-fill
-        ld      d,a             ; D = prec (DE preserved across qf_emit_a)
-        ld      a,(qf_digit)
-        sub     d               ; A = digit_count - prec
-        jr      nc,qf_d_print   ; digit_count >= prec: no fill
-        neg                     ; A = prec - digit_count (zeros needed)
-        ld      d,a
-qf_d_zero_loop:
-        ld      a,'0'
-        call    qf_emit_a       ; push de/pop de preserves D
-        dec     d
-        jr      nz,qf_d_zero_loop
-qf_d_print:
-        call    qf_print_u
-        pop     de
-        pop     hl
-        jp      qf_loop
-
-qf_x:
-        push    hl
-        call    qf_arg_hl
-        push    de
-        ld      a,4
-        call    qf_pad_a
-        call    qf_print_x
-        pop     de
-        pop     hl
-        jp      qf_loop
-
-
-qf_f:
-        ; Single-precision float formatter for -ffloatio.
-        ; Reads one 4-byte float vararg into __qf32_l/__qf32_h.
-        ; Prints fixed 6 digits after the decimal point.
-        push    hl
-        call    qf_arg_dehl
-        push    de
-
-        ld      hl,(__qf32_l)
-        ld      (qf_fl),hl
-        ld      hl,(__qf32_h)
-        ld      (qf_fh),hl
+        ld      hl,(__pf32_l)
+        ld      (pf_fl),hl
+        ld      hl,(__pf32_h)
+        ld      (pf_fh),hl
 
         ; Sign and absolute value.
         bit     7,h
-        jp      z,qf_f_absdone
+        jp      z,pf_f_absdone
         ld      a,'-'
-        call    qf_emit_a
-        ld      hl,(__qf32_h)
+        call    pf_emit_a
+        ld      hl,(__pf32_h)
         res     7,h
-        ld      (__qf32_h),hl
-        ld      (qf_fh),hl
-qf_f_absdone:
-        ld      hl,(__qf32_l)
-        ld      (qf_fl),hl
+        ld      (__pf32_h),hl
+        ld      (pf_fh),hl
+pf_f_absdone:
+        ld      hl,(__pf32_l)
+        ld      (pf_fl),hl
 
-        ; Decide printed precision early.  Existing qf semantics use
-        ; qf_prec == 0 as the default precision of 6.
-        ld      a,(qf_prec)
+        ; Printed precision: pf_prec==0 means default of 6 decimal places.
+        ld      a,(pf_prec)
         or      a
-        jp      nz,qf_f_prec_known
+        jp      nz,pf_f_prec_known
         ld      a,6
-qf_f_prec_known:
-        ld      (qf_fcnt),a
+pf_f_prec_known:
+        ld      (pf_fcnt),a
 
-        ; Round before splitting integer/fractional parts.  The digit
-        ; loop below truncates each decimal digit, so add 0.5*10^-prec
-        ; to the absolute value first.  This also carries correctly for
-        ; values such as 0.9999996 -> 1.000000.
+        ; Round before splitting integer/fractional parts: add 0.5*10^-prec.
         cp      10
-        jp      nc,qf_f_rounded     ; no table entry for larger precisions
+        jp      nc,pf_f_rounded     ; no table entry for larger precisions
         add     a,a                 ; offset = precision * 4
         add     a,a
         ld      e,a
         ld      d,0
-        ld      hl,qf_rndtab
+        ld      hl,pf_rndtab
         add     hl,de
         ld      e,(hl)
         inc     hl
         ld      d,(hl)
         inc     hl
-        ld      (qf_tl),de
+        ld      (pf_ftl),de
         ld      e,(hl)
         inc     hl
         ld      d,(hl)
-        ld      (qf_th),de
+        ld      (pf_fth),de
 
-        ld      hl,(qf_fl)
-        ld      de,(qf_fh)
+        ld      hl,(pf_fl)
+        ld      de,(pf_fh)
         push    de
         push    hl
-        ld      hl,(qf_tl)
-        ld      de,(qf_th)
+        ld      hl,(pf_ftl)
+        ld      de,(pf_fth)
         push    de
         push    hl
         call    __fadd
@@ -2521,40 +2316,38 @@ qf_f_prec_known:
         pop     bc
         pop     bc
         pop     bc
-        ld      (qf_fl),hl
-        ld      (qf_fh),de
-qf_f_rounded:
+        ld      (pf_fl),hl
+        ld      (pf_fh),de
+pf_f_rounded:
 
         ; Integer part = (unsigned long)abs(f).
-        ; The old path used __ffi/qf_print_u, so %f could not print an
-        ; integer part above 65535 and produced values like 65535.//////.
-        ld      hl,(qf_fl)
-        ld      de,(qf_fh)
+        ld      hl,(pf_fl)
+        ld      de,(pf_fh)
         call    __fful
 
-        ; Save integer part both for printing and later subtraction.
-        ld      (__qf32_l),hl
-        ld      (__qf32_h),de
-        ld      (qf_tl),hl
-        ld      (qf_th),de
+        ; Save integer part in pf_ftl/pf_fth; load __pf32_l/__pf32_h for pf_print_u32.
+        ld      (__pf32_l),hl
+        ld      (__pf32_h),de
+        ld      (pf_ftl),hl
+        ld      (pf_fth),de
 
-        call    qf_print_u32
+        call    pf_print_u32
 
         ld      a,'.'
-        call    qf_emit_a
+        call    pf_emit_a
 
-        ; qf_print_u32 destroys __qf32_l/__qf32_h, so use saved copy.
-        ld      hl,(qf_tl)
-        ld      de,(qf_th)
+        ; pf_print_u32 destroys __pf32_l/__pf32_h; restore integer part from pf_ftl/pf_fth.
+        ld      hl,(pf_ftl)
+        ld      de,(pf_fth)
         call    __fulf
-        ld      (qf_tl),hl
-        ld      (qf_th),de
-        ld      hl,(qf_fl)
-        ld      de,(qf_fh)
+        ld      (pf_ftl),hl
+        ld      (pf_fth),de
+        ld      hl,(pf_fl)
+        ld      de,(pf_fh)
         push    de
         push    hl
-        ld      hl,(qf_tl)
-        ld      de,(qf_th)
+        ld      hl,(pf_ftl)
+        ld      de,(pf_fth)
         push    de
         push    hl
         call    __fsub
@@ -2562,17 +2355,17 @@ qf_f_rounded:
         pop     bc
         pop     bc
         pop     bc
-        ld      (qf_fl),hl
-        ld      (qf_fh),de
+        ld      (pf_fl),hl
+        ld      (pf_fh),de
 
-qf_f_digloop:
-        ld      a,(qf_fcnt)
+pf_f_digloop:
+        ld      a,(pf_fcnt)
         or      a
-        jp      z,qf_f_done
+        jp      z,pf_f_done
 
         ; frac *= 10.0f
-        ld      hl,(qf_fl)
-        ld      de,(qf_fh)
+        ld      hl,(pf_fl)
+        ld      de,(pf_fh)
         push    de
         push    hl
         ld      hl,0
@@ -2584,27 +2377,27 @@ qf_f_digloop:
         pop     bc
         pop     bc
         pop     bc
-        ld      (qf_fl),hl
-        ld      (qf_fh),de
+        ld      (pf_fl),hl
+        ld      (pf_fh),de
 
         ; digit = (int)frac
         call    __ffi
-        ld      (qf_iw),hl
+        ld      (pf_fiw),hl
         ld      a,l
         add     a,'0'
-        call    qf_emit_a
+        call    pf_emit_a
 
         ; frac -= (float)digit
-        ld      hl,(qf_iw)
+        ld      hl,(pf_fiw)
         call    __fif
-        ld      (qf_tl),hl
-        ld      (qf_th),de
-        ld      hl,(qf_fl)
-        ld      de,(qf_fh)
+        ld      (pf_ftl),hl
+        ld      (pf_fth),de
+        ld      hl,(pf_fl)
+        ld      de,(pf_fh)
         push    de
         push    hl
-        ld      hl,(qf_tl)
-        ld      de,(qf_th)
+        ld      hl,(pf_ftl)
+        ld      de,(pf_fth)
         push    de
         push    hl
         call    __fsub
@@ -2612,26 +2405,26 @@ qf_f_digloop:
         pop     bc
         pop     bc
         pop     bc
-        ld      (qf_fl),hl
-        ld      (qf_fh),de
+        ld      (pf_fl),hl
+        ld      (pf_fh),de
 
-        ld      a,(qf_fcnt)
+        ld      a,(pf_fcnt)
         dec     a
-        ld      (qf_fcnt),a
-        jp      qf_f_digloop
-qf_f_done:
+        ld      (pf_fcnt),a
+        jp      pf_f_digloop
+pf_f_done:
         pop     de
         pop     hl
-        jp      qf_loop
+        jp      pf_loop
 
-qf_fl:      dw 0
-qf_fh:      dw 0
-qf_tl:      dw 0
-qf_th:      dw 0
-qf_iw:      dw 0
-qf_fcnt:    db 0
+pf_fl:      dw 0
+pf_fh:      dw 0
+pf_ftl:     dw 0
+pf_fth:     dw 0
+pf_fiw:     dw 0
+pf_fcnt:    db 0
 
-qf_rndtab:
+pf_rndtab:
         dw      00000H,03F00H        ; 0.5e-0
         dw      0CCCDH,03D4CH        ; 0.5e-1
         dw      0D70AH,03BA3H        ; 0.5e-2
@@ -2642,452 +2435,6 @@ qf_rndtab:
         dw      0BF95H,03356H        ; 0.5e-7
         dw      0CC77H,031ABH        ; 0.5e-8
         dw      0705FH,03009H        ; 0.5e-9
-
-qf_l:
-        ; 'l' length modifier: read next char for ld/lu/lx/ls
-        ld      a,(hl)
-        inc     hl
-        cp      'd'
-        jp      z,qf_ld
-        cp      'u'
-        jp      z,qf_lu
-        cp      'x'
-        jp      z,qf_lx
-        cp      's'
-        jp      z,qf_ls
-        call    qf_emit_a
-        jp      qf_loop
-
-qf_ls:
-        ; wchar_t * string.  DCC wchar_t is 16-bit for L"..." literals.
-        ; Print the low byte as ASCII and ignore the high byte.
-        push    hl
-        call    qf_arg_hl
-        push    de
-        push    hl
-        call    qf_wstrlen_hl      ; A = wide string length, HL preserved by stack
-        call    qf_pad_a
-        pop     hl
-qf_ls_loop:
-        ld      a,(hl)
-        inc     hl
-        ld      e,a                ; save low byte
-        ld      a,(hl)
-        inc     hl                 ; skip high byte
-        or      e
-        jr      z,qf_ls_done
-        ld      a,e
-        call    qf_emit_a
-        jr      qf_ls_loop
-qf_ls_done:
-        pop     de
-        pop     hl
-        jp      qf_loop
-
-qf_wstrlen_hl:
-        push    hl
-        ld      c,0
-qf_wstrlen_loop:
-        ld      a,(hl)
-        inc     hl
-        ld      e,a
-        ld      a,(hl)
-        inc     hl
-        or      e
-        jr      z,qf_wstrlen_done
-        inc     c
-        jr      qf_wstrlen_loop
-qf_wstrlen_done:
-        ld      a,c
-        pop     hl
-        ret
-
-qf_ld:
-        ; Signed 32-bit decimal
-        push    hl
-        call    qf_arg_dehl     ; loads __qf32_l/__qf32_h, advances DE by 4
-        push    de
-        ld      hl,(__qf32_h)
-        bit     7,h
-        jr      z,qf_ld_pos
-        ; Negative: negate, then print with '-'
-        call    qf_neg32
-        call    qf_count_u32_digits
-        inc     a               ; +1 for '-'
-        call    qf_pad_a
-        ld      a,'-'
-        call    qf_emit_a
-        jr      qf_ld_print
-qf_ld_pos:
-        call    qf_count_u32_digits
-        call    qf_pad_a
-qf_ld_print:
-        call    qf_print_u32
-        pop     de
-        pop     hl
-        jp      qf_loop
-
-qf_lu:
-        ; Unsigned 32-bit decimal
-        push    hl
-        call    qf_arg_dehl
-        push    de
-        call    qf_count_u32_digits
-        call    qf_pad_a
-        call    qf_print_u32
-        pop     de
-        pop     hl
-        jp      qf_loop
-
-qf_lx:
-        ; Unsigned 32-bit hex (%lx): 8 hex digits, high word first
-        push    hl
-        call    qf_arg_dehl     ; loads __qf32_l/__qf32_h, advances DE by 4
-        push    de
-        ld      hl,(__qf32_h)
-        call    qf_print_x      ; high word (4 hex digits)
-        ld      hl,(__qf32_l)
-        call    qf_print_x      ; low word (4 hex digits)
-        pop     de
-        pop     hl
-        jp      qf_loop
-
-qf_done:
-        ret                     ; count in BC; caller cleans up
-
-qf_emit_a:
-        push    hl
-        push    de
-        push    bc
-        ld      e,a
-        ld      hl,(pf_sink)
-        ld      a,h
-        or      l
-        jr      z,qfe_con       ; pf_sink=0 → console
-qfe_buf:
-        ld      hl,(pf_bufptr)
-        ld      (hl),e
-        inc     hl
-        ld      (pf_bufptr),hl
-        pop     bc
-        pop     de
-        pop     hl
-        inc     bc
-        ret
-qfe_con:
-        call    __conout
-        pop     bc
-        pop     de
-        pop     hl
-        inc     bc
-        ret
-
-qf__slen_hl:
-        push    hl
-        push    bc
-        ld      bc,0
-qfsl1:
-        ld      a,(hl)
-        or      a
-        jr      z,qfsl2
-        inc     hl
-        inc     bc
-        jr      qfsl1
-qfsl2:
-        ld      a,c              ; low byte is enough for current tests
-        pop     bc
-        pop     hl
-        ret
-
-qf_count_u_digits:
-        push    bc
-        ld      bc,0
-        ld      a,h
-        or      l
-        jr      nz,qfcud1
-        ld      a,1
-        pop     bc
-        ret
-qfcud1:
-        inc     c
-        ld      de,10
-        call    __divmodu_slow   ; HL = quotient, DE = remainder
-        ld      a,h
-        or      l
-        jr      nz,qfcud1
-        ld      a,c
-        pop     bc
-        ret
-
-qf_print_u:
-        push    ix
-        ld      ix,qf_decbuf+6
-        ld      (ix+0),0
-        ld      a,h
-        or      l
-        jr      nz,qfu1
-        ld      a,'0'
-        call    qf_emit_a
-        pop     ix
-        ret
-qfu1:
-        dec     ix
-        ld      de,10
-        call    __divmodu_slow
-        ld      a,e
-        add     a,'0'
-        ld      (ix+0),a
-        ld      a,h
-        or      l
-        jr      nz,qfu1
-qfu2:
-        ld      a,(ix+0)
-        or      a
-        jr      z,qfu3
-        call    qf_emit_a
-        inc     ix
-        jr      qfu2
-qfu3:
-        pop     ix
-        ret
-
-qf_print_x:
-        ld      a,h
-        call    qf_hex_byte
-        ld      a,l
-        call    qf_hex_byte
-        ret
-qf_hex_byte:
-        push    af
-        rrca
-        rrca
-        rrca
-        rrca
-        call    qf_hex_nib
-        pop     af
-qf_hex_nib:
-        and     0fh
-        add     a,'0'
-        cp      '9'+1
-        jr      c,qfh1
-        add     a,7
-qfh1:
-        call    qf_emit_a
-        ret
-
-qf_width:
-        db      0
-qf_digit:
-        db      0
-qf_prec:
-        db      0
-qf_left:
-        db      0
-
-qf_decbuf:
-        ds      7
-
-qf_decbuf32:
-        ds      11
-
-; qf_arg_dehl: read 4-byte vararg into __qf32_l/__qf32_h, advance DE by 4
-qf_arg_dehl:
-        push    de              ; save vararg offset
-        push    ix
-        pop     hl              ; HL = IX (frame base)
-        add     hl,de           ; HL = IX + DE
-        ld      a,(hl)
-        inc     hl
-        ld      b,(hl)          ; B:A = low word bytes (A=low, B=high)
-        inc     hl
-        ld      c,(hl)
-        inc     hl
-        ld      e,(hl)          ; E:C = high word bytes (C=low, E=high)
-        ld      l,a
-        ld      h,b
-        ld      (__qf32_l),hl
-        ld      l,c
-        ld      h,e
-        ld      (__qf32_h),hl
-        pop     de              ; restore vararg offset
-        inc     de
-        inc     de
-        inc     de
-        inc     de
-        ret
-
-; qf_neg32: negate __qf32_l/__qf32_h (two's complement)
-qf_neg32:
-        ld      de,(__qf32_l)
-        ld      hl,0
-        or      a
-        sbc     hl,de
-        ld      (__qf32_l),hl
-        ld      de,(__qf32_h)
-        ld      hl,0
-        sbc     hl,de
-        ld      (__qf32_h),hl
-        ret
-
-; qf_divu32_10: divide __qf32_l/__qf32_h by 10
-; Output: __qf32_l/__qf32_h = quotient, A = remainder (0-9)
-qf_divu32_10:
-        push    bc
-        push    de
-        push    hl
-        ld      hl,0
-        ld      (__qf32_rem_l),hl
-        ld      (__qf32_rem_h),hl
-        ld      (__qf32_quo_l),hl
-        ld      (__qf32_quo_h),hl
-        ld      b,32
-qf32d_loop:
-        ; Shift {rem:qf32} left 1 (64-bit)
-        ld      hl,(__qf32_l)
-        or      a
-        add     hl,hl
-        ld      (__qf32_l),hl
-        ld      hl,(__qf32_h)
-        adc     hl,hl
-        ld      (__qf32_h),hl
-        ld      hl,(__qf32_rem_l)
-        adc     hl,hl
-        ld      (__qf32_rem_l),hl
-        ld      hl,(__qf32_rem_h)
-        adc     hl,hl
-        ld      (__qf32_rem_h),hl
-        ; rem < 20, so rem_h = 0; compare rem_l with 10
-        ld      hl,(__qf32_rem_l)
-        ld      a,l
-        cp      10
-        jr      c,qf32d_no_sub
-        ; rem >= 10
-        sub     10
-        ld      l,a
-        ld      h,0
-        ld      (__qf32_rem_l),hl
-        ; quotient <<= 1, set bit 0
-        ld      hl,(__qf32_quo_l)
-        or      a
-        add     hl,hl
-        inc     l
-        ld      (__qf32_quo_l),hl
-        ld      hl,(__qf32_quo_h)
-        adc     hl,hl
-        ld      (__qf32_quo_h),hl
-        jr      qf32d_next
-qf32d_no_sub:
-        ld      hl,(__qf32_quo_l)
-        or      a
-        add     hl,hl
-        ld      (__qf32_quo_l),hl
-        ld      hl,(__qf32_quo_h)
-        adc     hl,hl
-        ld      (__qf32_quo_h),hl
-qf32d_next:
-        djnz    qf32d_loop
-        ld      hl,(__qf32_quo_l)
-        ld      (__qf32_l),hl
-        ld      hl,(__qf32_quo_h)
-        ld      (__qf32_h),hl
-        ld      hl,(__qf32_rem_l)
-        ld      a,l             ; remainder 0-9
-        pop     hl
-        pop     de
-        pop     bc
-        ret
-
-; qf_count_u32_digits: count decimal digits of __qf32_l/__qf32_h; A = count
-qf_count_u32_digits:
-        push    bc
-        push    de
-        push    hl
-        ld      hl,(__qf32_h)
-        ld      a,h
-        or      l
-        ld      hl,(__qf32_l)
-        or      h
-        or      l
-        jr      nz,qfcud32_start
-        ld      a,1
-        pop     hl
-        pop     de
-        pop     bc
-        ret
-qfcud32_start:
-        ; Save __qf32
-        ld      (__qf32_save_l),hl
-        ld      hl,(__qf32_h)
-        ld      (__qf32_save_h),hl
-        ld      c,0
-qfcud32_loop:
-        inc     c
-        call    qf_divu32_10
-        ld      hl,(__qf32_h)
-        ld      a,h
-        or      l
-        ld      hl,(__qf32_l)
-        or      h
-        or      l
-        jr      nz,qfcud32_loop
-        ld      a,c
-        ; Restore __qf32
-        ld      hl,(__qf32_save_l)
-        ld      (__qf32_l),hl
-        ld      hl,(__qf32_save_h)
-        ld      (__qf32_h),hl
-        pop     hl
-        pop     de
-        pop     bc
-        ret
-
-; qf_print_u32: print __qf32_l/__qf32_h as unsigned decimal
-qf_print_u32:
-        push    ix
-        ld      ix,qf_decbuf32+10
-        ld      (ix+0),0        ; null terminator
-        ld      hl,(__qf32_h)
-        ld      a,h
-        or      l
-        ld      hl,(__qf32_l)
-        or      h
-        or      l
-        jr      nz,qfu32_start
-        ld      a,'0'
-        call    qf_emit_a
-        pop     ix
-        ret
-qfu32_start:
-        dec     ix
-        call    qf_divu32_10    ; A = remainder digit
-        add     a,'0'
-        ld      (ix+0),a
-        ld      hl,(__qf32_h)
-        ld      a,h
-        or      l
-        ld      hl,(__qf32_l)
-        or      h
-        or      l
-        jr      nz,qfu32_start
-qfu32_emit:
-        ld      a,(ix+0)
-        or      a
-        jr      z,qfu32_done
-        call    qf_emit_a
-        inc     ix
-        jr      qfu32_emit
-qfu32_done:
-        pop     ix
-        ret
-
-__qf32_l:       dw      0
-__qf32_h:       dw      0
-__qf32_rem_l:   dw      0
-__qf32_rem_h:   dw      0
-__qf32_quo_l:   dw      0
-__qf32_quo_h:   dw      0
-__qf32_save_l:  dw      0
-__qf32_save_h:  dw      0
 
         public  _exit
 _exit:

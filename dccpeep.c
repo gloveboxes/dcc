@@ -2260,6 +2260,140 @@ static int pass_elim_ix_frame(void)
     return changed;
 }
 
+/*
+ * pass_shared_frame_stubs:
+ *
+ * Called after pass_elim_ix_frame (which already stripped IX frames from
+ * functions that never touch IX).  This pass converts the remaining framed
+ * prologues and epilogues to shared stub calls, saving ~5-7 bytes per
+ * prologue and ~2 bytes per epilogue that has locals.
+ *
+ * With locals (13 inline bytes → 6):
+ *   push ix / ld ix,0 / add ix,sp / ld hl,-N / add hl,sp / ld sp,hl
+ *   → ld hl,-N / call __entr
+ *
+ * Without locals but with IX-accessed params (8 inline bytes -> 3):
+ *   push ix / ld ix,0 / add ix,sp
+ *   -> call __en0
+ *
+ * Epilogue -- with-locals only (5 inline bytes -> 3):
+ *   ld sp,ix / pop ix / ret
+ *   -> jp __lve
+ *
+ * The no-locals epilogue (pop ix / ret, 3 bytes after the dcc.c fix) is
+ * already as compact as a jp __lve, so it is left inline.
+ *
+ * RTL stub names are <=6 chars so they stay distinct in L80's 6-character
+ * symbol table.  extrn declarations are injected at the top of the file so
+ * that dccrtlstrip includes only the blocks actually used.
+ */
+static int pass_shared_frame_stubs(void)
+{
+    int i, j;
+    int changed = 0;
+    int used_entr = 0, used_en0 = 0, used_lve = 0;
+
+    for (i = 0; i + 2 < nlines; i++) {
+        int next_func, epi, has_locals;
+        char lsize[MAX_LINE];
+
+        if (!eq(i, "push ix") || !eq(i+1, "ld ix,0") || !eq(i+2, "add ix,sp"))
+            continue;
+
+        /* Find next function boundary. */
+        next_func = nlines;
+        for (j = i + 3; j < nlines; j++) {
+            if (strncmp(lines[j], "public ", 7) == 0) {
+                next_func = j;
+                break;
+            }
+        }
+
+        /* Check for local variable allocation immediately after prologue. */
+        has_locals = 0;
+        lsize[0] = '\0';
+        if (i + 5 < next_func &&
+            strncmp(lines[i+3], "ld hl,-", 7) == 0 &&
+            eq(i+4, "add hl,sp") &&
+            eq(i+5, "ld sp,hl")) {
+            has_locals = 1;
+            strncpy(lsize, lines[i+3], sizeof(lsize) - 1);
+            lsize[sizeof(lsize) - 1] = '\0';
+        }
+
+        if (has_locals) {
+            /* Find the matching epilogue: ld sp,ix / pop ix / ret */
+            epi = -1;
+            for (j = i + 6; j + 2 < next_func; j++) {
+                if (eq(j, "ld sp,ix") && eq(j+1, "pop ix") && eq(j+2, "ret")) {
+                    epi = j;
+                    break;
+                }
+            }
+            if (epi < 0)
+                continue; /* no canonical epilogue found — leave as-is */
+
+            /*
+             * Replace prologue: remove push ix/ld ix,0/add ix,sp (3 lines),
+             * then remove add hl,sp/ld sp,hl (2 lines), leaving ld hl,-N at
+             * position i.  Insert call __entr after it.
+             */
+            delete_n(i, 3);
+            epi -= 3;
+            delete_n(i + 1, 2);
+            epi -= 2;
+            insert_line_tagged(i + 1, "call __entr", "shared_frame");
+            epi += 1;
+            used_entr = 1;
+
+            /* Replace epilogue: ld sp,ix / pop ix / ret -> jp __lve */
+            replace1_tagged(epi, "jp __lve", "shared_frame");
+            delete_n(epi + 1, 2);
+            used_lve = 1;
+        } else {
+            /* No-locals: push ix / ld ix,0 / add ix,sp -> call __en0.
+             * Since dcc now always emits ld sp,ix in the epilogue,
+             * also convert ld sp,ix / pop ix / ret -> jp __lve so that
+             * no-locals functions remain as compact as before. */
+            epi = -1;
+            for (j = i + 3; j + 2 < next_func; j++) {
+                if (eq(j, "ld sp,ix") && eq(j+1, "pop ix") && eq(j+2, "ret")) {
+                    epi = j;
+                    break;
+                }
+            }
+
+            replace1_tagged(i, "call __en0", "shared_frame");
+            delete_n(i + 1, 2);
+            used_en0 = 1;
+
+            if (epi >= 0) {
+                epi -= 2; /* two lines removed from prolog above */
+                replace1_tagged(epi, "jp __lve", "shared_frame");
+                delete_n(epi + 1, 2);
+                used_lve = 1;
+            }
+        }
+
+        changed = 1;
+        i--; /* re-examine same index after line deletions */
+    }
+
+    /*
+     * Inject extrn declarations at the top of the file for each stub used.
+     * dccrtlstrip uses these references to select which RTL blocks to include.
+     * Insert in reverse order so the final sequence reads __entr/__en0/__lve.
+     */
+    if (used_entr || used_en0 || used_lve) {
+        int pos = 0;
+        if (used_lve)  insert_line(pos, "extrn __lve");
+        if (used_en0)  insert_line(pos, "extrn __en0");
+        if (used_entr) insert_line(pos, "extrn __entr");
+    }
+
+    return changed;
+}
+
 static int pass_byte_minmax_patterns(void)
 {
     int i;
@@ -4017,7 +4151,7 @@ static int pass_once(void)
             eq(i + 4, "ex de,hl")) {
             int n;
             int k;
-            if (parse_nonneg_int(v, &n) && n > 0 && n <= 8) {
+            if (parse_nonneg_int(v, &n) && n > 0 && n <= 6) {
                 delete_n(i, 5);
                 for (k = 0; k < n; k++) {
                     if (k == 0)
@@ -5315,6 +5449,76 @@ static int pass_deref_byte_cmp(void)
 }
 
 
+/*
+ * pass_larg_stubs — replace ld l,(ix+N) / ld h,(ix+N+1) with call __la1/2/3.
+ *
+ * The shared RTL stubs are 7 bytes each; the inline pair is 6 bytes.  With
+ * three or more uses of the same stub the stub cost is recovered and every
+ * additional use saves 3 bytes.  Runs after pass_elim_ix_frame so that
+ * the "ix" text is still visible during frame-elimination scanning.
+ */
+static int pass_larg_stubs(void)
+{
+    int i, changed;
+    int used_la1 = 0, used_la2 = 0, used_la3 = 0;
+
+    changed = 0;
+
+    for (i = 0; i + 1 < nlines; i++) {
+        if (eq(i, "ld l,(ix+4)") && eq(i+1, "ld h,(ix+5)")) {
+            replace1_tagged(i, "call __la1", "larg");
+            delete_n(i+1, 1);
+            used_la1 = 1; changed = 1;
+        } else if (eq(i, "ld l,(ix+6)") && eq(i+1, "ld h,(ix+7)")) {
+            replace1_tagged(i, "call __la2", "larg");
+            delete_n(i+1, 1);
+            used_la2 = 1; changed = 1;
+        } else if (eq(i, "ld l,(ix+8)") && eq(i+1, "ld h,(ix+9)")) {
+            replace1_tagged(i, "call __la3", "larg");
+            delete_n(i+1, 1);
+            used_la3 = 1; changed = 1;
+        }
+    }
+
+    if (used_la1 || used_la2 || used_la3) {
+        int pos = 0;
+        if (used_la3) insert_line(pos, "extrn __la3");
+        if (used_la2) insert_line(pos, "extrn __la2");
+        if (used_la1) insert_line(pos, "extrn __la1");
+    }
+
+    return changed;
+}
+
+/*
+ * pass_phix_stub — replace push hl / push ix / pop hl with call __phix.
+ *
+ * The pattern saves HL on the stack and copies IX into HL (for frame-pointer
+ * arithmetic).  The stub is 6 bytes; the inline sequence is 4 bytes (1 byte
+ * push hl + 2 bytes push ix + 1 byte pop hl).  Break-even is 7 calls.
+ * Runs after pass_shared_frame_stubs so prologue push-ix has been converted.
+ */
+static int pass_phix_stub(void)
+{
+    int i, changed;
+    int used = 0;
+
+    changed = 0;
+
+    for (i = 0; i + 2 < nlines; i++) {
+        if (eq(i, "push hl") && eq(i+1, "push ix") && eq(i+2, "pop hl")) {
+            replace1_tagged(i, "call __phix", "phix");
+            delete_n(i+1, 2);
+            used = 1; changed = 1;
+        }
+    }
+
+    if (used)
+        insert_line(0, "extrn __phix");
+
+    return changed;
+}
+
 static int pass_global_board_const_offsets(void)
 {
     int i;
@@ -5509,6 +5713,21 @@ int main(int argc, char **argv)
      * clean up any newly unreferenced labels created by the removal. */
     if (pass_elim_ix_frame())
         pass_labels();
+
+    /* Convert remaining framed prologues/epilogues to shared stub calls.
+     * Runs after frame elimination so only functions that genuinely need IX
+     * are transformed.  A follow-up branch/label pass collapses any return
+     * labels that now just contain "jp __lve" into direct jumps. */
+    if (pass_shared_frame_stubs()) {
+        pass_branch_over_jump();
+        pass_labels();
+    }
+
+    /* Load-arg stubs and frame-pointer copy stub run last: they remove "ix"
+     * text from lines, so they must not run before pass_elim_ix_frame (which
+     * uses that text to detect live frame usage). */
+    pass_larg_stubs();
+    pass_phix_stub();
 
     write_file(argv[2]);
     return 0;

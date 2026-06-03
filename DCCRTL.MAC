@@ -2222,6 +2222,13 @@ pf_float_stub:
 pf_float_hook:
         dw      pf_float_stub
 
+; printf/sprintf/fprintf shared sink and buffer (here so they stay in the
+; _printf block; placing them elsewhere forces dccrtlstrip to keep that block)
+pf_sink:        dw      0       ; 0=console, 0FFFFh=buffer
+pf_bufptr:      dw      0       ; write pointer for sprintf/fprintf
+__pf_cnt:       dw      0       ; char count saved by fprintf
+__pf_fbuf:      ds      256     ; static buffer for fprintf
+
 
 ; ---- float-enabled printf (-ffloatio) ------------------------------
         public  _pffio
@@ -3367,6 +3374,50 @@ __ioerr:
         ret
 
 
+_errno:
+        dw      0
+__slot:
+        db      0
+__chnk:
+        db      0
+__remdr:
+        db      0
+__rwbuf:
+        dw      0
+__rwrem:
+        dw      0
+__rwcnt:
+        dw      0
+__mffcb:
+        dw      0
+__ulfcb:
+        ds      12              ; scratch FCB for _unlink
+
+__dmval:
+        db      0
+__dmc_lhs:
+        dw      0
+__dmc_rhs:
+        dw      0
+__dmquot:
+        dw      0
+__dmrem:
+        dw      0
+
+__fdeof:        ds      4       ; EOF flag per slot (index = fd - FIRSTFD)
+__fderr:        ds      4       ; error flag per slot
+__fduse:
+        ds      4
+__fdoff:
+        ds      16
+__fcbs:
+        ds      144
+__dma:
+        ds      128
+
+; _srand/_rand placed here so their blocks do not enclose the file I/O and
+; divu/modu shared data above; those would force _rand into every build that
+; uses file I/O or integer division.
         public  _srand
 _srand:
         push    ix
@@ -3447,47 +3498,6 @@ __rand_store:
 
 __rand_state:
         dw      1
-
-_errno:
-        dw      0
-__slot:
-        db      0
-__chnk:
-        db      0
-__remdr:
-        db      0
-__rwbuf:
-        dw      0
-__rwrem:
-        dw      0
-__rwcnt:
-        dw      0
-__mffcb:
-        dw      0
-__ulfcb:
-        ds      12              ; scratch FCB for _unlink
-
-__dmval:
-        db      0
-__dmc_lhs:
-        dw      0
-__dmc_rhs:
-        dw      0
-__dmquot:
-        dw      0
-__dmrem:
-        dw      0
-
-__fduse:
-        ds      4
-__fdoff:
-        ds      16
-__fcbs:
-        ds      144
-__dma:
-        ds      128
-
-
 
 ; ============================================================
 ; 32-bit long arithmetic runtime routines
@@ -4885,14 +4895,6 @@ __fgets_ch:     db      0
 __fgets_start:  dw      0
 
 ; ============================================================
-; printf/sprintf/fprintf shared data
-; ============================================================
-pf_sink:        dw      0       ; 0=console, 0FFFFh=buffer
-pf_bufptr:      dw      0       ; write pointer for sprintf/fprintf
-__pf_cnt:       dw      0       ; char count saved by fprintf
-__pf_fbuf:      ds      256     ; static buffer for fprintf
-
-; ============================================================
 ; _sprintf(buf, fmt, ...)
 ; IX+4=buf, IX+6=fmt, IX+8=first vararg
 ; ============================================================
@@ -5456,12 +5458,6 @@ _sscanf:
 _fscanf:
         ld      hl,0
         ret
-
-; ============================================================
-; Additional data
-; ============================================================
-__fdeof:        ds      4       ; EOF flag per slot (index = fd - FIRSTFD)
-__fderr:        ds      4       ; error flag per slot
 
 ; ============================================================
 ; setjmp / longjmp  (C89)

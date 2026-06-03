@@ -7633,12 +7633,20 @@ static int snippet_simple_type(const char *s, int *typep)
 
     p = skip_snippet_ws_and_lines(s);
     if (*p == '[') {
-        /* Subscripted expression: return element type of the array/pointer.
+        /* Subscripted expression: return element type of array/pointer.
          * This allows snippet_needs_long_compare to detect that expressions
-         * like o_cost[jc] have type long when o_cost is long *. */
+         * like arr[i] have type long when arr is long * or long arr[N]. */
         sym = find_sym(name);
-        if (!sym || type_ptr_depth(sym->type) == 0)
+        if (!sym)
             return 0;
+        if (sym->is_array) {
+            /* Array variable: sym->type already is the element type */
+            typep[0] = sym->type;
+            return 1;
+        }
+        if (type_ptr_depth(sym->type) == 0)
+            return 0;
+        /* Pointer variable: decay one level to get the element type */
         typep[0] = type_decay_ptr(sym->type);
         return 1;
     }

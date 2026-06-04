@@ -39,8 +39,11 @@ extern char __bsse;     // bss end. no _ prefix added by dcc
 
 char acbss[ 256 ];      // reserve some bss space
 
-bool spsmash( size_t sp )
+bool spsmash()
 {
+    int local;
+    uint32_t sp = & local;
+
     sp -= 32; // use the margin of error that makes sense for your app
     return ( sp <= _brk );        // about to smash utilized heap/bss
     // return ( sp <= _hlimit );  // about to smash heap limit
@@ -48,7 +51,7 @@ bool spsmash( size_t sp )
 
 uint32_t factorial( uint32_t n )
 {
-    if ( spsmash( (size_t) &n ) )
+    if ( spsmash() )
     {
         #if true
             printf( "intentional stack overflow condition.\n" );

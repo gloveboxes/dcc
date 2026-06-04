@@ -5471,6 +5471,82 @@ static int pass_deref_byte_cmp(void)
 
 
 /*
+ * pass_reg_bc_deref_byte_cmp:
+ *
+ * When a register variable lives in BC, *bc_ptr dereferences as:
+ *
+ *   ld l,c                       ; BC -> HL
+ *   ld h,b
+ *   ld l,(hl)                    ; L = *ptr (byte dereference)
+ *   ld h,0                       ; H = 0    (zero-extend)
+ *   push hl
+ *   ld l,(ix+P) or (ix-P)        ; L = compare value
+ *   ld h,0
+ *   ex de,hl                     ; DE = compare value
+ *   pop hl                       ; HL = *ptr
+ *   or a
+ *   sbc hl,de                    ; HL = *ptr - cmp
+ *   jp z/nz, LABEL
+ *
+ * Collapse to 6 instructions (avoids ld a,(bc) which M80 does not handle):
+ *
+ *   ld l,c                       ; BC -> HL
+ *   ld h,b
+ *   ld a,(hl)                    ; A = *ptr
+ *   ld l,(ix+P) or (ix-P)        ; L = compare value
+ *   cp l                         ; Z set iff A == L
+ *   jp z/nz, LABEL
+ */
+static int pass_reg_bc_deref_byte_cmp(void)
+{
+    int i;
+    int changed = 0;
+
+    for (i = 0; i + 11 < nlines; i++) {
+        char label[128];
+        const char *cond;
+
+        if (!eq(i + 0, "ld l,c"))   continue;
+        if (!eq(i + 1, "ld h,b"))   continue;
+        if (!eq(i + 2, "ld l,(hl)")) continue;
+        if (!eq(i + 3, "ld h,0"))   continue;
+        if (!eq(i + 4, "push hl"))  continue;
+        if (strncmp(lines[i + 5], "ld l,(ix", 8) != 0) continue;
+        if (!eq(i + 6, "ld h,0"))   continue;
+        if (!eq(i + 7, "ex de,hl")) continue;
+        if (!eq(i + 8, "pop hl"))   continue;
+        if (!eq(i + 9,  "or a"))    continue;
+        if (!eq(i + 10, "sbc hl,de")) continue;
+        if (parse_jp_z_label(lines[i + 11], label))
+            cond = "z";
+        else if (parse_jp_nz_label(lines[i + 11], label))
+            cond = "nz";
+        else
+            continue;
+
+        {
+            char cmp_l[MAX_LINE], jp_line[MAX_LINE];
+
+            strcpy(cmp_l, lines[i + 5]);   /* preserve the "ld l,(ix...)" line */
+            sprintf(jp_line, "jp %s, %s", cond, label);
+
+            delete_n(i, 12);
+            insert_line_tagged(i + 0, "ld l,c", "reg_bc_deref_byte_cmp");
+            insert_line(i + 1, "ld h,b");
+            insert_line(i + 2, "ld a,(hl)");
+            insert_line(i + 3, cmp_l);
+            insert_line(i + 4, "cp l");
+            insert_line(i + 5, jp_line);
+
+            changed = 1;
+        }
+    }
+
+    return changed;
+}
+
+
+/*
  * pass_lvar_stubs — replace ld l,(ix-N) / ld h,(ix-N+1) with call __lv1..8.
  * pass_svar_stubs — replace ld (ix-N),l / ld (ix-N+1),h with call __sv1..6.
  *
@@ -6021,6 +6097,7 @@ int main(int argc, char **argv)
         if (pass_recover_index_from_sbc()) changed = 1;
         if (pass_ix_frame_ptr_load()) changed = 1;
         if (pass_deref_byte_cmp()) changed = 1;
+        if (pass_reg_bc_deref_byte_cmp()) changed = 1;
         if (pass_elim_dead_ix_stores()) changed = 1;
         if (pass_remove_ix_store_reload_a()) changed = 1;
         if (pass_elim_long_store_reload()) changed = 1;

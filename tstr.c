@@ -19,12 +19,6 @@ wchar_t wc[ 4096 ];
 wchar_t wc_other[ 4096 ];
 wchar_t wc_zeroes[ 4096 ];
 
-#define wcschr fake_wcschr
-#define wcsrchr fake_wcsrchr
-#define wcsstr fake_wcsstr
-#define wcslen fake_wcslen
-#define wcscpy fake_wcscpy
-
 wchar_t *wcscpy(wchar_t * dest, const wchar_t * src)
 {
     wchar_t * r = dest;
@@ -34,7 +28,7 @@ wchar_t *wcscpy(wchar_t * dest, const wchar_t * src)
     return r;
 }
 
-wchar_t * fake_wcschr(const wchar_t *str, int c) 
+wchar_t * wcschr(const wchar_t *str, int c) 
 {
     while (*str != 0) 
     {
@@ -46,7 +40,7 @@ wchar_t * fake_wcschr(const wchar_t *str, int c)
     return NULL;
 }
 
-wchar_t * fake_wcsrchr(const wchar_t *str, int c) 
+wchar_t * wcsrchr(const wchar_t *str, int c) 
 {
     const wchar_t *last_occurrence = NULL;
     while (*str != 0) 
@@ -58,7 +52,7 @@ wchar_t * fake_wcsrchr(const wchar_t *str, int c)
     return (wchar_t *)last_occurrence;
 }
 
-wchar_t * fake_wcsstr(const wchar_t *haystack, const wchar_t *needle) 
+wchar_t * wcsstr(const wchar_t *haystack, const wchar_t *needle) 
 {
     if (!*needle)
         return (wchar_t *)haystack;
@@ -82,7 +76,7 @@ wchar_t * fake_wcsstr(const wchar_t *haystack, const wchar_t *needle)
     return NULL;
 }
 
-size_t fake_wcslen(const wchar_t *str) 
+size_t wcslen(const wchar_t *str) 
 {
     size_t len = 0;
 

@@ -8,14 +8,10 @@
 
 int logging = 1;
 
-void chkmem( char *p, int v, int c )
+void chkmem( char *p, int v, size_t c )
 {
-    unsigned char * pc;
-    unsigned char val;
-    int i;
-
-    pc = (unsigned char *) p;
-    val = (unsigned char) ( v & 0xff );
+    register unsigned char * pc = (unsigned char *) p;
+    unsigned char val = (unsigned char) ( v & 0xff );
 
     if ( 0 == p )
     {
@@ -23,7 +19,7 @@ void chkmem( char *p, int v, int c )
         exit( 1 );
     }
 
-    for ( i = 0; i < c; i++ )
+    for ( size_t i = 0; i < c; i++ )
     {
         if ( *pc != val )
         {
@@ -40,14 +36,14 @@ void chkmem( char *p, int v, int c )
 
 int main( int argc, char * argv[] )
 {
-    int i, cb, c_cb, j;
+    size_t i, cb, c_cb;
     char * pc;
-    char * ap[ allocs ];
+    static char * ap[ allocs ];
 
     logging = ( argc > 1 );
     pc = argv[ 0 ]; /* evade compiler warning */
 
-    for ( j = 0; j < 10; j++ )
+    for ( size_t j = 0; j < 10; j++ )
     {
         if ( logging )
             printf( "in alloc mode\n" );

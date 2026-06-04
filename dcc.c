@@ -42,6 +42,7 @@
 #define SC_PARAM       3
 #define SC_FUNC        4
 #define SC_EXTERN      5
+#define SC_REGISTER    6   /* register variable: lives in a CPU register pair */
 
 #define TOK_EOF        0
 #define TOK_ID         256
@@ -117,6 +118,7 @@ struct Sym {
     int type;
     int storage;
     int offset;
+    int reg_num;  /* SC_REGISTER only: 1=BC, 0=none */
     int size;
     int has_init;
     long init_value;
@@ -408,6 +410,8 @@ static int errors;
 static int scan_mode;
 static int decl_is_extern;
 static int decl_is_static;
+static int decl_is_register;   /* current decl used 'register' keyword */
+static struct Sym *g_reg_bc_sym; /* register var allocated to BC in cur func */
 static int expr_result_dead;
 static int g_expr_type;
 static int g_tok_long_suffix; /* set by lexer when L/l suffix seen on integer literal */
@@ -2943,10 +2947,12 @@ static int parse_base_type(void)
     saw_float = 0;
     g_typedef_array_len = 0;
     g_typedef_is_func = 0;
+    decl_is_register = 0;
 
     /* C89 declaration specifiers are order-independent. */
     for (;;) {
-        if (is_type_qualifier_token(tok.kind) || tok.kind == TOK_REGISTER ||
+        if (tok.kind == TOK_REGISTER) { decl_is_register = 1; next_token(); continue; }
+        if (is_type_qualifier_token(tok.kind) ||
             tok.kind == TOK_AUTO || tok.kind == TOK_INLINE) {
             next_token();
             continue;
@@ -3513,8 +3519,20 @@ static struct Sym *add_local_known(const char *name, int type, int storage,
 
 static struct Sym *add_local_alloc(const char *name, int type, int bytes)
 {
+    struct Sym *s;
     local_size += bytes;
-    return add_local_known(name, type, SC_LOCAL, -local_size, bytes);
+    s = add_local_known(name, type, SC_LOCAL, -local_size, bytes);
+    /* 'register' on a 2-byte pointer: allocate to BC (shadow slot kept for
+     * spill/reload around calls; local_size still counts the shadow).
+     * Restrict to pointer types: integer register vars hit too many fast paths
+     * in the expression evaluator that read the IX shadow directly. */
+    if (decl_is_register && bytes == 2 && !s->is_array &&
+        type_ptr_depth(type) > 0 && !g_reg_bc_sym) {
+        s->storage = SC_REGISTER;
+        s->reg_num = 1; /* BC */
+        g_reg_bc_sym = s;
+    }
+    return s;
 }
 
 static struct Sym *add_param_alloc(const char *name, int type)
@@ -3670,18 +3688,38 @@ static void emit_runtime_extrn_if_needed(const char *name)
     emitted[nemitted++] = name;
 }
 
+/* Spill BC register variable to its shadow IX slot before any call.
+ * Uses IX-relative stores, so the active call-arg stack layout is untouched. */
+static void emit_spill_bc_reg_var(void)
+{
+    if (g_reg_bc_sym)
+        fprintf(outf, "\tld (ix%+d),c\n\tld (ix%+d),b\n",
+                g_reg_bc_sym->offset, g_reg_bc_sym->offset + 1);
+}
+
+/* Reload BC from its shadow slot after a call that may have clobbered BC. */
+static void emit_reload_bc_reg_var(void)
+{
+    if (g_reg_bc_sym)
+        fprintf(outf, "\tld c,(ix%+d)\n\tld b,(ix%+d)\n",
+                g_reg_bc_sym->offset, g_reg_bc_sym->offset + 1);
+}
+
 static void emit_runtime_call(const char *name)
 {
     emit_runtime_extrn_if_needed(name);
-    if (!scan_mode)
+    if (!scan_mode) {
+        emit_spill_bc_reg_var();
         fprintf(outf, "\tcall %s\n", name);
+        emit_reload_bc_reg_var();
+    }
 }
 
 static void emit_load_sym_addr(struct Sym *s)
 {
     int n;
 
-    if (s->storage == SC_LOCAL || s->storage == SC_PARAM) {
+    if (s->storage == SC_LOCAL || s->storage == SC_PARAM || s->storage == SC_REGISTER) {
         emit("\tpush ix\n");
         emit("\tpop hl\n");
 
@@ -3706,7 +3744,7 @@ static int sym_can_ix_direct(struct Sym *s)
 {
     int sz;
     if (!s) return 0;
-    if (!(s->storage == SC_LOCAL || s->storage == SC_PARAM)) return 0;
+    if (!(s->storage == SC_LOCAL || s->storage == SC_PARAM || s->storage == SC_REGISTER)) return 0;
     if (s->is_array) return 0;
     sz = type_size(s->type);
     if (sz < 1) sz = 1;
@@ -3714,8 +3752,40 @@ static int sym_can_ix_direct(struct Sym *s)
     return 1;
 }
 
+/* True for global/extern 16-bit non-array variables that support direct word load/store. */
+static int is_global_word_sym(struct Sym *s)
+{
+    if (!s) return 0;
+    if (s->storage != SC_GLOBAL && s->storage != SC_EXTERN) return 0;
+    if (s->is_array) return 0;
+    return type_size(s->type) == 2;
+}
+
+/* Z80: ld hl,(name) — load 16-bit value from global/extern directly. */
+static void emit_load_global_word_direct(struct Sym *s)
+{
+    emit_extrn_if_needed(s);
+    fprintf(outf, "\tld hl,(%s)\n", asm_name_for(s->name));
+}
+
+/* Z80: ld (name),hl — store 16-bit HL value to global/extern directly. */
+static void emit_store_global_word_direct(struct Sym *s)
+{
+    emit_extrn_if_needed(s);
+    fprintf(outf, "\tld (%s),hl\n", asm_name_for(s->name));
+}
+
 static void emit_load_sym_value_direct(struct Sym *s)
 {
+    if (s->storage == SC_REGISTER) {
+        if (s->reg_num == 1) emit("\tld l,c\n\tld h,b\n");
+        else                 emit("\tld l,e\n\tld h,d\n");
+        return;
+    }
+    if (is_global_word_sym(s)) {
+        emit_load_global_word_direct(s);
+        return;
+    }
     if (type_size(s->type) == 1) {
         fprintf(outf, "\tld l,(ix%+d)\n", s->offset);
         if (s->type & TYPE_UNSIGNED)
@@ -3735,6 +3805,11 @@ static void emit_load_sym_value_direct(struct Sym *s)
 
 static void emit_load_sym_de_direct(struct Sym *s)
 {
+    if (s->storage == SC_REGISTER) {
+        if (s->reg_num == 1) emit("\tld e,c\n\tld d,b\n");
+        /* reg_num==1 only for now; DE reg would be a no-op */
+        return;
+    }
     if (type_size(s->type) == 1) {
         fprintf(outf, "\tld e,(ix%+d)\n", s->offset);
         if (s->type & TYPE_UNSIGNED)
@@ -3749,6 +3824,15 @@ static void emit_load_sym_de_direct(struct Sym *s)
 
 static void emit_store_hl_to_sym_direct(struct Sym *s)
 {
+    if (s->storage == SC_REGISTER) {
+        if (s->reg_num == 1) emit("\tld c,l\n\tld b,h\n");
+        else                 emit("\tld e,l\n\tld d,h\n");
+        return;
+    }
+    if (is_global_word_sym(s)) {
+        emit_store_global_word_direct(s);
+        return;
+    }
     if (type_size(s->type) == 1) {
         fprintf(outf, "\tld (ix%+d),l\n", s->offset);
     } else if (type_size(s->type) == 4) {
@@ -3765,6 +3849,11 @@ static void emit_store_hl_to_sym_direct(struct Sym *s)
 
 static void emit_store_de_to_sym_direct(struct Sym *s)
 {
+    if (s->storage == SC_REGISTER) {
+        if (s->reg_num == 1) emit("\tld c,e\n\tld b,d\n");
+        /* DE reg_num==2 would be DE→DE, a no-op */
+        return;
+    }
     if (type_size(s->type) == 1) {
         fprintf(outf, "\tld (ix%+d),e\n", s->offset);
     } else {
@@ -3777,8 +3866,40 @@ static void emit_incdec_sym_direct(struct Sym *s, int op)
 {
     int done;
 
+    /* Fast path for register variables: INC/DEC the register pair directly.
+     * For pointer types with stride <= 4 use repeated INC/DEC (avoids the
+     * round-trip through HL).  Larger strides fall through to the HL path. */
+    if (s && s->storage == SC_REGISTER) {
+        const char *inc_insn = (s->reg_num == 1) ? "\tinc bc\n" : "\tinc de\n";
+        const char *dec_insn = (s->reg_num == 1) ? "\tdec bc\n" : "\tdec de\n";
+        const char *insn = (op == TOK_INC) ? inc_insn : dec_insn;
+        if (type_ptr_depth(s->type) > 0) {
+            int elem = type_index_elem_size(s->type);
+            if (elem >= 1 && elem <= 4) {
+                int i;
+                for (i = 0; i < elem; i++) emit(insn);
+                return;
+            }
+            /* larger stride: fall through to HL-based path below */
+        } else {
+            emit(insn);
+            return;
+        }
+    }
+
+    /* Global 16-bit integer (non-pointer): ld hl,(nn); inc/dec hl; ld (nn),hl.
+     * inc hl / dec hl are atomic 16-bit ops so no byte-by-byte ripple needed. */
+    if (is_global_word_sym(s) && type_ptr_depth(s->type) == 0) {
+        emit_load_global_word_direct(s);
+        if (op == TOK_INC) emit("\tinc hl\n");
+        else               emit("\tdec hl\n");
+        emit_store_global_word_direct(s);
+        return;
+    }
+
     /* Pointer ++/-- advances by the pointed-to object size, not by one
-     * byte. */
+     * byte. Global pointer case now handled via emit_load_sym_value_direct +
+     * emit_store_hl_to_sym_direct which both support globals. */
     if (s && type_ptr_depth(s->type) > 0) {
         int elem;
         elem = type_index_elem_size(s->type);
@@ -4950,6 +5071,28 @@ static void gen_post_update_symbol_addr_value(struct Sym *s, int op)
 
     t = s->type;
 
+    if (s->storage == SC_REGISTER) {
+        /* Register variable: pointer lives in BC/DE, not in the shadow slot.
+         * Strategy: load old value → HL, push it, compute new → HL, update
+         * register, pop old value back to HL for the caller's dereference. */
+        int elem = type_index_elem_size(t);
+        emit_load_sym_value_direct(s); /* HL = old pointer (from BC/DE) */
+        emit("\tpush hl\n");           /* save old pointer value */
+        if (op == TOK_INC) {
+            emit("\tinc hl\n");
+            if (elem >= 2) emit("\tinc hl\n");
+            if (elem >= 4) { emit("\tinc hl\n"); emit("\tinc hl\n"); }
+        } else {
+            emit("\tdec hl\n");
+            if (elem >= 2) emit("\tdec hl\n");
+            if (elem >= 4) { emit("\tdec hl\n"); emit("\tdec hl\n"); }
+        }
+        emit_store_hl_to_sym_direct(s); /* BC/DE = new pointer value */
+        emit("\tpop hl\n");             /* HL = old pointer, used as lvalue address */
+        g_expr_type = t;
+        return;
+    }
+
     emit_load_sym_addr(s);          /* HL = address of pointer variable */
     emit("\tpush hl\n");            /* save pointer variable address */
     emit_load_from_hl(t);           /* HL = old pointer value */
@@ -5014,8 +5157,14 @@ static int try_gen_deref_postinc_lvalue_addr(int *ptype)
         next_token();
         gen_post_update_symbol_addr_value(s, op);
     } else {
-        emit_load_sym_addr(s);
-        emit_load_from_hl(s->type);
+        /* For register variables, the pointer value lives in BC/DE, not in
+         * the shadow IX slot.  Load directly from the register. */
+        if (s->storage == SC_REGISTER) {
+            emit_load_sym_value_direct(s); /* HL = BC (live pointer value) */
+        } else {
+            emit_load_sym_addr(s);
+            emit_load_from_hl(s->type);
+        }
     }
 
     if (ptype) {
@@ -5092,7 +5241,17 @@ static void gen_lvalue_addr(int *ptype)
             s = add_global(name, TYPE_INT, SC_GLOBAL);
         }
 
-        emit_load_sym_addr(s);
+        {
+        int lva_global_ptr_preloaded = 0;
+        /* For a global pointer variable immediately subscripted, load the
+         * pointer value directly with ld hl,(nn) and skip the later deref. */
+        if (is_global_word_sym(s) && !s->is_array &&
+            type_ptr_depth(s->type) > 0 && tok.kind == '[') {
+            emit_load_global_word_direct(s);
+            lva_global_ptr_preloaded = 1;
+        } else {
+            emit_load_sym_addr(s);
+        }
         if (ptype) {
             ptype[0] = s->type;
         }
@@ -5107,8 +5266,11 @@ static void gen_lvalue_addr(int *ptype)
              * For a pointer variable/parameter, the symbol address names the
              * pointer object, so load the pointer value before indexing.
              */
-            if (!s->is_array && type_ptr_depth(cur_type) > 0)
-                emit_load_from_hl(cur_type);
+            if (!s->is_array && type_ptr_depth(cur_type) > 0) {
+                if (!lva_global_ptr_preloaded)
+                    emit_load_from_hl(cur_type);
+                lva_global_ptr_preloaded = 0;
+            }
 
             {
                 long const_index;
@@ -5219,6 +5381,7 @@ static void gen_lvalue_addr(int *ptype)
         }
 
         return;
+        } /* end lva_global_ptr_preloaded block */
     }
 
     if (accept('*')) {
@@ -6029,6 +6192,7 @@ static void gen_primary(void)
         fp_arg_bytes = emit_default_call_args(fp_arg_start, fp_arg_end, fp_argc);
         emit_call_hl_from_stack_offset(fp_arg_bytes);
         emit_cleanup_stack_bytes(fp_arg_bytes + 2);
+        emit_reload_bc_reg_var();
         g_expr_type = TYPE_INT;
         return;
     }
@@ -6081,6 +6245,7 @@ static void gen_primary(void)
             fp_arg_bytes = emit_default_call_args(fp_arg_start, fp_arg_end, fp_argc);
             emit_call_hl_from_stack_offset(fp_arg_bytes);
             emit_cleanup_stack_bytes(fp_arg_bytes + 2);
+            emit_reload_bc_reg_var();
             g_expr_type = type_decay_ptr(g_expr_type);
         }
         return;
@@ -6203,6 +6368,8 @@ static void gen_primary(void)
                 if (indirect_call) {
                     if (sym_can_ix_direct(call_sym))
                         emit_load_sym_value_direct(call_sym);
+                    else if (is_global_word_sym(call_sym))
+                        emit_load_global_word_direct(call_sym);
                     else {
                         emit_load_sym_addr(call_sym);
                         emit_load_from_hl(call_sym->type);
@@ -6214,11 +6381,14 @@ static void gen_primary(void)
                         g_expr_type = TYPE_INT;
                 } else {
                     emit_extrn_if_needed(fn_sym);
+                    emit_spill_bc_reg_var();
                     fprintf(outf, "\tcall %s\n", asm_name_for(name));
                     g_expr_type = fn_sym ? fn_sym->type : TYPE_INT;
                 }
 
                 emit_cleanup_stack_bytes(arg_bytes);
+                /* arg cleanup uses pop bc which clobbers BC; reload reg var */
+                emit_reload_bc_reg_var();
             }
             return;
         }
@@ -6282,7 +6452,28 @@ static void gen_primary(void)
             return;
         }
 
-        emit_load_sym_addr(s);
+        /* Z80: ld hl,(nn) — direct 16-bit load from global/extern without
+         * subscript/field/update following.  Replaces the 5-instruction
+         * ld hl,_name / ld e,(hl) / inc hl / ld d,(hl) / ex de,hl sequence. */
+        if (is_global_word_sym(s) &&
+            tok.kind != '[' && tok.kind != '.' && tok.kind != TOK_ARROW &&
+            tok.kind != TOK_INC && tok.kind != TOK_DEC && tok.kind != '(') {
+            emit_load_global_word_direct(s);
+            g_expr_type = s->type;
+            return;
+        }
+
+        {
+        int global_ptr_preloaded = 0;
+        /* For a global pointer variable immediately subscripted, load the
+         * pointer value directly with ld hl,(nn) and skip the later deref. */
+        if (is_global_word_sym(s) && !s->is_array &&
+            type_ptr_depth(s->type) > 0 && tok.kind == '[') {
+            emit_load_global_word_direct(s);
+            global_ptr_preloaded = 1;
+        } else {
+            emit_load_sym_addr(s);
+        }
         indexed = 0;
         val_type = s->type;
         val_is_array = s->is_array;
@@ -6297,8 +6488,11 @@ static void gen_primary(void)
              * loaded first so argv[1] indexes the pointed-to argv vector, not
              * the stack slot holding argv.
              */
-            if (!s->is_array && type_ptr_depth(cur_type) > 0)
-                emit_load_from_hl(cur_type);
+            if (!s->is_array && type_ptr_depth(cur_type) > 0) {
+                if (!global_ptr_preloaded)
+                    emit_load_from_hl(cur_type);
+                global_ptr_preloaded = 0;
+            }
 
             {
                 long const_index;
@@ -6424,6 +6618,7 @@ static void gen_primary(void)
             fp_arg_bytes = emit_default_call_args(fp_arg_start, fp_arg_end, fp_argc);
             emit_call_hl_from_stack_offset(fp_arg_bytes);
             emit_cleanup_stack_bytes(fp_arg_bytes + 2);
+            emit_reload_bc_reg_var();
             g_expr_type = type_decay_ptr(val_type);
             return;
         }
@@ -6446,6 +6641,7 @@ static void gen_primary(void)
                 emit_extract_bitfield();
         }
         return;
+        } /* end global_ptr_preloaded block */
     }
 
     error_here("primary expression expected");
@@ -6531,8 +6727,15 @@ static int try_gen_simple_deref_value(void)
         next_token();
         gen_post_update_symbol_addr_value(s, op);
     } else {
-        emit_load_sym_addr(s);
-        emit_load_from_hl(s->type);
+        /* For register variables load the live register value, not the shadow. */
+        if (s->storage == SC_REGISTER) {
+            emit_load_sym_value_direct(s); /* HL = BC (live pointer) */
+        } else if (is_global_word_sym(s)) {
+            emit_load_global_word_direct(s); /* ld hl,(name): load ptr value directly */
+        } else {
+            emit_load_sym_addr(s);
+            emit_load_from_hl(s->type);
+        }
     }
 
     base = type_decay_ptr(s->type);
@@ -7886,6 +8089,8 @@ static int emit_cmp_const_branch_for_signed_local16(struct Sym *s, int op, long 
     if (type_size(s->type) != 2)
         return 0;
     if (s->type & TYPE_UNSIGNED)
+        return 0;
+    if (s->storage == SC_REGISTER)  /* register var: shadow may be stale */
         return 0;
     if (c < 0 || c > 255)
         return 0;
@@ -9534,7 +9739,7 @@ static void gen_assign(void)
     if (tok.kind == TOK_ID) {
         direct_sym = find_sym(tok.text);
 
-        if (!sym_can_ix_direct(direct_sym))
+        if (!sym_can_ix_direct(direct_sym) && !is_global_word_sym(direct_sym))
             direct_sym = NULL;
 
         if (direct_sym) {
@@ -10223,6 +10428,8 @@ static int try_fast_local_self_add_statement(void)
     lhs = find_sym(lhs_name);
     if (!sym_can_ix_direct(lhs) || type_size(lhs->type) != 2)
         goto no;
+    if (lhs->storage == SC_REGISTER)  /* register var: use emit_store path */
+        goto no;
 
     next_token();
     if (!accept('='))
@@ -10234,6 +10441,8 @@ static int try_fast_local_self_add_statement(void)
     rhs1_name[sizeof(rhs1_name) - 1] = 0;
     rhs1 = find_sym(rhs1_name);
     if (!sym_can_ix_direct(rhs1) || type_size(rhs1->type) != 2)
+        goto no;
+    if (rhs1->storage == SC_REGISTER)  /* register var: shadow may be stale */
         goto no;
     next_token();
 
@@ -10251,6 +10460,8 @@ static int try_fast_local_self_add_statement(void)
         rhs2_name[sizeof(rhs2_name) - 1] = 0;
         rhs2 = find_sym(rhs2_name);
         if (!sym_can_ix_direct(rhs2) || type_size(rhs2->type) != 2)
+            goto no;
+        if (rhs2->storage == SC_REGISTER)
             goto no;
         next_token();
     } else if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) {
@@ -10351,7 +10562,7 @@ static int try_gen_incdec_statement(void)
 
         if (tok.kind == TOK_ID) {
             s = find_sym(tok.text);
-            if (sym_can_ix_direct(s)) {
+            if (sym_can_ix_direct(s) || is_global_word_sym(s)) {
                 next_token();
                 if (tok.kind == ';') {
                     emit_incdec_sym_direct(s, op);
@@ -10377,7 +10588,7 @@ static int try_gen_incdec_statement(void)
 
     if (tok.kind == TOK_ID) {
         s = find_sym(tok.text);
-        if (sym_can_ix_direct(s)) {
+        if (sym_can_ix_direct(s) || is_global_word_sym(s)) {
             next_token();
             if (tok.kind == TOK_INC || tok.kind == TOK_DEC) {
                 op = tok.kind;
@@ -11158,6 +11369,19 @@ static void gen_local_decl_after_type(int base)
                     if (!type_is_float(g_expr_type))
                         emit_convert_int_to_float(g_expr_type);
                     emit_store_de_to_addr_hl(type);
+                }
+            } else if (s->storage == SC_REGISTER) {
+                /* Register variable: evaluate RHS into HL then load BC/DE.
+                 * Also update the shadow IX slot so spill-before-call works. */
+                gen_expr_no_comma();
+                if (s->reg_num == 1) {
+                    emit("\tld c,l\n\tld b,h\n");
+                    fprintf(outf, "\tld (ix%+d),c\n", s->offset);
+                    fprintf(outf, "\tld (ix%+d),b\n", s->offset + 1);
+                } else {
+                    emit("\tld e,l\n\tld d,h\n");
+                    fprintf(outf, "\tld (ix%+d),e\n", s->offset);
+                    fprintf(outf, "\tld (ix%+d),d\n", s->offset + 1);
                 }
             } else {
                 emit_load_sym_addr(s);
@@ -13161,6 +13385,7 @@ static void parse_function_or_global(int base_type)
                 saved_local_size = local_size;
                 saved_param_offset = param_offset;
 
+                g_reg_bc_sym = NULL; /* fresh state for pre-pass 1 */
                 scan_function_body();
                 body_end_pos = posi;
                 body_end_tok_start = tok_start_pos;
@@ -13180,6 +13405,7 @@ static void parse_function_or_global(int base_type)
                 local_size = saved_local_size;
                 param_offset = saved_param_offset;
 
+                g_reg_bc_sym = NULL; /* fresh state for pre-pass 2 */
                 scan_function_body();
 
                 posi = saved_pos;

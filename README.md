@@ -22,6 +22,26 @@ The test apps validate compiler correctness and performance. Some test apps are 
 
 Linux typically is configured to have case-sensitive filenames. CP/M files are uppercase. The convention used is that source .c files have lowercase names since only dcc works with them. Assembly files (.MAC) are all uppercase, as are output files from m80.com and l80.com including .COM, .PRN, and .REL.
 
+### usage: dcc [-c|-module] [-ffloatio] [-stack bytes] [-Dname[=value]] input.c -o output.mac
+
+    * -c compile a .c file without a main() to be linked by L80 later
+    * -ffloatio tells the compiler the code will use %f formatting with printf family of functions so include floating point runtime
+    * -stack bytes how much to reserve for the stack. default is 512 bytes
+    * -Dname[=value] predeclare a macro. _DCC_=1 is defined by default
+    * -o output file name. default is out.mac. Can be assembled using m80.com
+    
+### usage: dccpeep [-Ot|-Os] input.mac output.mac
+
+    * -Ot | -Os. Optimize for time or size. Default is -Ot. 
+    * -o output file name of optimized M80 assembly
+
+### usage: dccrtlstrip [-k symbol ...] -r dccrtl.mac -o rtlmin.mac app.mac [app2.mac ...]
+
+    * -k symbol tells dccrtlstrip to keep the public symbol with that name and all symbols it references
+    * -r filename the C runtime starting point. public symbols used by the app or specified by -r written to the output filename
+    * -o filaneme output filename
+    * filename1.mac ... filenames to scan for public symbol usage; those symbols are retained from the C runtime
+    
 ### Separate compilation units
 
 By default dcc assumes apps have one .c file. You can #include .c files into your main app. Or, you can use dcc's -c flag to compile stand-alone .c files then link them with your main app (built without -c). See cpmenumd.c for instructions for how to do that using mrel.bat/mrel.sh and updates to ma.bat / ma.sh for linking.
@@ -59,7 +79,7 @@ Generally, dcc compares very well with all other compilers that target CP/M, esp
 
 Benchmark times are in milliseconds on a 4Mhz Z80. CP/M file sizes are rounded up to the next multiple of 128 bytes due to how the file system works.
 
-<img width="3456" height="1183" alt="table" src="https://github.com/user-attachments/assets/5f5a1d03-98fc-4d3a-96b4-681859e331f9" />
+<img width="3246" height="1097" alt="table" src="https://github.com/user-attachments/assets/26a60126-6ca1-4cd3-9d50-b24185b95f9f" />
 
 ## Notes
 

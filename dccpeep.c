@@ -5908,6 +5908,189 @@ static int pass_sxhl_stub(void)
     return changed;
 }
 
+/*
+ * pass_a_tracks_ix_byte:
+ *
+ * When A is loaded from (ix+N) and the value at (ix+N) is not modified
+ * before a subsequent load of the same offset into another register, replace
+ * the second load with a faster register-to-register copy.
+ *
+ *   ld a,(ix-3)          ; A = (ix-3)  [19 T-states, 3 bytes]
+ *   cp 9                 ; A unchanged
+ *   jp nc, L216          ; A unchanged
+ *   ld hl,_g_board       ; A unchanged
+ *   ld e,(ix-3)          ; redundant memory read → ld e,a  [4 T-states, 1 byte]
+ *
+ * Tracking resets at labels, calls, ret, any A-writing instruction, and any
+ * store to the tracked (ix+N) offset.
+ */
+static int pass_a_tracks_ix_byte(void)
+{
+    int i, changed = 0;
+    int a_valid = 0;
+    int a_off = 0;
+    char tmp[MAX_LINE];
+
+    for (i = 0; i < nlines; i++) {
+        if (starts_label(lines[i])) {
+            a_valid = 0;
+            continue;
+        }
+
+        strip_peep_comment_copy(tmp, lines[i]);
+
+        if (strncmp(tmp, "call ", 5) == 0 || strcmp(tmp, "ret") == 0) {
+            a_valid = 0;
+            continue;
+        }
+
+        /* ld a,(ix+N): if A already tracks the same offset, the reload is redundant */
+        if (strncmp(tmp, "ld a,(ix", 8) == 0) {
+            char *endp;
+            long v = strtol(tmp + 8, &endp, 0);
+            if (*endp == ')' && endp[1] == 0 && v >= -128 && v <= 127) {
+                if (a_valid && a_off == (int)v) {
+                    delete_n(i, 1);
+                    changed = 1;
+                    if (i > 0) i--;
+                    continue;
+                }
+                a_valid = 1;
+                a_off = (int)v;
+            } else {
+                a_valid = 0;
+            }
+            continue;
+        }
+
+        /* ld r,(ix+N) where r != a and same offset: replace with ld r,a */
+        if (a_valid &&
+            strncmp(tmp, "ld ", 3) == 0 &&
+            tmp[4] == ',' &&
+            strncmp(tmp + 5, "(ix", 3) == 0) {
+            char r = tmp[3];
+            if (r != 'a') {
+                char *endp;
+                long v = strtol(tmp + 8, &endp, 0);
+                if (*endp == ')' && endp[1] == 0 && v == a_off) {
+                    char newline[MAX_LINE];
+                    sprintf(newline, "ld %c,a", r);
+                    replace1_tagged(i, newline, "a_tracks_ix");
+                    changed = 1;
+                    continue;
+                }
+            }
+        }
+
+        /* ld (ix+N),a  → A and (ix+N) now hold the same value; establish tracking.
+         * ld (ix+N),X  → if tracked slot written with non-A, invalidate.
+         * Note: ld (ix+N),a with a_valid && a_off==N preserves (not clears) tracking. */
+        if (strncmp(tmp, "ld (ix", 6) == 0) {
+            char *endp;
+            long v = strtol(tmp + 6, &endp, 0);
+            if (*endp == ')' && v >= -128 && v <= 127) {
+                if (endp[1] == ',' && endp[2] == 'a' && endp[3] == 0) {
+                    a_valid = 1;
+                    a_off = (int)v;
+                } else if (a_valid && (int)v == a_off) {
+                    a_valid = 0;
+                }
+            }
+            continue;
+        }
+
+        /* Instructions that write A (cp, push, ld r/m for r!=a do not) */
+        if (strncmp(tmp, "ld a,", 5) == 0 ||
+            strncmp(tmp, "add a,", 6) == 0 ||
+            strncmp(tmp, "adc a,", 6) == 0 ||
+            strncmp(tmp, "sub ", 4) == 0 ||
+            strncmp(tmp, "sbc a,", 6) == 0 ||
+            strncmp(tmp, "and ", 4) == 0 ||
+            (strncmp(tmp, "or ", 3) == 0 && strcmp(tmp, "or a") != 0) ||
+            strncmp(tmp, "xor ", 4) == 0 ||
+            strcmp(tmp, "inc a") == 0 ||
+            strcmp(tmp, "dec a") == 0 ||
+            strcmp(tmp, "rlca") == 0 ||
+            strcmp(tmp, "rrca") == 0 ||
+            strcmp(tmp, "rla") == 0 ||
+            strcmp(tmp, "rra") == 0 ||
+            strcmp(tmp, "daa") == 0 ||
+            strcmp(tmp, "cpl") == 0 ||
+            strcmp(tmp, "neg") == 0 ||
+            strcmp(tmp, "pop af") == 0 ||
+            strncmp(tmp, "in a,", 5) == 0) {
+            a_valid = 0;
+        }
+    }
+
+    return changed;
+}
+
+/*
+ * pass_elim_redundant_ld_h_zero:
+ *
+ * Eliminate redundant "ld h,0" when H is already known to be zero.  DCC
+ * zero-extends byte values to 16-bit HL with:
+ *
+ *   ld l,(ix-3)
+ *   ld h,0
+ *   push hl
+ *   ld a,(ix+8)
+ *   add a,1
+ *   ld l,a
+ *   ld h,0       ← H still 0 from above (push/ld a/add a/ld l don't touch H)
+ *   push hl
+ *   ld l,(ix+6)
+ *   ld h,0       ← still redundant
+ *   push hl
+ *
+ * Tracking resets at labels, calls, ret, and any H-clobbering instruction
+ * (ld h/hl, pop hl, add/adc/sbc hl, inc/dec hl, ex de/sp,hl).
+ */
+static int pass_elim_redundant_ld_h_zero(void)
+{
+    int i, changed = 0;
+    int h_is_zero = 0;
+    char tmp[MAX_LINE];
+
+    for (i = 0; i < nlines; i++) {
+        if (starts_label(lines[i])) {
+            h_is_zero = 0;
+            continue;
+        }
+
+        strip_peep_comment_copy(tmp, lines[i]);
+
+        if (strcmp(tmp, "ld h,0") == 0) {
+            if (h_is_zero) {
+                delete_n(i, 1);
+                changed = 1;
+                if (i > 0) i--;
+            } else {
+                h_is_zero = 1;
+            }
+            continue;
+        }
+
+        if (strncmp(tmp, "ld h,", 5) == 0 ||
+            strncmp(tmp, "ld hl,", 6) == 0 ||
+            strcmp(tmp, "pop hl") == 0 ||
+            strncmp(tmp, "add hl,", 7) == 0 ||
+            strncmp(tmp, "adc hl,", 7) == 0 ||
+            strncmp(tmp, "sbc hl,", 7) == 0 ||
+            strcmp(tmp, "inc hl") == 0 ||
+            strcmp(tmp, "dec hl") == 0 ||
+            strcmp(tmp, "ex de,hl") == 0 ||
+            strcmp(tmp, "ex (sp),hl") == 0 ||
+            strncmp(tmp, "call ", 5) == 0 ||
+            strcmp(tmp, "ret") == 0) {
+            h_is_zero = 0;
+        }
+    }
+
+    return changed;
+}
+
 static int pass_global_board_const_offsets(void)
 {
     int i;
@@ -6100,6 +6283,8 @@ int main(int argc, char **argv)
         if (pass_reg_bc_deref_byte_cmp()) changed = 1;
         if (pass_elim_dead_ix_stores()) changed = 1;
         if (pass_remove_ix_store_reload_a()) changed = 1;
+        if (pass_a_tracks_ix_byte()) changed = 1;
+        if (pass_elim_redundant_ld_h_zero()) changed = 1;
         if (pass_elim_long_store_reload()) changed = 1;
         if (pass_branch_over_jump()) changed = 1;
         if (pass_global_board_const_offsets()) changed = 1;

@@ -6376,15 +6376,15 @@ static int pass_cpir(void)
 
         /* All checks passed — apply CPIR transformation. */
         {
-            char s_lim_lo[64], s_lim_hi[64], s_ptr_lo[64], s_ptr_hi[64];
-            char s_val[64], s_jp_z_exit[64];
-
-            sprintf(s_lim_lo,    "ld l,(ix%s)",   lim_lo_off);
-            sprintf(s_lim_hi,    "ld h,(ix%s)",   lim_hi_off);
-            sprintf(s_ptr_lo,    "ld l,(ix%s)",   ptr_lo_off);
-            sprintf(s_ptr_hi,    "ld h,(ix%s)",   ptr_hi_off);
-            sprintf(s_val,       "ld a,(ix%s)",   val_off);
-            sprintf(s_jp_z_exit, "jp z, %s",      lexit);
+            char s_lim_lo[160], s_lim_hi[160], s_ptr_lo[160], s_ptr_hi[160];
+            char s_val[160], s_jp_z_exit[160];
+            
+            snprintf(s_lim_lo,     sizeof s_lim_lo,     "ld l,(ix%s)", lim_lo_off);
+            snprintf(s_lim_hi,     sizeof s_lim_hi,     "ld h,(ix%s)", lim_hi_off);
+            snprintf(s_ptr_lo,     sizeof s_ptr_lo,     "ld l,(ix%s)", ptr_lo_off);
+            snprintf(s_ptr_hi,     sizeof s_ptr_hi,     "ld h,(ix%s)", ptr_hi_off);
+            snprintf(s_val,        sizeof s_val,        "ld a,(ix%s)", val_off);
+            snprintf(s_jp_z_exit,  sizeof s_jp_z_exit,  "jp z, %s", lexit);
 
             /* Delete end block first (lok label + ptr++ + counter++) so that
              * positions i..fail_start-1 are unchanged. */

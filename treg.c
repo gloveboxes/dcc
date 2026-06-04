@@ -163,6 +163,45 @@ static void test_write(void)
         chk(buf[i] == (unsigned char)i, "write through reg ptr");
 }
 
+/* 8. 32-bit long compound shift through a pointer with a live register variable.
+ * Before the fix, the ld-b,d/ld-c,e store sequence clobbered BC (= first/p). */
+static void test_long_indirect_shift_reg(void)
+{
+    static long val;
+    static char dummy[4];
+    register char *p;
+    long *lp;
+    int n;
+
+    p = dummy;
+    lp = &val;
+
+    /* constant right shift — loop path (signed long, count not 8/16/24) */
+    val = 0x12345678L;
+    *lp >>= 4;
+    chk(val == 0x01234567L, "long *p >>= 4 const");
+    chk(p == dummy,         "BC intact after long *p >>= 4 const");
+
+    /* variable right shift */
+    val = 0x12345678L;
+    n = 8;
+    *lp >>= n;
+    chk(val == 0x00123456L, "long *p >>= n var");
+    chk(p == dummy,         "BC intact after long *p >>= n var");
+
+    /* constant left shift */
+    val = 0x12345678L;
+    *lp <<= 4;
+    chk(val == 0x23456780L, "long *p <<= 4 const");
+    chk(p == dummy,         "BC intact after long *p <<= 4 const");
+
+    /* want_dead=0: result of compound shift expression is used */
+    val = 0x00FF0000L;
+    n = 8;
+    chk((*lp >>= n) == 0x0000FF00L, "long *p >>= n result");
+    chk(p == dummy,                  "BC intact after want_dead=0");
+}
+
 int main(void)
 {
     test_walk();
@@ -172,6 +211,7 @@ int main(void)
     test_register_int();
     test_postinc();
     test_write();
+    test_long_indirect_shift_reg();
 
     if (g_ng == 0)
         printf("success\n");

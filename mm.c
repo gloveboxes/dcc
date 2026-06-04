@@ -49,7 +49,6 @@ void ffillc()
 {
     ftype * p = (ftype *) C;
     ftype * pend = ( (ftype *) C ) + ( l * n );
-
     while ( p < pend )
         *p++ = 0;
 }
@@ -65,7 +64,7 @@ void matmult()
 
 void fmatmult()
 {
-    static int i, j, k;
+    uint8_t i, j, k;
     static ftype * pC, * pA, * pAI, * pBJ, *pCI;
 
     for ( i = 0; i < l; i++ )

@@ -107,14 +107,6 @@ uint32_t file_size( char * pfilename )
     return size;
 }
 
-char * strdup( char *a )
-{
-    int len = strlen( a );
-    char * result = (char *) malloc( 1 + len );
-    strcpy( result, a );
-    return result;
-}
-
 int do_compare( char **a, char **b )
 {
     return strcmp( *a, *b );

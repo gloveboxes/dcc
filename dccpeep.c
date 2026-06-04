@@ -6220,6 +6220,200 @@ static int pass_board_byte_eq_direct_load(void)
     return changed;
 }
 
+/* Parse an IX offset string (e.g. "+8", "-2") to an integer. */
+static int parse_ix_off_numeric(const char *off, int *val)
+{
+    char *endp;
+    if (off[0] == 0) return 0;
+    *val = (int)strtol(off, &endp, 10);
+    return *endp == 0;
+}
+
+/*
+ * pass_cpir: Replace a byte-scan equality loop with the Z80 CPIR instruction.
+ *
+ * Detects the pattern produced by pass_deref_byte_cmp for loops of the form
+ *   for (i = 0; i < c; i++) { if (*ptr != val) { fail-and-exit; } ptr++; }
+ * where i is a local 16-bit counter, ptr is a local byte pointer, val is a
+ * local byte, and c is a parameter or local count.
+ *
+ * The pattern (in the peepholed output):
+ *
+ *   Lhead:
+ *     ld l,(ix-A)  ld h,(ix-B)            ; loop counter i (B = A-1)
+ *     push hl
+ *     ld l,(ix+C)  ld h,(ix+D)            ; limit c (D = C+1, any sign)
+ *     ex de,hl  pop hl  or a  sbc hl,de
+ *     jp nc, Lexit                         ; i >= c → done
+ *     ld l,(ix+P)  ld h,(ix+Q)            ; pointer ptr (Q = P+1, any sign)
+ *     ld a,(hl)                            ; A = *ptr
+ *     ld l,(ix+V)  cp l                   ; compare with val
+ *     jp z, Lok                            ; equal → keep going
+ *     [fail code containing call _exit]
+ *   Lok:
+ *     ld l,(ix+P)  ld h,(ix+Q)  inc hl
+ *     ld (ix+P),l  ld (ix+Q),h            ; ptr++
+ *     inc (ix-A)   jp nz, Lhead
+ *     inc (ix-B)   jp Lhead               ; i++
+ *   Lexit:
+ *
+ * Replaced with:
+ *
+ *     ld l,(ix+C)  ld h,(ix+D)            ; HL = c (count)
+ *     ld a,h  or l                        ; guard: CPIR with BC=0 is unsafe
+ *     jp z, Lexit
+ *     push hl
+ *     ld l,(ix+P)  ld h,(ix+Q)            ; HL = starting ptr
+ *     pop bc                              ; BC = c
+ *     ld a,(ix+V)                         ; A = byte to match
+ *     cpir                                ; scan until mismatch or count=0
+ *     jp z, Lexit                         ; Z=1 → all matched, success
+ *     [original fail code falls through]
+ *   Lexit:
+ *
+ * Requirement: i must be initialised to 0 before Lhead (verified by finding
+ * "ld de,-A" in the pre-loop code, which DCC emits to address the counter).
+ */
+static int pass_cpir(void)
+{
+    int i, j, k, ip;
+    int changed = 0;
+
+    for (i = 0; i + 40 < nlines; i++) {
+        char lhead[128], lexit[128], lok[128], tmp[128];
+        int cnt_lo, cnt_hi;
+        char lim_lo_off[32], lim_hi_off[32];
+        char ptr_lo_off[32], ptr_hi_off[32];
+        char val_off[32];
+        int lim_lo_val, ptr_lo_val, val_val;
+        int lok_pos, fail_has_exit;
+        int fail_start;
+        char inc_cnt_lo[32], inc_cnt_hi[32];
+        char store_ptr_lo[64], store_ptr_hi[64];
+
+        /* 1. Loop header label */
+        if (!label_name_at(i, lhead)) continue;
+        j = i + 1;
+
+        /* 2. Loop condition (10 lines) */
+        if (!stride_parse_ld_r_ix_neg(lines[j], 'l', &cnt_lo)) continue; j++;
+        if (!stride_parse_ld_r_ix_neg(lines[j], 'h', &cnt_hi)) continue; j++;
+        if (cnt_hi != cnt_lo - 1) continue;
+        if (!eq(j, "push hl")) continue; j++;
+        if (!peep_parse_ld_l_ix(lines[j], lim_lo_off)) continue; j++;
+        if (!peep_parse_ld_h_ix(lines[j], lim_hi_off)) continue; j++;
+        if (!parse_ix_off_numeric(lim_lo_off, &lim_lo_val)) continue;
+        { int v; if (!parse_ix_off_numeric(lim_hi_off, &v)) continue;
+          if (v != lim_lo_val + 1) continue; }
+        if (!eq(j, "ex de,hl"))  continue; j++;
+        if (!eq(j, "pop hl"))    continue; j++;
+        if (!eq(j, "or a"))      continue; j++;
+        if (!eq(j, "sbc hl,de")) continue; j++;
+        if (!parse_jp_nc_label(lines[j], lexit)) continue; j++;
+
+        /* 3. Byte deref and compare (6 lines) */
+        if (!peep_parse_ld_l_ix(lines[j], ptr_lo_off)) continue; j++;
+        if (!peep_parse_ld_h_ix(lines[j], ptr_hi_off)) continue; j++;
+        if (!parse_ix_off_numeric(ptr_lo_off, &ptr_lo_val)) continue;
+        { int v; if (!parse_ix_off_numeric(ptr_hi_off, &v)) continue;
+          if (v != ptr_lo_val + 1) continue; }
+        if (!eq(j, "ld a,(hl)")) continue; j++;
+        if (!peep_parse_ld_l_ix(lines[j], val_off)) continue; j++;
+        if (!parse_ix_off_numeric(val_off, &val_val)) continue;
+        if (!eq(j, "cp l"))      continue; j++;
+        if (!parse_jp_z_label(lines[j], lok)) continue; j++;
+        fail_start = j;  /* first line of fail code */
+
+        /* Reject if counter, pointer, val, or limit share IX slots */
+        if (-cnt_lo == ptr_lo_val) continue;
+        if (-cnt_lo == val_val)    continue;
+        if (ptr_lo_val == val_val) continue;
+        if (-cnt_lo == lim_lo_val) continue;
+
+        /* 4. Scan fail code for call _exit and Lok label */
+        fail_has_exit = 0;
+        lok_pos = -1;
+        for (k = j; k < nlines && k < j + 60; k++) {
+            if (line_is_label_name(k, lok))  { lok_pos = k; break; }
+            if (eq(k, "call _exit"))          fail_has_exit = 1;
+            if (is_global_asm_label_line(k))  break;
+        }
+        if (lok_pos < 0 || !fail_has_exit) continue;
+
+        /* 5. After Lok: ptr++ (5 lines) */
+        k = lok_pos + 1;
+        { char lo2[32], hi2[32];
+          if (!peep_parse_ld_l_ix(lines[k], lo2) || strcmp(lo2, ptr_lo_off)) continue; k++;
+          if (!peep_parse_ld_h_ix(lines[k], hi2) || strcmp(hi2, ptr_hi_off)) continue; k++; }
+        if (!eq(k, "inc hl")) continue; k++;
+        sprintf(store_ptr_lo, "ld (ix%s),l", ptr_lo_off);
+        sprintf(store_ptr_hi, "ld (ix%s),h", ptr_hi_off);
+        if (!eq(k, store_ptr_lo)) continue; k++;
+        if (!eq(k, store_ptr_hi)) continue; k++;
+
+        /* 6. Counter increment (4 lines): inc(ix-A); jp nz,Lhead; inc(ix-B); jp Lhead */
+        sprintf(inc_cnt_lo, "inc (ix-%d)", cnt_lo);
+        sprintf(inc_cnt_hi, "inc (ix-%d)", cnt_hi);
+        if (!eq(k, inc_cnt_lo)) continue; k++;
+        if (!parse_jp_nz_label(lines[k], tmp) || strcmp(tmp, lhead)) continue; k++;
+        if (!eq(k, inc_cnt_hi)) continue; k++;
+        if (!peep_parse_jp_uncond_label(lines[k], tmp) || strcmp(tmp, lhead)) continue;
+        ip = k; k++;
+
+        /* 7. Lexit label must follow */
+        if (!line_is_label_name(k, lexit)) continue;
+
+        /* 8. Counter must start at 0: look back up to 20 lines for "ld de,-A"
+         *    which DCC emits when computing the frame address of the counter
+         *    during its zero-initialisation. */
+        { char de_init[32]; int found = 0;
+          sprintf(de_init, "ld de,-%d", cnt_lo);
+          for (k = i - 1; k >= 0 && k >= i - 20; k--) {
+              if (eq(k, de_init)) { found = 1; break; }
+              if (is_global_asm_label_line(k)) break;
+          }
+          if (!found) continue; }
+
+        /* All checks passed — apply CPIR transformation. */
+        {
+            char s_lim_lo[64], s_lim_hi[64], s_ptr_lo[64], s_ptr_hi[64];
+            char s_val[64], s_jp_z_exit[64];
+
+            sprintf(s_lim_lo,    "ld l,(ix%s)",   lim_lo_off);
+            sprintf(s_lim_hi,    "ld h,(ix%s)",   lim_hi_off);
+            sprintf(s_ptr_lo,    "ld l,(ix%s)",   ptr_lo_off);
+            sprintf(s_ptr_hi,    "ld h,(ix%s)",   ptr_hi_off);
+            sprintf(s_val,       "ld a,(ix%s)",   val_off);
+            sprintf(s_jp_z_exit, "jp z, %s",      lexit);
+
+            /* Delete end block first (lok label + ptr++ + counter++) so that
+             * positions i..fail_start-1 are unchanged. */
+            delete_n(lok_pos, ip - lok_pos + 1);
+
+            /* Delete head block (L4 label + condition + deref + jp z,Lok). */
+            delete_n(i, fail_start - i);
+
+            /* Insert CPIR block at i (now the first line of the fail code). */
+            insert_line_tagged(i,      s_lim_lo,    "cpir");
+            insert_line(i +  1,        s_lim_hi);
+            insert_line(i +  2,        "ld a,h");
+            insert_line(i +  3,        "or l");
+            insert_line(i +  4,        s_jp_z_exit); /* skip on zero count */
+            insert_line(i +  5,        "push hl");
+            insert_line(i +  6,        s_ptr_lo);
+            insert_line(i +  7,        s_ptr_hi);
+            insert_line(i +  8,        "pop bc");
+            insert_line(i +  9,        s_val);
+            insert_line(i + 10,        "cpir");
+            insert_line(i + 11,        s_jp_z_exit); /* success: skip fail code */
+
+            changed = 1;
+        }
+    }
+
+    return changed;
+}
+
 int main(int argc, char **argv)
 {
     int changed;
@@ -6280,6 +6474,7 @@ int main(int argc, char **argv)
         if (pass_recover_index_from_sbc()) changed = 1;
         if (pass_ix_frame_ptr_load()) changed = 1;
         if (pass_deref_byte_cmp()) changed = 1;
+        if (pass_cpir()) changed = 1;
         if (pass_reg_bc_deref_byte_cmp()) changed = 1;
         if (pass_elim_dead_ix_stores()) changed = 1;
         if (pass_remove_ix_store_reload_a()) changed = 1;

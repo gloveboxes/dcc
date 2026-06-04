@@ -162,8 +162,8 @@ static int opt_lrbc_isx = 0;
  *   - p10                 (total * 1000L intermediate product overflows 16 bits)
  *   - records / last_ext  (cpm_file_size: 24-bit CP/M record counts)
  *
- * o_cost / c2: on CP/M, o_blk <= LZ_OPTBLK = 1024, so the maximum
- * accumulated cost is 1024 * 9 = 9216 bits -- well within unsigned range.
+ * o_cost / c2: on CP/M, o_blk <= LZ_OPTBLK = 2048, so the maximum
+ * accumulated cost is 2048 * 9 = 18432 bits -- well within unsigned range.
  * lzcost_t follows lzpos_t width so the cost table is 2 bytes/entry on CP/M
  * instead of 4, halving the heap it consumes.
  */
@@ -175,8 +175,8 @@ static int opt_lrbc_isx = 0;
 
 /* lzcost_t: element type for the parse-DP cost table.  Matches lzpos_t width.
  * COST_INF: sentinel for unvisited nodes; must satisfy:
- *   COST_INF > max_real_cost  (= o_blk * 9 <= 1024 * 9 = 9216 on CP/M)
- *   COST_INF + max_single_step <= type_max  (max step ~31 bits; no overflow) */
+ *   COST_INF > max_real_cost  (= o_blk * 9 <= 2048 * 9 = 18432 on CP/M)
+ *   COST_INF + max_single_step <= type_max  (max step ~27 bits; no overflow) */
 #ifdef LZ_CPM
   typedef unsigned lzcost_t;
 # define COST_INF ((lzcost_t)0x7fff)
@@ -2306,7 +2306,7 @@ s_hinsert (lzpos_t i)
 
 #  ifndef LZPACK_NO_OPT
 #   ifndef LZ_OPTBLK
-#    define LZ_OPTBLK 1024 /* -e parse block; standard engine never uses it */
+#    define LZ_OPTBLK 2048 /* -e parse block; standard engine never uses it */
 #   endif
 #  endif
 
@@ -2352,9 +2352,9 @@ static lzpos_t o_blk;
 
 static int o_l2d[MAXLEN + 1];
 
-static unsigned char o_mb0[MAXLEN + 1];
-static unsigned char o_mb1[MAXLEN + 1];
-static unsigned char o_mb3[MAXLEN + 1];
+static int o_mb0[MAXLEN + 1];
+static int o_mb1[MAXLEN + 1];
+static int o_mb3[MAXLEN + 1];
 
 #  define OMBITS(d, L) \
   ((d) <= 128 ? o_mb0[L] : (d) <= 1152 ? o_mb1[L] : o_mb3[L])

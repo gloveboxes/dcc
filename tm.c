@@ -23,11 +23,7 @@ void chkmem( char *p, int v, size_t c )
     {
         if ( *pc != val )
         {
-#ifdef CPMTIME
             printf( "memory isn't as expected! p %u, v %d, c %d, *pc %d\n",p, v, c, *pc );
-#else
-            printf( "memory isn't as expected! p %p, v %d, c %d, *pc %d\n",p, v, c, *pc );
-#endif
             exit( 1 );
         }
         pc++;

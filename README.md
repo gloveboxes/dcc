@@ -56,7 +56,7 @@ m80.com and l80.com are part of the M80 Assembler product from Microsoft. I didn
 
 ## C89+ language 
 
-The compiler accepts some syntax from later C standards including declaring variables where you like and initializing them with complex expressions. Only 4-byte floats are supported; 8-byte doubles are not. I'm almost certain more arcane C expressions/features aren't implemented (yet), but the test cases have pretty good coverage. Only a small subset of the C runtime is implemented in DCCRTL.MAC, but the samples implement a bunch more that you can copy/paste where needed.
+The compiler accepts some syntax from later C standards including declaring variables where you like and initializing them with complex expressions. Only 4-byte floats are supported; 8-byte doubles are not. I'm almost certain more arcane C89 expressions/features aren't implemented (yet), but the test cases have pretty good coverage. Only a small subset of the C runtime is implemented in DCCRTL.MAC, but the samples implement a bunch more that you can copy/paste where needed. The register and const keywords are ignored. Structure assignment and return values aren't implemented.
 
 ## Memory layout
 
@@ -79,7 +79,7 @@ Generally, dcc compares very well with all other compilers that target CP/M, esp
 
 Benchmark times are in milliseconds on a 4Mhz Z80. CP/M file sizes are rounded up to the next multiple of 128 bytes due to how the file system works.
 
-<img width="3246" height="1097" alt="table" src="https://github.com/user-attachments/assets/26a60126-6ca1-4cd3-9d50-b24185b95f9f" />
+<img width="3455" height="1181" alt="table" src="https://github.com/user-attachments/assets/5b495370-aa53-47cc-b7e8-0398b1899480" />
 
 ## Notes
 

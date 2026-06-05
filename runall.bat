@@ -16,7 +16,8 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              ttrig tlog tphi tap cpmenumd tbits tfo pihex tstrify tlcont primes ^
              tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 ^
              tlongaud tlongreg tppreg tinitreg ttypesr ttype2 tdecinit tmalloch ^
-             tpostut tbug2 tlongsub treg tret
+             tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 ^
+             tunion2 tbitfld
 
 echo --- optimized (ma peep) ---
 set "outputfile=test_dcc.txt"

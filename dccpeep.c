@@ -3938,6 +3938,85 @@ static int pass_minmax_pack_call(void)
         changed = 1;
     }
 
+    /* Same recursive-call packing after the newer byte+constant code path.
+     * The unsigned-long promotion fix makes depth+1 appear as:
+     *
+     *   ld l,(ix+6)
+     *   ld h,0
+     *   ld de,1
+     *   add hl,de
+     *
+     * or, after the generic +1 peephole:
+     *
+     *   ld l,(ix+6)
+     *   inc hl
+     *
+     * instead of the older ld a,(ix+6)/add a,1/ld l,a shape.  If this
+     * pattern is not packed, _MinMax's frame has already been translated to
+     * packed byte arguments, but the recursive call still pushes four words;
+     * then beta/depth/move are read from the wrong stack bytes.
+     */
+    for (i = start; i + 13 < end; i++) {
+        int j, npopcnt;
+        int depth_shape;
+
+        if (!eq(i,     "push hl"))        continue;
+        if (!eq(i + 1, "push bc"))        continue;
+        if (!eq(i + 2, "ld l,b"))         continue;
+        if (!eq(i + 3, "ld h,0"))         continue;
+        if (!eq(i + 4, "push hl"))        continue;
+
+        depth_shape = 0;
+        if (eq(i + 5, "ld l,(ix+6)") &&
+            eq(i + 6, "inc hl") &&
+            eq(i + 7, "push hl") &&
+            eq(i + 8, "ld l,(ix+5)") &&
+            eq(i + 9, "ld h,0") &&
+            eq(i + 10, "push hl") &&
+            eq(i + 11, "ld l,(ix+4)") &&
+            eq(i + 12, "push hl") &&
+            eq(i + 13, "call _MinMax")) {
+            depth_shape = 1;
+            j = i + 14;
+        } else if (i + 15 < end &&
+            eq(i + 5, "ld l,(ix+6)") &&
+            eq(i + 6, "ld h,0") &&
+            eq(i + 7, "ld de,1") &&
+            eq(i + 8, "add hl,de") &&
+            eq(i + 9, "push hl") &&
+            eq(i + 10, "ld l,(ix+5)") &&
+            eq(i + 11, "ld h,0") &&
+            eq(i + 12, "push hl") &&
+            eq(i + 13, "ld l,(ix+4)") &&
+            eq(i + 14, "push hl") &&
+            eq(i + 15, "call _MinMax")) {
+            depth_shape = 2;
+            j = i + 16;
+        } else {
+            continue;
+        }
+
+        npopcnt = 0;
+        while (j < end && eq(j, "pop bc")) { j++; npopcnt++; }
+        if (npopcnt != 4) continue;
+
+        replace1_tagged(i,      "push hl",         "pack_args");
+        replace1(i + 1,         "push bc");
+        replace1(i + 2,         "ld a,(ix+6)");    /* depth */
+        replace1(i + 3,         "inc a");           /* depth+1 */
+        replace1(i + 4,         "ld c,a");
+        replace1(i + 5,         "push bc");         /* packed {p=move, depth+1} */
+        replace1(i + 6,         "ld h,(ix+5)");     /* beta */
+        replace1(i + 7,         "ld l,(ix+4)");     /* alpha */
+        replace1(i + 8,         "push hl");         /* packed {alpha, beta} */
+        replace1(i + 9,         "call _MinMax");
+        replace1(i + 10,        "pop af");
+        replace1(i + 11,        "pop af");
+        delete_n(i + 12, j - (i + 12));
+        changed = 1;
+        (void)depth_shape;
+    }
+
     /* ---- Phase 3: transform FindSolution's call to _MinMax ----
      *
      * Pattern:
@@ -5986,7 +6065,7 @@ static int pass_stride_k_setup_to_direct(void)
 
         /* Pattern matched — replace 35 lines with 18. */
         {
-            char l_lk[64], l_hk[64], l_bc[128], l_bc_end[256], jp_nc[128];
+            char l_lk[64], l_hk[64], l_bc[160], l_bc_end[256], jp_nc[160];
 
             sprintf(l_lk,    "ld l,(ix-%d)", K);
             sprintf(l_hk,    "ld h,(ix-%d)", M);

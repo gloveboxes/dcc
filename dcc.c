@@ -399,6 +399,7 @@ static int nused_extrns;
 static int label_id;
 static int current_return_label;
 static int current_return_type;
+static int parse_function_return_type;
 static int current_local_bytes;
 static int max_function_local_bytes;
 
@@ -2824,7 +2825,10 @@ static void parse_struct_definition(int struct_id)
                 memset(&field_defs[nfield_defs], 0, sizeof(field_defs[nfield_defs]));
                 strncpy(field_defs[nfield_defs].name, fname,
                         sizeof(field_defs[nfield_defs].name) - 1);
-                field_defs[nfield_defs].type = TYPE_UNSIGNED | TYPE_INT;
+                if ((ftype & 15) != TYPE_INT || type_ptr_depth(ftype) != 0)
+                    error_here("bitfield type must be int or unsigned int");
+                field_defs[nfield_defs].type = (ftype & TYPE_UNSIGNED) ?
+                    (TYPE_UNSIGNED | TYPE_INT) : TYPE_INT;
                 field_defs[nfield_defs].parent_struct_id = struct_id;
                 field_defs[nfield_defs].offset = bit_unit_offset;
                 field_defs[nfield_defs].elem_type = TYPE_UNSIGNED | TYPE_INT;
@@ -4292,8 +4296,77 @@ static void emit_store_de_to_addr_hl(int type)
     }
 }
 
+
+static int type_is_struct_object(int type)
+{
+    return (type & TYPE_STRUCT) && type_ptr_depth(type) == 0;
+}
+
+static int same_struct_type(int a, int b)
+{
+    return type_is_struct_object(a) && type_is_struct_object(b) &&
+           type_struct_id(a) == type_struct_id(b);
+}
+
+static void emit_copy_de_to_hl_bytes(int n)
+{
+    int lab;
+
+    if (n <= 0)
+        return;
+
+    lab = new_label();
+    if (n <= 255) {
+        fprintf(outf, "\tld b,%d\n", n);
+        emit_label(lab);
+        emit("\tld a,(de)\n");
+        emit("\tld (hl),a\n");
+        emit("\tinc de\n");
+        emit("\tinc hl\n");
+        fprintf(outf, "\tdjnz L%d\n", lab);
+    } else {
+        fprintf(outf, "\tld bc,%d\n", n);
+        emit_label(lab);
+        emit("\tld a,(de)\n");
+        emit("\tld (hl),a\n");
+        emit("\tinc de\n");
+        emit("\tinc hl\n");
+        emit("\tdec bc\n");
+        emit("\tld a,b\n");
+        emit("\tor c\n");
+        emit_jp_label("jp nz,", lab);
+    }
+}
+
+static void emit_push_struct_arg_from_hl(int n)
+{
+    if (n <= 0)
+        return;
+    emit("\tex de,hl\n");          /* DE = source */
+    fprintf(outf, "\tld hl,-%d\n", n);
+    emit("\tadd hl,sp\n");        /* HL = destination */
+    emit("\tld sp,hl\n");
+    emit_copy_de_to_hl_bytes(n);
+}
+
+static void emit_load_hl_from_sp_offset(int off)
+{
+    if (off == 0) {
+        emit("\tpop hl\n\tpush hl\n");
+    } else {
+        fprintf(outf, "\tld hl,%d\n", off);
+        emit("\tadd hl,sp\n");
+        emit("\tld e,(hl)\n");
+        emit("\tinc hl\n");
+        emit("\tld d,(hl)\n");
+        emit("\tex de,hl\n");
+    }
+}
+
 static void gen_expr(void);
 static void gen_expr_no_comma(void);
+static void gen_unary(void);
+static void gen_snippet_lvalue_addr(const char *snippet, int *ptype);
 static int snippet_is_single_pointer_id(const char *s);
 static void gen_statement(void);
 static int parse_funcptr_declarator(int *ptype, char *name, int namesz)
@@ -4785,6 +4858,22 @@ static int skip_lvalue_syntax(void)
             }
             if (depth != 0)
                 return 0;
+            /* This may have been a cast in a dereference lvalue, e.g.
+             *     *(struct S *)p = rhs;
+             * Consume the simple cast operand so lookahead reaches '='. */
+            if (tok.kind == TOK_ID) {
+                next_token();
+            } else if (tok.kind == '(') {
+                depth = 1;
+                next_token();
+                while (tok.kind != TOK_EOF && depth > 0) {
+                    if (tok.kind == '(' || tok.kind == '[') depth++;
+                    else if (tok.kind == ')' || tok.kind == ']') depth--;
+                    next_token();
+                }
+                if (depth != 0)
+                    return 0;
+            }
         } else if (tok.kind == TOK_ID) {
             next_token();
             /*
@@ -5038,14 +5127,31 @@ static int try_gen_deref_postinc_lvalue_addr(int *ptype)
     char name[64];
     int op;
     int base;
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
 
     if (tok.kind != '*')
         return 0;
 
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
     next_token();
 
-    if (tok.kind != TOK_ID)
+    if (tok.kind != TOK_ID) {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        tok = save_tok;
         return 0;
+    }
 
     strncpy(name, tok.text, sizeof(name) - 1);
     name[sizeof(name) - 1] = 0;
@@ -5285,8 +5391,17 @@ static void gen_lvalue_addr(int *ptype)
     }
 
     if (accept('*')) {
-        gen_expr();
-        if (ptype) ptype[0] = TYPE_INT;
+        /* For lvalue dereference, parse only a unary expression for the
+         * pointer operand.  The old code used gen_expr(), so in cases like
+         *     *(struct S *)p = s;
+         * the pointer operand accidentally consumed the following '=' as
+         * part of the address expression. */
+        gen_unary();
+        if (ptype) {
+            ptype[0] = type_decay_ptr(g_expr_type);
+            if ((ptype[0] & 15) == TYPE_VOID)
+                ptype[0] = TYPE_CHAR;
+        }
         return;
     }
 
@@ -5780,24 +5895,47 @@ static int try_emit_fast_byte_add_const_snippet(const char *snippet)
     if (k < 0 || k > 255)
         return 0;
 
-    while (*p == ' ' || *p == '\t') p++;
-    if (*p == 'u' || *p == 'U' || *p == 'l' || *p == 'L') {
-        while (*p == 'u' || *p == 'U' || *p == 'l' || *p == 'L') p++;
-        while (*p == ' ' || *p == '\t') p++;
-    }
-    if (*p != ';')
-        return 0;
+    {
+        int has_u;
+        int has_l;
 
-    fprintf(outf, "\tld a,(ix%+d)\n", s->offset);
-    if (k != 0) {
-        if (op == '+')
-            fprintf(outf, "\tadd a,%ld\n", k & 255);
-        else
-            fprintf(outf, "\tsub %ld\n", k & 255);
+        has_u = 0;
+        has_l = 0;
+        while (*p == ' ' || *p == '\t') p++;
+        while (*p == 'u' || *p == 'U' || *p == 'l' || *p == 'L') {
+            if (*p == 'u' || *p == 'U') has_u = 1;
+            if (*p == 'l' || *p == 'L') has_l = 1;
+            p++;
+        }
+        while (*p == ' ' || *p == '\t') p++;
+
+        /* Do not use the byte fast path for long constants.  The result of
+         * e.g. unsigned-char + 1UL must be unsigned long, not unsigned int.
+         * Let normal expression code do the 32-bit usual-arithmetic conversion.
+         */
+        if (has_l)
+            return 0;
+
+        if (*p != ';')
+            return 0;
+
+        /* unsigned char promotes to int on this 16-bit target, so the add/sub
+         * must be 16-bit.  The old byte add wrapped 255 + 1 to 0, which broke
+         * call arguments such as ck("uc+ul", uc + 1UL, 256UL) before the long
+         * case was rejected above, and also made plain uc + 1 wrong.
+         */
+        fprintf(outf, "\tld l,(ix%+d)\n", s->offset);
+        emit("\tld h,0\n");
+        if (k != 0) {
+            fprintf(outf, "\tld de,%ld\n", k & 0xffffL);
+            if (op == '+')
+                emit("\tadd hl,de\n");
+            else
+                emit("\tor a\n\tsbc hl,de\n");
+        }
+        g_expr_type = has_u ? (TYPE_UNSIGNED | TYPE_INT) : TYPE_INT;
+        return 1;
     }
-    emit("\tld l,a\n\tld h,0\n");
-    g_expr_type = TYPE_UNSIGNED | TYPE_INT;
-    return 1;
 }
 
 static int emit_default_call_args(long *arg_start, long *arg_end, int argc)
@@ -5845,6 +5983,228 @@ static void emit_cleanup_stack_bytes(int bytes)
 }
 
 
+static int try_emit_push_struct_return_call_arg(const char *snippet, int want_type);
+
+static int try_emit_struct_return_call_assignment(int lhs_type)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    char name[64];
+    struct Sym *fn;
+    long arg_start[MAX_SNAPSHOT];
+    long arg_end[MAX_SNAPSHOT];
+    int argc;
+    int i;
+    int arg_bytes;
+    int old_dead;
+
+    if (!type_is_struct_object(lhs_type) || tok.kind != TOK_ID)
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    strncpy(name, tok.text, sizeof(name) - 1);
+    name[sizeof(name) - 1] = 0;
+    fn = find_global(name);
+    next_token();
+
+    if (!fn || fn->storage != SC_FUNC || !same_struct_type(lhs_type, fn->type) ||
+        tok.kind != '(') {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        tok = save_tok;
+        return 0;
+    }
+
+    parse_call_args_after_lparen(arg_start, arg_end, &argc);
+
+    arg_bytes = 0;
+    old_dead = expr_result_dead;
+    expr_result_dead = 0;
+    for (i = argc - 1; i >= 0; --i) {
+        char *arg_code;
+        int actual_type;
+        int want_type;
+        int have_want;
+
+        have_want = expected_arg_type(fn, i, &want_type);
+        if (have_want && type_is_struct_object(want_type)) {
+            int atype;
+            arg_code = copy_range(arg_start[i], arg_end[i]);
+            if (try_emit_push_struct_return_call_arg(arg_code, want_type)) {
+                arg_bytes += type_size(want_type);
+                free(arg_code);
+                continue;
+            }
+            gen_snippet_lvalue_addr(arg_code, &atype);
+            free(arg_code);
+            if (!same_struct_type(want_type, atype))
+                error_here("incompatible struct argument");
+            emit_push_struct_arg_from_hl(type_size(want_type));
+            arg_bytes += type_size(want_type);
+        } else {
+            arg_code = copy_range(arg_start[i], arg_end[i]);
+            gen_snippet_expr(arg_code);
+            free(arg_code);
+            actual_type = g_expr_type;
+            if (have_want && type_is_long(want_type) && !type_is_long(actual_type)) {
+                emit_promote_int_to_long(actual_type, want_type);
+                emit("\tpush de\n\tpush hl\n");
+                arg_bytes += 4;
+            } else if (type_is_long(actual_type) || type_is_float(actual_type)) {
+                emit("\tpush de\n\tpush hl\n");
+                arg_bytes += 4;
+            } else {
+                emit("\tpush hl\n");
+                arg_bytes += 2;
+            }
+        }
+    }
+    expr_result_dead = old_dead;
+
+    /* Original destination pointer is below the ordinary arguments.  Duplicate
+     * it as the hidden first argument so the callee sees it at ix+4. */
+    emit_load_hl_from_sp_offset(arg_bytes);
+    emit("\tpush hl\n");
+    emit_extrn_if_needed(fn);
+    fprintf(outf, "\tcall %s\n", asm_name_for(name));
+    emit_cleanup_stack_bytes(arg_bytes + 2);
+    emit("\tpop bc\n");          /* discard saved destination pointer */
+    g_expr_type = lhs_type;
+    return 1;
+}
+
+
+static int try_emit_push_struct_return_call_arg(const char *snippet, int want_type)
+{
+    char *old_src;
+    long old_len;
+    long old_pos;
+    long old_tok_start;
+    int old_line;
+    int old_tok_line;
+    struct Token old_tok;
+    char name[64];
+    struct Sym *fn;
+    long arg_start[MAX_SNAPSHOT];
+    long arg_end[MAX_SNAPSHOT];
+    int argc;
+    int i;
+    int arg_bytes;
+    int old_dead;
+    int n;
+    int ok;
+
+    if (!type_is_struct_object(want_type))
+        return 0;
+
+    old_src = src;
+    old_len = src_len;
+    old_pos = posi;
+    old_tok_start = tok_start_pos;
+    old_line = line_no;
+    old_tok_line = tok_line;
+    old_tok = tok;
+
+    src = (char *)snippet;
+    src_len = (long)strlen(snippet);
+    posi = 0;
+    line_no = 1;
+    next_token();
+
+    ok = 0;
+    if (tok.kind == TOK_ID) {
+        strncpy(name, tok.text, sizeof(name) - 1);
+        name[sizeof(name) - 1] = 0;
+        fn = find_global(name);
+        next_token();
+        if (fn && fn->storage == SC_FUNC && same_struct_type(want_type, fn->type) &&
+            tok.kind == '(') {
+            parse_call_args_after_lparen(arg_start, arg_end, &argc);
+            if (tok.kind == ';') {
+                n = type_size(want_type);
+
+                /* Reserve the outer by-value struct-argument bytes on the
+                 * caller's stack, and save that destination pointer while
+                 * the inner call's ordinary arguments are pushed above it.
+                 * After the inner call is cleaned up, the struct bytes remain
+                 * as the already-pushed outer argument. */
+                fprintf(outf, "\tld hl,-%d\n", n);
+                emit("\tadd hl,sp\n");
+                emit("\tld sp,hl\n");
+                emit("\tpush hl\n");
+
+                arg_bytes = 0;
+                old_dead = expr_result_dead;
+                expr_result_dead = 0;
+                for (i = argc - 1; i >= 0; --i) {
+                    char *arg_code;
+                    int actual_type;
+                    int inner_want;
+                    int have_want;
+
+                    have_want = expected_arg_type(fn, i, &inner_want);
+                    arg_code = copy_range(arg_start[i], arg_end[i]);
+                    if (have_want && type_is_struct_object(inner_want) &&
+                        try_emit_push_struct_return_call_arg(arg_code, inner_want)) {
+                        arg_bytes += type_size(inner_want);
+                    } else if (have_want && type_is_struct_object(inner_want)) {
+                        int atype;
+                        gen_snippet_lvalue_addr(arg_code, &atype);
+                        if (!same_struct_type(inner_want, atype))
+                            error_here("incompatible struct argument");
+                        emit_push_struct_arg_from_hl(type_size(inner_want));
+                        arg_bytes += type_size(inner_want);
+                    } else {
+                        gen_snippet_expr(arg_code);
+                        actual_type = g_expr_type;
+                        if (have_want && type_is_long(inner_want) && !type_is_long(actual_type)) {
+                            emit_promote_int_to_long(actual_type, inner_want);
+                            emit("\tpush de\n\tpush hl\n");
+                            arg_bytes += 4;
+                        } else if (type_is_long(actual_type) || type_is_float(actual_type)) {
+                            emit("\tpush de\n\tpush hl\n");
+                            arg_bytes += 4;
+                        } else {
+                            emit("\tpush hl\n");
+                            arg_bytes += 2;
+                        }
+                    }
+                    free(arg_code);
+                }
+                expr_result_dead = old_dead;
+
+                emit_load_hl_from_sp_offset(arg_bytes);
+                emit("\tpush hl\n");
+                emit_extrn_if_needed(fn);
+                fprintf(outf, "\tcall %s\n", asm_name_for(name));
+                emit_cleanup_stack_bytes(arg_bytes + 2);
+                emit("\tpop bc\n");
+                ok = 1;
+            }
+        }
+    }
+
+    src = old_src;
+    src_len = old_len;
+    posi = old_pos;
+    tok_start_pos = old_tok_start;
+    line_no = old_line;
+    tok_line = old_tok_line;
+    tok = old_tok;
+
+    return ok;
+}
+
 static void emit_call_hl_from_stack_offset(int off)
 {
     fprintf(outf, "\tld hl,%d\n", off);
@@ -5861,9 +6221,12 @@ static void emit_extract_bitfield(void)
 {
     int i;
     unsigned int mask;
+    int out_type;
 
     if (current_field_bit_width <= 0)
         return;
+
+    out_type = (g_expr_type & TYPE_UNSIGNED) ? (TYPE_UNSIGNED | TYPE_INT) : TYPE_INT;
 
     for (i = 0; i < current_field_bit_shift; ++i)
         emit("\tsrl h\n\trr l\n");
@@ -5872,7 +6235,27 @@ static void emit_extract_bitfield(void)
     fprintf(outf, "\tld de,%u\n", mask & 0xffffU);
     emit("\tld a,l\n\tand e\n\tld l,a\n");
     emit("\tld a,h\n\tand d\n\tld h,a\n");
-    g_expr_type = TYPE_UNSIGNED | TYPE_INT;
+
+    if (!(out_type & TYPE_UNSIGNED) && current_field_bit_width < 16) {
+        int lab;
+        unsigned int signbit;
+        unsigned int extend_mask;
+
+        lab = new_label();
+        signbit = (unsigned int)(1UL << (current_field_bit_width - 1));
+        extend_mask = (~mask) & 0xffffU;
+
+        fprintf(outf, "\tld de,%u\n", signbit & 0xffffU);
+        emit("\tld a,l\n\tand e\n\tld e,a\n");
+        emit("\tld a,h\n\tand d\n\tor e\n");
+        fprintf(outf, "\tjp z,L%d\n", lab);
+        fprintf(outf, "\tld de,%u\n", extend_mask);
+        emit("\tld a,l\n\tor e\n\tld l,a\n");
+        emit("\tld a,h\n\tor d\n\tld h,a\n");
+        emit_label(lab);
+    }
+
+    g_expr_type = out_type;
 }
 
 static void emit_store_bitfield_from_hl(void)
@@ -6250,35 +6633,52 @@ static void gen_primary(void)
                     int want_type;
                     int have_want;
 
-                    arg_code = copy_range(arg_start[i], arg_end[i]);
-                    if (!try_emit_fast_byte_add_const_snippet(arg_code))
-                        gen_snippet_expr(arg_code);
-                    free(arg_code);
-
-                    actual_type = g_expr_type;
                     have_want = expected_arg_type(fn_sym, i, &want_type);
 
-                    if (have_want && type_is_float(want_type)) {
-                        if (!type_is_float(actual_type))
-                            emit_convert_int_to_float(actual_type);
-                        emit("\tpush de\n\tpush hl\n");
-                        arg_bytes += 4;
-                    } else if (have_want && type_is_long(want_type)) {
-                        if (!type_is_long(actual_type))
-                            emit_promote_int_to_long(actual_type, want_type);
-                        emit("\tpush de\n\tpush hl\n");
-                        arg_bytes += 4;
-                    } else if (have_want && !type_is_long(want_type) && !type_is_float(want_type)) {
-                        /* Prototype says this is a 16-bit argument.  If the
-                         * expression produced a long/float, pass its low word. */
-                        emit("\tpush hl\n");
-                        arg_bytes += 2;
-                    } else if (type_is_long(actual_type) || type_is_float(actual_type)) {
-                        emit("\tpush de\n\tpush hl\n");
-                        arg_bytes += 4;
+                    if (have_want && type_is_struct_object(want_type)) {
+                        int atype;
+                        arg_code = copy_range(arg_start[i], arg_end[i]);
+                        if (try_emit_push_struct_return_call_arg(arg_code, want_type)) {
+                            arg_bytes += type_size(want_type);
+                            free(arg_code);
+                            continue;
+                        }
+                        gen_snippet_lvalue_addr(arg_code, &atype);
+                        free(arg_code);
+                        if (!same_struct_type(want_type, atype))
+                            error_here("incompatible struct argument");
+                        emit_push_struct_arg_from_hl(type_size(want_type));
+                        arg_bytes += type_size(want_type);
                     } else {
-                        emit("\tpush hl\n");
-                        arg_bytes += 2;
+                        arg_code = copy_range(arg_start[i], arg_end[i]);
+                        if (!try_emit_fast_byte_add_const_snippet(arg_code))
+                            gen_snippet_expr(arg_code);
+                        free(arg_code);
+
+                        actual_type = g_expr_type;
+
+                        if (have_want && type_is_float(want_type)) {
+                            if (!type_is_float(actual_type))
+                                emit_convert_int_to_float(actual_type);
+                            emit("\tpush de\n\tpush hl\n");
+                            arg_bytes += 4;
+                        } else if (have_want && type_is_long(want_type)) {
+                            if (!type_is_long(actual_type))
+                                emit_promote_int_to_long(actual_type, want_type);
+                            emit("\tpush de\n\tpush hl\n");
+                            arg_bytes += 4;
+                        } else if (have_want && !type_is_long(want_type) && !type_is_float(want_type)) {
+                            /* Prototype says this is a 16-bit argument.  If the
+                             * expression produced a long/float, pass its low word. */
+                            emit("\tpush hl\n");
+                            arg_bytes += 2;
+                        } else if (type_is_long(actual_type) || type_is_float(actual_type)) {
+                            emit("\tpush de\n\tpush hl\n");
+                            arg_bytes += 4;
+                        } else {
+                            emit("\tpush hl\n");
+                            arg_bytes += 2;
+                        }
                     }
                 }
                 expr_result_dead = old_dead;
@@ -9284,6 +9684,8 @@ static void gen_conditional(void)
 
         gen_expr();
         true_type = g_expr_type;
+        if (type_is_struct_object(true_type))
+            error_here("unsupported struct conditional expression");
 
         /*
          * C's conditional operator applies the usual conversions between the
@@ -9312,6 +9714,8 @@ static void gen_conditional(void)
 
         gen_conditional();
         false_type = g_expr_type;
+        if (type_is_struct_object(false_type))
+            error_here("unsupported struct conditional expression");
 
         if (type_is_long(false_type))
             need_long_result = 1;
@@ -9678,6 +10082,15 @@ static void gen_assign(void)
     }
 
     if (direct_sym) {
+        if (type_is_struct_object(direct_sym->type)) {
+            posi = save_pos;
+            tok_start_pos = save_tok_start;
+            line_no = save_line;
+            tok_line = save_tok_line;
+            tok = save_tok;
+            direct_sym = NULL;
+            goto normal_assign;
+        }
         want_dead = expr_result_dead;
         op = tok.kind;
         next_token();
@@ -9970,6 +10383,21 @@ normal_assign:
         next_token();
 
         if (op == '=') {
+            if (type_is_struct_object(t)) {
+                int rt;
+                emit("\tpush hl\n"); /* push destination address */
+                if (try_emit_struct_return_call_assignment(t))
+                    return;
+                gen_lvalue_addr(&rt);
+                if (!same_struct_type(t, rt))
+                    error_here("incompatible struct assignment");
+                emit("\tex de,hl\n"); /* DE = source */
+                emit("\tpop hl\n");   /* HL = destination */
+                emit_copy_de_to_hl_bytes(type_size(t));
+                g_expr_type = t;
+                return;
+            }
+
             emit("\tpush hl\n"); /* push address */
 
             if (type_is_float(t)) {
@@ -10189,10 +10617,16 @@ static void gen_expr_no_comma(void)
 static void gen_expr(void)
 {
     gen_assign();
-    /* comma operator: evaluate and discard left, then evaluate right */
+    /* comma operator: evaluate and discard left, then evaluate right.
+     * DCC has no struct-valued expression temporary model, so reject
+     * struct operands here instead of emitting bogus scalar loads/copies. */
     while (tok.kind == ',') {
+        if (type_is_struct_object(g_expr_type))
+            error_here("unsupported struct comma expression");
         next_token();
         gen_assign();
+        if (type_is_struct_object(g_expr_type))
+            error_here("unsupported struct comma expression");
     }
 }
 
@@ -11022,6 +11456,321 @@ static void emit_store_const_to_local_array_elem(struct Sym *s, int elem_type, i
     }
 }
 
+static void emit_store_const_to_local_offset(struct Sym *s, int off, int type, long v)
+{
+    emit_load_sym_addr(s);
+    emit_add_const_to_hl(off);
+    emit("\tpush hl\n");
+
+    if (type_size(type) == 4) {
+        unsigned long uv;
+        uv = (unsigned long)v;
+        fprintf(outf, "\tld hl,%lu\n", uv & 0xffffUL);
+        fprintf(outf, "\tld de,%lu\n", (uv >> 16) & 0xffffUL);
+        emit_store_de_to_addr_hl(type);
+    } else {
+        fprintf(outf, "\tld hl,%ld\n", v & 0xffffL);
+        emit("\tex de,hl\n\tpop hl\n");
+        emit_store_de_to_addr_hl(type);
+    }
+}
+
+static void emit_zero_local_bytes(struct Sym *s, int off, int count)
+{
+    int i;
+    for (i = 0; i < count; ++i)
+        emit_store_const_to_local_offset(s, off + i, TYPE_CHAR | TYPE_UNSIGNED, 0);
+}
+
+static void emit_init_auto_char_array_at_offset_from_string(struct Sym *s, int baseoff, int count, const char *str)
+{
+    int i;
+    int n;
+
+    n = (int)strlen(str);
+    if (count <= 0)
+        return;
+
+    if (n > count) {
+        error_here("string initializer too long for char array field");
+        n = count;
+    }
+
+    for (i = 0; i < n; ++i)
+        emit_store_const_to_local_offset(s, baseoff + i, TYPE_CHAR | TYPE_UNSIGNED,
+                                         (unsigned char)str[i]);
+
+    while (i < count) {
+        emit_store_const_to_local_offset(s, baseoff + i, TYPE_CHAR | TYPE_UNSIGNED, 0);
+        i++;
+    }
+}
+
+static void emit_init_auto_struct_type(struct Sym *s, int baseoff, int type);
+static void skip_initializer_or_decl_tail(void);
+
+static void emit_init_auto_struct_scalar(struct Sym *s, int off, int type)
+{
+    long v;
+    int k;
+    char label[64];
+
+    if ((type & 15) == TYPE_FLOAT && type_ptr_depth(type) == 0) {
+        unsigned long bits;
+        if (parse_float_init_literal(&bits))
+            emit_store_const_to_local_offset(s, off, type, (long)bits);
+        else {
+            error_here("automatic struct float initializer must be constant");
+            if (tok.kind != ',' && tok.kind != '}')
+                next_token();
+        }
+        return;
+    }
+
+    k = parse_global_init_atom(&v, label, sizeof(label));
+    if (k == 1) {
+        emit_store_const_to_local_offset(s, off, type, v);
+    } else {
+        error_here("automatic struct initializer must be constant");
+        if (tok.kind != ',' && tok.kind != '}')
+            next_token();
+    }
+}
+
+static void emit_init_auto_struct_array(struct Sym *s, int baseoff, int elem_type, int count, int elem_size)
+{
+    int n;
+    int total_bytes;
+
+    if (elem_size <= 0) elem_size = type_size(elem_type);
+    if (elem_size <= 0) elem_size = 2;
+
+    if ((elem_type & 15) == TYPE_CHAR && type_ptr_depth(elem_type) == 0 &&
+        tok.kind == TOK_STR) {
+        char *lit;
+        int is_wide;
+        lit = read_adjacent_string_literals_ex(&is_wide);
+        if (is_wide)
+            error_here("wide string cannot initialize char array field");
+        else
+            emit_init_auto_char_array_at_offset_from_string(s, baseoff, count, lit);
+        free(lit);
+        return;
+    }
+
+    if (tok.kind == '{')
+        next_token();
+
+    n = 0;
+    while (tok.kind != TOK_EOF && tok.kind != '}') {
+        if (count > 0 && n >= count) {
+            error_here("too many initializer elements");
+            skip_initializer_or_decl_tail();
+            break;
+        }
+
+        if ((elem_type & TYPE_STRUCT) && type_ptr_depth(elem_type) == 0)
+            emit_init_auto_struct_type(s, baseoff + n * elem_size, elem_type);
+        else
+            emit_init_auto_struct_scalar(s, baseoff + n * elem_size, elem_type);
+
+        n++;
+        if (!accept(',')) break;
+        if (tok.kind == '}') break;
+    }
+    expect('}');
+
+    if (count > 0 && n < count) {
+        total_bytes = (count - n) * elem_size;
+        emit_zero_local_bytes(s, baseoff + n * elem_size, total_bytes);
+    }
+}
+
+
+static long parse_struct_init_const_value(void)
+{
+    long v;
+    char label[64];
+    int k;
+
+    k = parse_global_init_atom(&v, label, sizeof(label));
+    if (k != 1) {
+        error_here("bitfield initializer must be constant integer");
+        if (tok.kind != ',' && tok.kind != '}')
+            next_token();
+        return 0;
+    }
+    return v;
+}
+
+static unsigned int bitfield_init_part(struct FieldDef *fd, long v)
+{
+    unsigned long mask;
+
+    if (fd->bit_width <= 0)
+        return 0;
+
+    mask = (1UL << fd->bit_width) - 1UL;
+    return (unsigned int)(((unsigned long)v & mask) << fd->bit_shift);
+}
+
+static int next_parent_field_index(int sid, int start)
+{
+    int k;
+    for (k = start; k < nfield_defs; ++k)
+        if (field_defs[k].parent_struct_id == sid)
+            return k;
+    return -1;
+}
+
+static void emit_store_const_bitfield_unit_to_local(struct Sym *s, int off, unsigned int unit)
+{
+    emit_store_const_to_local_offset(s, off, TYPE_UNSIGNED | TYPE_INT, (long)(unit & 0xffffU));
+}
+
+static void emit_init_auto_struct_type(struct Sym *s, int baseoff, int type)
+{
+    int sid;
+    int i;
+    int used;
+    int total;
+    int is_union;
+
+    sid = type_struct_id(type);
+    total = type_size(type);
+    used = 0;
+    is_union = (sid > 0 && sid <= nstruct_defs && struct_defs[sid - 1].is_union);
+
+    if (tok.kind == '{')
+        next_token();
+
+    if (is_union) {
+        struct FieldDef *first;
+        first = NULL;
+        for (i = 0; i < nfield_defs; ++i) {
+            if (field_defs[i].parent_struct_id == sid) {
+                first = &field_defs[i];
+                break;
+            }
+        }
+
+        if (first && tok.kind != TOK_EOF && tok.kind != '}') {
+            if (first->is_array)
+                emit_init_auto_struct_array(s, baseoff, first->elem_type, first->array_len, first->elem_size);
+            else if ((first->type & TYPE_STRUCT) && type_ptr_depth(first->type) == 0)
+                emit_init_auto_struct_type(s, baseoff, first->type);
+            else
+                emit_init_auto_struct_scalar(s, baseoff, first->type);
+            used = first->size;
+
+            if (accept(',')) {
+                if (tok.kind != '}') {
+                    error_here("too many union initializer elements");
+                    while (tok.kind != TOK_EOF && tok.kind != '}') {
+                        skip_initializer_or_decl_tail();
+                        if (tok.kind == ',') next_token();
+                        else break;
+                    }
+                }
+            }
+        }
+
+        expect('}');
+        if (total > used)
+            emit_zero_local_bytes(s, baseoff + used, total - used);
+        return;
+    }
+
+    for (i = 0; i < nfield_defs && tok.kind != TOK_EOF && tok.kind != '}'; ++i) {
+        struct FieldDef *fd;
+        fd = &field_defs[i];
+        if (fd->parent_struct_id != sid)
+            continue;
+
+        if (fd->offset > used)
+            emit_zero_local_bytes(s, baseoff + used, fd->offset - used);
+
+        if (fd->bit_width > 0) {
+            int unit_off;
+            int k;
+            int next;
+            unsigned int unit;
+            int stop;
+
+            unit_off = fd->offset;
+            unit = 0;
+            stop = 0;
+            k = i;
+            while (k >= 0 && k < nfield_defs && tok.kind != TOK_EOF && tok.kind != '}') {
+                struct FieldDef *bfd;
+                bfd = &field_defs[k];
+                if (bfd->parent_struct_id == sid) {
+                    if (bfd->bit_width <= 0 || bfd->offset != unit_off)
+                        break;
+                    unit |= bitfield_init_part(bfd, parse_struct_init_const_value());
+                    if (!accept(',')) {
+                        stop = 1;
+                        break;
+                    }
+                    if (tok.kind == '}') {
+                        stop = 1;
+                        break;
+                    }
+                }
+                next = next_parent_field_index(sid, k + 1);
+                if (next < 0) {
+                    if (tok.kind != '}') {
+                        error_here("too many initializer elements");
+                        while (tok.kind != TOK_EOF && tok.kind != '}') {
+                            skip_initializer_or_decl_tail();
+                            if (tok.kind == ',') next_token();
+                            else break;
+                        }
+                    }
+                    stop = 1;
+                    break;
+                }
+                k = next;
+            }
+            emit_store_const_bitfield_unit_to_local(s, baseoff + unit_off, unit);
+            used = unit_off + 2;
+            if (k > i)
+                i = k - 1;
+            if (stop)
+                break;
+            continue;
+        }
+
+        if (fd->is_array)
+            emit_init_auto_struct_array(s, baseoff + fd->offset, fd->elem_type, fd->array_len, fd->elem_size);
+        else if ((fd->type & TYPE_STRUCT) && type_ptr_depth(fd->type) == 0)
+            emit_init_auto_struct_type(s, baseoff + fd->offset, fd->type);
+        else
+            emit_init_auto_struct_scalar(s, baseoff + fd->offset, fd->type);
+
+        used = fd->offset + fd->size;
+        if (!accept(',')) break;
+        if (tok.kind == '}') break;
+    }
+    expect('}');
+
+    if (total > used)
+        emit_zero_local_bytes(s, baseoff + used, total - used);
+}
+
+static void emit_init_auto_struct_from_list(struct Sym *s)
+{
+    emit_init_auto_struct_type(s, 0, s->type);
+}
+
+static void emit_init_auto_struct_array_from_list(struct Sym *s)
+{
+    int elem_size;
+    elem_size = s->elem_size ? s->elem_size : type_size(s->type);
+    if (elem_size <= 0) elem_size = 2;
+    emit_init_auto_struct_array(s, 0, s->type, s->array_len, elem_size);
+}
+
 static int sym_array_elems_from_level(struct Sym *s, int level)
 {
     int i;
@@ -11227,7 +11976,10 @@ static void gen_local_decl_after_type(int base)
         }
 
         if (accept('=')) {
-            if (s->is_array && (type & 15) == TYPE_CHAR && type_ptr_depth(type) == 0 && tok.kind == TOK_STR) {
+            if ((type & TYPE_STRUCT) && type_ptr_depth(type) == 0 && tok.kind != '{') {
+                error_here("struct initializer list expected");
+                skip_initializer_or_decl_tail();
+            } else if (s->is_array && (type & 15) == TYPE_CHAR && type_ptr_depth(type) == 0 && tok.kind == TOK_STR) {
                 char *lit;
                 int is_wide;
                 lit = read_adjacent_string_literals_ex(&is_wide);
@@ -11235,6 +11987,10 @@ static void gen_local_decl_after_type(int base)
                     error_here("wide string cannot initialize char array");
                 emit_init_auto_char_array_from_string(s, lit);
                 free(lit);
+            } else if (s->is_array && tok.kind == '{' && (type & TYPE_STRUCT) && type_ptr_depth(type) == 0) {
+                emit_init_auto_struct_array_from_list(s);
+            } else if (!s->is_array && tok.kind == '{' && (type & TYPE_STRUCT) && type_ptr_depth(type) == 0) {
+                emit_init_auto_struct_from_list(s);
             } else if (s->is_array && tok.kind == '{' && !(type & TYPE_STRUCT)) {
                 emit_init_auto_array_from_list(s, type);
             } else if (!s->is_array && tok.kind == '{') {
@@ -11442,6 +12198,41 @@ static void gen_snippet_expr(const char *snippet)
             gen_expr();
         }
     }
+
+    src = old_src;
+    src_len = old_len;
+    posi = old_pos;
+    tok_start_pos = old_tok_start;
+    line_no = old_line;
+    tok_line = old_tok_line;
+    tok = old_tok;
+}
+
+static void gen_snippet_lvalue_addr(const char *snippet, int *ptype)
+{
+    char *old_src;
+    long old_len;
+    long old_pos;
+    long old_tok_start;
+    int old_line;
+    int old_tok_line;
+    struct Token old_tok;
+
+    old_src = src;
+    old_len = src_len;
+    old_pos = posi;
+    old_tok_start = tok_start_pos;
+    old_line = line_no;
+    old_tok_line = tok_line;
+    old_tok = tok;
+
+    src = (char *)snippet;
+    src_len = (long)strlen(snippet);
+    posi = 0;
+    line_no = 1;
+    next_token();
+
+    gen_lvalue_addr(ptype);
 
     src = old_src;
     src_len = old_len;
@@ -11726,6 +12517,21 @@ static void gen_return(void)
     expect(TOK_RETURN);
 
     if (tok.kind != ';') {
+        if (type_is_struct_object(current_return_type)) {
+            int rt;
+            gen_lvalue_addr(&rt);
+            if (!same_struct_type(current_return_type, rt))
+                error_here("incompatible struct return");
+            emit("\tex de,hl\n");          /* DE = source */
+            emit("\tld l,(ix+4)\n");       /* hidden return pointer */
+            emit("\tld h,(ix+5)\n");
+            emit_copy_de_to_hl_bytes(type_size(current_return_type));
+            g_expr_type = current_return_type;
+            expect(';');
+            emit_jp_label("jp", current_return_label);
+            return;
+        }
+
         /*
          * Byte return fast path.  This keeps tiny helpers from materializing a
          * full generic expression when the return value is just a byte local,
@@ -12445,7 +13251,7 @@ static void parse_param_list(void)
 
     nlocals = 0;
     local_size = 0;
-    param_offset = 4;
+    param_offset = ((parse_function_return_type & TYPE_STRUCT) && type_ptr_depth(parse_function_return_type) == 0) ? 6 : 4;
     clear_parsed_prototype();
 
     if (current_void_is_empty_param_list()) {
@@ -13003,6 +13809,29 @@ static void append_global_zero_bytes(struct Sym *s, int bytes)
     }
 }
 
+static void append_global_char_array_string(struct Sym *s, int count, const char *str)
+{
+    int i;
+    int n;
+
+    n = (int)strlen(str);
+    if (count <= 0)
+        return;
+
+    if (n > count) {
+        error_here("string initializer too long for char array field");
+        n = count;
+    }
+
+    for (i = 0; i < n; ++i)
+        append_global_init(s, NULL, (unsigned char)str[i], 1, 0);
+
+    while (i < count) {
+        append_global_init(s, NULL, 0, 1, 0);
+        i++;
+    }
+}
+
 static void parse_global_init_type(struct Sym *s, int type, int size);
 
 static void parse_global_init_array(struct Sym *s, int elem_type, int count, int elem_size)
@@ -13011,6 +13840,19 @@ static void parse_global_init_array(struct Sym *s, int elem_type, int count, int
 
     if (elem_size <= 0) elem_size = type_size(elem_type);
     if (elem_size <= 0) elem_size = 2;
+
+    if ((elem_type & 15) == TYPE_CHAR && type_ptr_depth(elem_type) == 0 &&
+        tok.kind == TOK_STR) {
+        char *lit;
+        int is_wide;
+        lit = read_adjacent_string_literals_ex(&is_wide);
+        if (is_wide)
+            error_here("wide string cannot initialize char array field");
+        else
+            append_global_char_array_string(s, count, lit);
+        free(lit);
+        return;
+    }
 
     if (tok.kind == '{')
         next_token();
@@ -13040,13 +13882,51 @@ static void parse_global_init_struct(struct Sym *s, int type)
     int i;
     int used;
     int total;
+    int is_union;
 
     sid = type_struct_id(type);
     total = type_size(type);
     used = 0;
+    is_union = (sid > 0 && sid <= nstruct_defs && struct_defs[sid - 1].is_union);
 
     if (tok.kind == '{')
         next_token();
+
+    if (is_union) {
+        struct FieldDef *first;
+        first = NULL;
+        for (i = 0; i < nfield_defs; ++i) {
+            if (field_defs[i].parent_struct_id == sid) {
+                first = &field_defs[i];
+                break;
+            }
+        }
+
+        if (first && tok.kind != TOK_EOF && tok.kind != '}') {
+            if (first->is_array)
+                parse_global_init_array(s, first->elem_type, first->array_len, first->elem_size);
+            else
+                parse_global_init_type(s, first->type, first->size);
+            used = first->size;
+
+            if (accept(',')) {
+                if (tok.kind != '}') {
+                    error_here("too many union initializer elements");
+                    while (tok.kind != TOK_EOF && tok.kind != '}') {
+                        skip_initializer_or_decl_tail();
+                        if (tok.kind == ',') next_token();
+                        else break;
+                    }
+                }
+            }
+        }
+
+        expect('}');
+        if (total > used)
+            append_global_zero_bytes(s, total - used);
+        return;
+    }
+
     for (i = 0; i < nfield_defs && tok.kind != TOK_EOF && tok.kind != '}'; ++i) {
         struct FieldDef *fd;
         fd = &field_defs[i];
@@ -13055,6 +13935,57 @@ static void parse_global_init_struct(struct Sym *s, int type)
 
         if (fd->offset > used)
             append_global_zero_bytes(s, fd->offset - used);
+
+        if (fd->bit_width > 0) {
+            int unit_off;
+            int k;
+            int next;
+            unsigned int unit;
+            int stop;
+
+            unit_off = fd->offset;
+            unit = 0;
+            stop = 0;
+            k = i;
+            while (k >= 0 && k < nfield_defs && tok.kind != TOK_EOF && tok.kind != '}') {
+                struct FieldDef *bfd;
+                bfd = &field_defs[k];
+                if (bfd->parent_struct_id == sid) {
+                    if (bfd->bit_width <= 0 || bfd->offset != unit_off)
+                        break;
+                    unit |= bitfield_init_part(bfd, parse_struct_init_const_value());
+                    if (!accept(',')) {
+                        stop = 1;
+                        break;
+                    }
+                    if (tok.kind == '}') {
+                        stop = 1;
+                        break;
+                    }
+                }
+                next = next_parent_field_index(sid, k + 1);
+                if (next < 0) {
+                    if (tok.kind != '}') {
+                        error_here("too many initializer elements");
+                        while (tok.kind != TOK_EOF && tok.kind != '}') {
+                            skip_initializer_or_decl_tail();
+                            if (tok.kind == ',') next_token();
+                            else break;
+                        }
+                    }
+                    stop = 1;
+                    break;
+                }
+                k = next;
+            }
+            append_global_init(s, NULL, (long)(unit & 0xffffU), 2, 0);
+            used = unit_off + 2;
+            if (k > i)
+                i = k - 1;
+            if (stop)
+                break;
+            continue;
+        }
 
         if (fd->is_array)
             parse_global_init_array(s, fd->elem_type, fd->array_len, fd->elem_size);
@@ -13285,6 +14216,11 @@ static void parse_global_init_list(struct Sym *s)
 
     if (!accept('{')) {
         if (!s->is_array) {
+            if ((s->type & TYPE_STRUCT) && type_ptr_depth(s->type) == 0) {
+                error_here("struct initializer list expected");
+                skip_initializer_or_decl_tail();
+                return;
+            }
             s->has_init = 1;
             if ((s->type & 15) == TYPE_FLOAT && type_ptr_depth(s->type) == 0) {
                 unsigned long bits;
@@ -13425,6 +14361,7 @@ static void parse_function_or_global(int base_type)
             int already_declared;
             already_declared = (find_global(name) != NULL);
             s = add_global(name, type, SC_FUNC);
+            parse_function_return_type = type;
             if (decl_is_static) {
                 s->is_static = 1;
                 s->needs_extrn = 0;
@@ -13442,6 +14379,7 @@ static void parse_function_or_global(int base_type)
 
             already_declared = (find_global(name) != NULL);
             s = add_global(name, type, SC_FUNC);
+            parse_function_return_type = type;
             if (decl_is_static) {
                 s->is_static = 1;
                 s->needs_extrn = 0;

@@ -81,6 +81,78 @@ int main(void)
     ++sl;
     ck("preinc signed", (unsigned long)sl, 0UL);
 
+    /* mixed signed/unsigned conversions */
+
+    ck("ul==-1L",
+       (unsigned long)(0xffffffffUL == -1L),
+       1UL);
+
+    ck("ul>-1L",
+       (unsigned long)(0xffffffffUL > -1L),
+       0UL);
+
+    ck("high-bit unsigned cmp",
+       (unsigned long)(0x80000000UL > 0x7fffffffUL),
+       1UL);
+
+    /* unsigned divide/mod */
+
+    ul = 0x80000000UL;
+    ck("udiv high", ul / 2UL, 0x40000000UL);
+
+    ul = 0x80000001UL;
+    ck("umod high", ul % 2UL, 1UL);
+
+    /* unsigned wrap */
+
+    ul = 0xffffffffUL;
+    ul += 2UL;
+    ck("ul add wrap", ul, 1UL);
+
+    /* unsigned shifts */
+
+    ul = 0x80000000UL;
+    ul >>= 31;
+    ck("ul shr assign", ul, 1UL);
+
+    ul = 1UL;
+    ul <<= 31;
+    ck("ul shl assign", ul, 0x80000000UL);
+
+    /* signed/unsigned casts */
+
+    ck("cast -2 to ul",
+       (unsigned long)-2L,
+       0xfffffffeUL);
+
+    ck("cast ul high preserve",
+       (unsigned long)(long)0x80000000UL,
+       0x80000000UL);
+
+    ul = 0x80000000UL;
+    if (ul > 0L)
+        ck("mixed ul>0L", 1UL, 1UL);
+    else
+        ck("mixed ul>0L", 0UL, 1UL);
+
+    ck("cf add", 100000L + 200000L, 300000L);
+    ck("cf sub", 100000L - 200000L, (unsigned long)-100000L);
+    ck("cf mul", 30000L * 10L, 300000L);
+    ck("cf shl", 1UL << 31, 0x80000000UL);
+
+    unsigned char uc = 255;
+    unsigned int ui = 65535;
+    unsigned long ul;
+
+    ul = uc;
+    ck("uc->ul", ul, 255UL);
+
+    ul = ui;
+    ck("ui->ul", ul, 65535UL);
+
+    ck("uc+ul", uc + 1UL, 256UL);
+    ck("ui+ul", ui + 1UL, 65536UL);
+
     if (failures) {
         printf("tlongaudit: %d failure(s)\n", failures);
         return 1;

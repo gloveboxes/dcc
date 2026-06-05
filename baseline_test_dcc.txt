@@ -3066,7 +3066,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ Jun  5 2026
-__TIME__ 09:19:36
+__TIME__ 13:51:44
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3723,3 +3723,61 @@ unsigned 32 to
     ui32_t a: 4294967295
     ui32_t b: 69
     tret completed with great success
+test tstructv
+assign/arg 3 1000 7 1010
+return 4 2000 8 2012
+array/multi 5 3000 9 5026
+nested 5 3000 9 11 12 3037
+return-as-arg 4136
+return-to-array 7 5000 13 5020
+big 1 2 3 11 21 40 6078
+big-array-return 2 41 7000 7084
+proto pair 1010 3022 1040
+proto wrap 1033
+proto big 6078
+ptr pair 3 1000 7 1010
+ptr array 5 3000 9 3014
+ptr wrap 3 1000 7 11 12
+ptr big 2 41 7084
+tstructval5 completed
+test tstructi
+global pair 3 1000 7 1010
+global wrap 4 2000 8 9 10 11
+global array 5 4000 10 4016
+local pair 7 5000 13 5020
+local wrap 8 6000 14 15 16 17
+local array 9 8000 19 8029
+big 1 2 3 4 9000 10000 21
+partial 22 0 0
+tstructinit completed
+test tstructp
+deref copy 3 1000 7 1010
+cast copy 4 2000 8 2012
+tstructptr completed
+test tstri2
+global name 294 1000 120
+global wrap 7 243 3000 225
+global array 209 4000 320 5000
+local name 314 6000 113
+local wrap 8 229 8000 233
+local array 221 9000 312 10000
+tstructinitstr completed
+test tunion2
+global union 3 1000 7 1010
+global name 97 98 99 6513249
+global array 2012 3014
+local union 6 4000 10 4016
+local name 120 121 122 8026488
+return/assign 7 5000 11 5018
+ptr copy 5 3000 9 3014
+tunion completed
+test tbitfld
+global 5 17 200 1234 1456
+local 3 7 99 456 565
+return 6 31 255 1000 1292
+assign 2 4 8 16 30
+signed-global -3 12 77 86
+signed-local -2 5 20 23
+signed-return -4 15 30 41
+signed-assign -1 14 40 53
+tbitfield completed

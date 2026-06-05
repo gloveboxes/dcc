@@ -120,11 +120,36 @@ static void replace1(int i, const char *s)
     lines[i] = p;
 }
 
+static char *make_tagged_line(const char *s, const char *tag)
+{
+    char *buf;
+    size_t n;
+
+    /*
+     * Optimized lines can already be close to MAX_LINE bytes.  A fixed
+     * snprintf buffer is safe at runtime but triggers -Wformat-truncation
+     * under fortified libc because the diagnostic correctly sees that the
+     * tag may not fit.  Allocate the exact size instead.
+     */
+    n = strlen(s) + strlen(tag) + strlen(" ; peep: ") + 1;
+    buf = (char *)malloc(n);
+    if (!buf) {
+        fprintf(stderr, "out of memory\n");
+        exit(1);
+    }
+    strcpy(buf, s);
+    strcat(buf, " ; peep: ");
+    strcat(buf, tag);
+    return buf;
+}
+
 static void replace1_tagged(int i, const char *s, const char *tag)
 {
-    char buf[MAX_LINE];
-    snprintf(buf, sizeof(buf), "%s ; peep: %s", s, tag);
+    char *buf;
+
+    buf = make_tagged_line(s, tag);
     replace1(i, buf);
+    free(buf);
 }
 
 static void delete_n(int i, int count)
@@ -158,9 +183,11 @@ static void insert_line(int i, const char *s)
 
 static void insert_line_tagged(int i, const char *s, const char *tag)
 {
-    char buf[MAX_LINE];
-    snprintf(buf, sizeof(buf), "%s ; peep: %s", s, tag);
+    char *buf;
+
+    buf = make_tagged_line(s, tag);
     insert_line(i, buf);
+    free(buf);
 }
 
 static int parse_ld_hl_imm(const char *s, char *val)
@@ -767,7 +794,7 @@ static int pass_jump_thread(void)
     char cond[16], lx[128], ly[128];
     char newjump[256];
     char tmp[MAX_LINE];
-    char target[128];
+    char target[160];
 
     for (i = 0; i < nlines; i++) {
         int is_cond;

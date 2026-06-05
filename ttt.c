@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdbool.h>
 
 #define ABPrune true
@@ -23,7 +24,7 @@ ttt_t g_board[ 9 ];
 
 #if true
 
-ttt_t pos0func()
+ttt_t pos0func( void )
 {
     ttt_t x = g_board[0];
 
@@ -34,7 +35,7 @@ ttt_t pos0func()
     return PieceBlank;
 }
 
-ttt_t pos1func()
+ttt_t pos1func( void )
 {
     ttt_t x = g_board[1];
 
@@ -44,7 +45,7 @@ ttt_t pos1func()
     return PieceBlank;
 }
 
-ttt_t pos2func()
+ttt_t pos2func( void )
 {
     ttt_t x = g_board[2];
 
@@ -55,7 +56,7 @@ ttt_t pos2func()
     return PieceBlank;
 }
 
-ttt_t pos3func()
+ttt_t pos3func( void )
 {
     ttt_t x = g_board[3];
 
@@ -65,7 +66,7 @@ ttt_t pos3func()
     return PieceBlank;
 }
 
-ttt_t pos4func()
+ttt_t pos4func( void )
 {
     ttt_t x = g_board[4];
 
@@ -77,7 +78,7 @@ ttt_t pos4func()
     return PieceBlank;
 }
 
-ttt_t pos5func()
+ttt_t pos5func( void )
 {
     ttt_t x = g_board[5];
 
@@ -87,7 +88,7 @@ ttt_t pos5func()
     return PieceBlank;
 }
 
-ttt_t pos6func()
+ttt_t pos6func( void )
 {
     ttt_t x = g_board[6];
 
@@ -98,7 +99,7 @@ ttt_t pos6func()
     return PieceBlank;
 }
 
-ttt_t pos7func()
+ttt_t pos7func( void )
 {
     ttt_t x = g_board[7];
 
@@ -108,7 +109,7 @@ ttt_t pos7func()
     return PieceBlank;
 }
 
-ttt_t pos8func()
+ttt_t pos8func( void )
 {
     ttt_t x = g_board[8];
 
@@ -272,14 +273,16 @@ int MinMax( ttt_t alpha, ttt_t beta, ttt_t depth, ttt_t move )
 
 int FindSolution( ttt_t position )
 {
-    memset( g_board, 0, sizeof( g_board ) );
+    size_t i;
+    for ( i = 0; i < 9; i++ )
+        g_board[ i ] = PieceBlank;
     g_board[ position ] = PieceX;
     MinMax( SCORE_MIN, SCORE_MAX, 0, position );
     
     return 0;
 } /*FindSolution*/
 
-void ttt()
+void ttt( void )
 {
     FindSolution( 0 );
     FindSolution( 1 );

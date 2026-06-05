@@ -11456,11 +11456,154 @@ static void skip_expr_until_rparen(long *startp, long *endp)
     endp[0] = tok_start_pos;
 }
 
+/*
+ * Skip past the for-loop condition (up to but not including the ';').
+ * Records the source positions so copy_range can capture the text.
+ * Like skip_expr_until_rparen but stops at ';' instead of ')'.
+ */
+static void skip_for_cond(long *startp, long *endp)
+{
+    startp[0] = tok_start_pos;
+    while (tok.kind != TOK_EOF && tok.kind != ';')
+        next_token();
+    endp[0] = tok_start_pos;
+}
+
+/*
+ * Replay a captured condition snippet and emit a branch to ltrue when
+ * the condition is true.  Used to place the for-loop condition check at
+ * the bottom of the loop (do-while style).
+ */
+static void gen_snippet_cond_true(const char *snippet, int ltrue)
+{
+    char *old_src;
+    long old_len;
+    long old_pos;
+    long old_tok_start;
+    int old_line;
+    int old_tok_line;
+    struct Token old_tok;
+
+    old_src       = src;
+    old_len       = src_len;
+    old_pos       = posi;
+    old_tok_start = tok_start_pos;
+    old_line      = line_no;
+    old_tok_line  = tok_line;
+    old_tok       = tok;
+
+    src     = (char *)snippet;
+    src_len = (long)strlen(snippet);
+    posi    = 0;
+    line_no = 1;
+    next_token();
+
+    if (tok.kind != ';') {
+        if (!gen_condition_branch_true_until(ltrue, ';')) {
+            gen_expr();
+            emit_test_expr_nonzero(g_expr_type, ltrue, 1);
+        }
+    }
+
+    src           = old_src;
+    src_len       = old_len;
+    posi          = old_pos;
+    tok_start_pos = old_tok_start;
+    line_no       = old_line;
+    tok_line      = old_tok_line;
+    tok           = old_tok;
+}
+
+/*
+ * Lookahead: return 1 if the for-loop init/condition has the form
+ *   ident = const ; ident relop bound ;
+ * where const satisfies the condition (so the loop always executes at
+ * least once).  Recognises <, <=, != as the relop.
+ * Does not consume any tokens.
+ */
+static int for_init_always_enters_loop(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int  save_line;
+    int  save_tok_line;
+    struct Token save_tok;
+    char varname[64];
+    long initval;
+    long bound;
+    int  op;
+    int  result;
+
+    if (tok.kind != TOK_ID)
+        return 0;
+
+    save_pos       = posi;
+    save_tok_start = tok_start_pos;
+    save_line      = line_no;
+    save_tok_line  = tok_line;
+    save_tok       = tok;
+
+    result = 0;
+
+    /* ident */
+    strncpy(varname, tok.text, sizeof(varname) - 1);
+    varname[sizeof(varname) - 1] = 0;
+    next_token();
+
+    /* = (plain assignment, not ==) */
+    if (tok.kind != '=') goto restore;
+    next_token();
+
+    /* non-negative integer constant */
+    if (tok.kind != TOK_NUM) goto restore;
+    if (tok.val < 0) goto restore;
+    initval = tok.val;
+    next_token();
+
+    /* ; separating init from condition */
+    if (tok.kind != ';') goto restore;
+    next_token();
+
+    /* same identifier */
+    if (tok.kind != TOK_ID) goto restore;
+    if (strcmp(tok.text, varname) != 0) goto restore;
+    next_token();
+
+    /* relational operator — exclude <= because its signed-bias sbc pattern is
+     * matched by pass_reuse_sbc_result_for_flagcheck / pass_recover_index_from_sbc
+     * which both require the while-style jp LE exit jump that do-while omits. */
+    op = tok.kind;
+    if (op != '<' && op != TOK_NE) goto restore;
+    next_token();
+
+    /* integer constant bound */
+    if (tok.kind != TOK_NUM) goto restore;
+    bound = tok.val;
+
+    /* confirm init value satisfies condition */
+    if (op == '<'    && !(initval <  bound)) goto restore;
+    if (op == TOK_LE && !(initval <= bound)) goto restore;
+    if (op == TOK_NE && !(initval != bound)) goto restore;
+
+    result = 1;
+
+restore:
+    posi          = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no       = save_line;
+    tok_line      = save_tok_line;
+    tok           = save_tok;
+    return result;
+}
+
 static void gen_for(void)
 {
     int ltop, linc, lend;
     long inc_start, inc_end;
+    long cond_start, cond_end;
     char *inc_code;
+    char *cond_code;
+    int do_while;
 
     ltop = new_label();
     linc = new_label();
@@ -11468,6 +11611,12 @@ static void gen_for(void)
 
     expect(TOK_FOR);
     expect('(');
+
+    /* Peek: if init assigns a constant that already satisfies the condition,
+     * generate a do-while (check at bottom) to skip the always-true first test. */
+    do_while = 0;
+    if (!starts_type() && tok.kind != ';')
+        do_while = for_init_always_enters_loop();
 
     if (starts_type()) {
         /* C99-style for-init declaration: for (int i = 0; ...) */
@@ -11484,15 +11633,25 @@ static void gen_for(void)
         expect(';');
     }
 
-    emit_label(ltop);
+    if (!do_while) {
+        emit_label(ltop);
 
-    if (tok.kind != ';') {
-        if (!gen_condition_branch_false_until(lend, ';')) {
-            gen_expr();
-            emit_test_expr_nonzero(g_expr_type, lend, 0);
+        if (tok.kind != ';') {
+            if (!gen_condition_branch_false_until(lend, ';')) {
+                gen_expr();
+                emit_test_expr_nonzero(g_expr_type, lend, 0);
+            }
         }
+        expect(';');
+    } else {
+        /* Capture condition as text for replay at the bottom; skip it here. */
+        cond_start = tok_start_pos;
+        skip_for_cond(&cond_start, &cond_end);
+        cond_code = copy_range(cond_start, cond_end);
+        expect(';');
+
+        emit_label(ltop);
     }
-    expect(';');
 
     inc_start = tok_start_pos;
     skip_expr_until_rparen(&inc_start, &inc_end);
@@ -11519,7 +11678,12 @@ static void gen_for(void)
     }
     free(inc_code);
 
-    emit_jp_label("jp", ltop);
+    if (!do_while) {
+        emit_jp_label("jp", ltop);
+    } else {
+        gen_snippet_cond_true(cond_code, ltop);
+        free(cond_code);
+    }
     emit_label(lend);
 }
 

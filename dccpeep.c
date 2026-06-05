@@ -739,6 +739,74 @@ static int pass_branch_over_jump(void)
     return changed;
 }
 
+/*
+ * pass_jump_thread:
+ *
+ * Replace a jump to a trampoline label (a label whose only content is an
+ * unconditional jp) with a direct jump to the trampoline's target.
+ *
+ *   jp cc, Lx                       jp cc, Ly
+ *   ...           becomes:          ...
+ *   Lx:                             Lx: (now unreferenced; removed next pass)
+ *     jp Ly                           jp Ly
+ *
+ * Applies to both conditional and unconditional source jumps.  Fires in the
+ * pos*func winner-check functions where DCC emits intermediate boolean
+ * accumulation labels that are pure trampolines, e.g.:
+ *
+ *   jp z, L10    ; L10 contains only "jp L18"
+ * becomes:
+ *   jp z, L18
+ */
+static int pass_jump_thread(void)
+{
+    int i, k, changed = 0;
+    char cond[16], lx[128], ly[128];
+    char newjump[256];
+    char tmp[MAX_LINE];
+    char target[128];
+
+    for (i = 0; i < nlines; i++) {
+        int is_cond;
+
+        strip_peep_comment_copy(tmp, lines[i]);
+
+        is_cond = peep_parse_any_cond_jump(tmp, cond, lx);
+        if (!is_cond && !peep_parse_jp_uncond_label(tmp, lx))
+            continue;
+
+        /* Find the definition of lx */
+        sprintf(target, "%s:", lx);
+        for (k = 0; k < nlines; k++) {
+            if (strcmp(lines[k], target) == 0)
+                break;
+        }
+        if (k >= nlines)
+            continue;
+
+        /* The label must be followed immediately by an unconditional jump */
+        if (k + 1 >= nlines)
+            continue;
+        strip_peep_comment_copy(tmp, lines[k + 1]);
+        if (!peep_parse_jp_uncond_label(tmp, ly))
+            continue;
+
+        /* Don't thread to self */
+        if (strcmp(ly, lx) == 0)
+            continue;
+
+        if (is_cond)
+            sprintf(newjump, "jp %s, %s", cond, ly);
+        else
+            sprintf(newjump, "jp %s", ly);
+
+        replace1_tagged(i, newjump, "jump_thread");
+        changed = 1;
+    }
+
+    return changed;
+}
+
 
 
 static int peep_parse_ld_l_ix(const char *s, char *off)
@@ -1229,6 +1297,64 @@ static int pass_posfunc_ix1_to_b(void)
                 continue;
             }
         }
+    }
+
+    return changed;
+}
+
+/*
+ * pass_posfunc_collapse_b_setup:
+ *
+ * After pass_posfunc_ix1_to_b converts the local-variable store to "ld b,a",
+ * the function prologue looks like:
+ *
+ *   ld hl,_g_board+K   ; address of x's board position
+ *   ld a,(hl)          ; A = x
+ *   ld b,a             ; B = x  (save for later comparisons)
+ *   ld hl,_g_board+M   ; address of first comparison target
+ *   cp (hl)            ; compare A (x) with g_board[M]
+ *   jp z/nz, L
+ *
+ * Since B is only needed to cache x across the comparison, and Z80 supports
+ * ld b,(hl) directly, we can fold the load and save into one instruction and
+ * convert the first comparison to use direct addressing:
+ *
+ *   ld hl,_g_board+K
+ *   ld b,(hl)          ; B = x directly — eliminates ld a,(hl); ld b,a
+ *   ld a,(_g_board+M)  ; A = first comparison target
+ *   cp b               ; compare — Z unchanged, only Z used by jp z/nz
+ *   jp z/nz, L
+ *
+ * Saves 4T and 1 byte (the eliminated "ld b,a").
+ */
+static int pass_posfunc_collapse_b_setup(void)
+{
+    int i, changed = 0;
+    char addr_k[128], addr_m[128];
+    char new_ld_a[160];
+    char tmp[MAX_LINE];
+
+    for (i = 0; i + 5 < nlines; i++) {
+        if (!parse_ld_hl_imm(lines[i], addr_k)) continue;
+        if (strncmp(addr_k, "_g_board", 8) != 0) continue;
+
+        if (!eq(i + 1, "ld a,(hl)")) continue;
+
+        strip_peep_comment_copy(tmp, lines[i + 2]);
+        if (strcmp(tmp, "ld b,a") != 0) continue;
+
+        if (!parse_ld_hl_imm(lines[i + 3], addr_m)) continue;
+        if (strncmp(addr_m, "_g_board", 8) != 0) continue;
+
+        if (!eq(i + 4, "cp (hl)")) continue;
+        if (!peep_is_jp_z_or_nz(lines[i + 5])) continue;
+
+        sprintf(new_ld_a, "ld a,(%s)", addr_m);
+        replace1_tagged(i + 1, "ld b,(hl)", "posfunc_collapse_b_setup");
+        delete_n(i + 2, 1);              /* remove ld b,a */
+        replace1(i + 2, new_ld_a);      /* ld hl,_g_board+M → ld a,(_g_board+M) */
+        replace1(i + 3, "cp b");        /* cp (hl) → cp b */
+        changed = 1;
     }
 
     return changed;
@@ -3013,8 +3139,9 @@ static int pass_minmax_score_b_cache(void)
      *
      * From there until the next recursive call, it is only read as
      *     ld a,(ix-4)
-     * and no calls occur.  Keep it in B instead.  This also lets the frame
-     * shrink from 4 bytes to 3 bytes after all ix-4 references disappear.
+     * and no calls occur.  Keep it in E instead (B is reserved for the loop
+     * counter p in pass_minmax_loop_ctr_b).  This also lets the frame shrink
+     * from 4 bytes to 3 bytes after all ix-4 references disappear.
      */
     for (i = start; i < end; ++i) {
         if (!eq(i, "ld (ix-4),l"))
@@ -3027,7 +3154,7 @@ static int pass_minmax_score_b_cache(void)
         if (!eq(j, "call _MinMax"))
             continue;
 
-        replace1_tagged(i, "ld b,l", "minmax_score_b");
+        replace1_tagged(i, "ld e,l", "minmax_score_e");
 
         for (j = i + 1; j < end; ++j) {
             if (eq(j, "call _MinMax"))
@@ -3035,7 +3162,7 @@ static int pass_minmax_score_b_cache(void)
 
             strip_peep_comment_copy(tmp, lines[j]);
             if (!strcmp(tmp, "ld a,(ix-4)")) {
-                replace1_tagged(j, "ld a,b", "minmax_score_b");
+                replace1_tagged(j, "ld a,e", "minmax_score_e");
                 changed = 1;
                 continue;
             }
@@ -3112,6 +3239,348 @@ static int pass_shrink_minmax_frame_after_callptr_temp_removed(void)
     return 0;
 }
 
+/*
+ * pass_minmax_loop_ctr_b:
+ *
+ * Move the MinMax blank-cell loop counter p from the IX frame slot (ix-3)
+ * into register B.  This drops the loop overhead from ~59T to ~25T per
+ * iteration by replacing slow IX-relative loads/stores with register ops.
+ *
+ * Requires pass_minmax_score_e to have already moved score from B to E,
+ * freeing B for the loop counter.
+ *
+ * Replacements within _MinMax:
+ *   ld (ix-3),0  →  ld b,0          (init)
+ *   ld e,(ix-3)  →  ld e,b          (address compute: 19T → 4T)
+ *   ld l,(ix-3)  →  ld l,b          (push move arg: 19T → 4T)
+ *   inc (ix-3)   →  inc b           (loop increment: 23T → 4T)
+ *   ld a,(ix-3)  →  ld a,b          (loop test: 19T → 4T)
+ *
+ * After "call _MinMax; pop bc×N; ld e,l", the 4th pop has already left
+ * p in C (the move argument was pushed as L=p, H=0, so pop bc gives C=p).
+ * Insert "ld b,c" to restore the loop counter from C.
+ */
+static int pass_minmax_loop_ctr_b(void)
+{
+    int start, end, i, changed = 0;
+    char tmp[MAX_LINE];
+
+    if (!peep_in_function_range("_MinMax:", &start, &end))
+        return 0;
+
+    /* Only run after:
+     * (a) pass_minmax_score_e committed: ld e,l present, ld b,l absent.
+     * (b) pass_minmax_winner_result_no_temp cleaned up: no ld (ix-3),l store.
+     *     That store is the winner-result spill; until it is removed, some
+     *     ld a,(ix-3) references belong to the winner check, not the loop
+     *     counter, and must not be replaced with ld a,b. */
+    {
+        int has_score_e = 0, has_score_b = 0;
+        for (i = start; i < end; i++) {
+            strip_peep_comment_copy(tmp, lines[i]);
+            if (!strcmp(tmp, "ld e,l"))      has_score_e = 1;
+            if (!strcmp(tmp, "ld b,l"))      has_score_b = 1;
+            if (!strcmp(tmp, "ld (ix-3),l")) return 0; /* winner spill still present */
+        }
+        if (!has_score_e || has_score_b) return 0;
+    }
+
+    /* Replace all (ix-3) loop-counter references with B.
+     * All are 1-for-1 replacements so nlines and end are unchanged. */
+    for (i = start; i < end; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+
+        if (!strcmp(tmp, "ld (ix-3),0")) {
+            replace1_tagged(i, "ld b,0", "minmax_loop_ctr_b");
+            changed = 1;
+        } else if (!strcmp(tmp, "ld e,(ix-3)")) {
+            replace1_tagged(i, "ld e,b", "minmax_loop_ctr_b");
+            changed = 1;
+        } else if (!strcmp(tmp, "ld l,(ix-3)")) {
+            replace1_tagged(i, "ld l,b", "minmax_loop_ctr_b");
+            changed = 1;
+        } else if (!strcmp(tmp, "inc (ix-3)")) {
+            replace1_tagged(i, "inc b", "minmax_loop_ctr_b");
+            changed = 1;
+        } else if (!strcmp(tmp, "ld a,(ix-3)")) {
+            replace1_tagged(i, "ld a,b", "minmax_loop_ctr_b");
+            changed = 1;
+        }
+    }
+
+    /* After "pop bc × N; ld e,l", insert "ld b,c" to recover the loop
+     * counter from C.  The 4th pop bc left p in C because the move arg
+     * was pushed as L=p, H=0, so pop bc gives B=0, C=p. */
+    for (i = start; i < end - 1; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strcmp(tmp, "ld e,l") != 0) continue;
+
+        if (!eq(i - 1, "pop bc")) continue;   /* must follow a pop bc */
+
+        strip_peep_comment_copy(tmp, lines[i + 1]);
+        if (!strcmp(tmp, "ld b,c")) continue;  /* already inserted */
+        if (!strcmp(tmp, "pop bc")) continue;  /* pass_minmax_value_c replaced it */
+
+        insert_line_tagged(i + 1, "ld b,c", "minmax_loop_ctr_b");
+        end++;
+        changed = 1;
+    }
+
+    return changed;
+}
+
+/*
+ * pass_shrink_minmax_frame2_after_loop_ctr_b:
+ *
+ * After pass_minmax_loop_ctr_b removes all (ix-3) references, the MinMax
+ * frame only needs 2 bytes: (ix-1) = value, (ix-2) = pieceMove.
+ * Shrink the allocation from ld hl,-3 to ld hl,-2.
+ */
+static int pass_shrink_minmax_frame2_after_loop_ctr_b(void)
+{
+    int start, end, i;
+
+    if (!peep_in_function_range("_MinMax:", &start, &end))
+        return 0;
+
+    for (i = start; i < end; ++i) {
+        if (strstr(lines[i], "(ix-3)") != NULL)
+            return 0;
+    }
+
+    for (i = start; i + 2 < end; ++i) {
+        if (eq(i, "ld hl,-3") &&
+            eq(i + 1, "add hl,sp") &&
+            eq(i + 2, "ld sp,hl")) {
+            replace1_tagged(i, "ld hl,-2", "shrink_minmax_frame2");
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+/*
+ * pass_minmax_value_c:
+ *
+ * Move the MinMax "value" variable from the IX frame slot (ix-1) into
+ * register C.  Requires pass_minmax_loop_ctr_b to have already moved the
+ * loop counter to B and score to E, freeing C.
+ *
+ * Replacements within _MinMax:
+ *   ld (ix-1),2/9  →  ld c,2/9       (init before loop)
+ *   cp (ix-1)      →  cp c            (score vs value: 15T → 4T)
+ *   ld (ix-1),a    →  ld c,a          (value = score: 19T → 4T)
+ *   ld a,(ix-1)    →  ld a,c          (load value: 19T → 4T)
+ *   ld l,(ix-1)    →  ld l,c          (return value: 19T → 4T)
+ *
+ * Call save/restore: B=p and C=value must survive the recursive call.
+ * Insert "push bc" after the board-address push (before arg pushes).
+ * Replace the existing "ld b,c" (loop counter recovery) with "pop bc"
+ * which simultaneously restores both B=p and C=value.
+ *
+ * Also shrinks the frame from 2 to 1 byte (only ix-2 = pieceMove remains):
+ * pass_shrink_minmax_frame1_after_value_c handles that.
+ */
+static int pass_minmax_value_c(void)
+{
+    int start, end, i, changed = 0;
+    char tmp[MAX_LINE];
+
+    if (!peep_in_function_range("_MinMax:", &start, &end))
+        return 0;
+
+    /* Guard: pass_minmax_loop_ctr_b must have committed (ld b,c present,
+     * no (ix-3) remaining).  If (ix-1) is already gone, nothing to do. */
+    {
+        int has_bc = 0, has_ix1 = 0;
+        for (i = start; i < end; i++) {
+            strip_peep_comment_copy(tmp, lines[i]);
+            if (!strcmp(tmp, "ld b,c"))        has_bc  = 1;
+            if (strstr(lines[i], "(ix-3)"))    return 0; /* loop_ctr_b not done */
+            if (strstr(lines[i], "(ix-1)"))    has_ix1 = 1;
+        }
+        if (!has_bc || !has_ix1) return 0;
+    }
+
+    /* Replace (ix-1) value references with C. */
+    for (i = start; i < end; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+
+        if (!strcmp(tmp, "ld (ix-1),2")) {
+            replace1_tagged(i, "ld c,2", "minmax_value_c"); changed = 1;
+        } else if (!strcmp(tmp, "ld (ix-1),9")) {
+            replace1_tagged(i, "ld c,9", "minmax_value_c"); changed = 1;
+        } else if (!strcmp(tmp, "cp (ix-1)")) {
+            replace1_tagged(i, "cp c",   "minmax_value_c"); changed = 1;
+        } else if (!strcmp(tmp, "ld (ix-1),a")) {
+            replace1_tagged(i, "ld c,a", "minmax_value_c"); changed = 1;
+        } else if (!strcmp(tmp, "ld a,(ix-1)")) {
+            replace1_tagged(i, "ld a,c", "minmax_value_c"); changed = 1;
+        } else if (!strcmp(tmp, "ld l,(ix-1)")) {
+            replace1_tagged(i, "ld l,c", "minmax_value_c"); changed = 1;
+        }
+    }
+
+    /* Insert "push bc" (save B=p, C=value) after the board-address push
+     * and before the move-arg setup.  The board-address push is the "push hl"
+     * that is immediately followed by "ld l,b" (move arg setup). */
+    for (i = start; i < end - 1; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strcmp(tmp, "push hl") != 0) continue;
+
+        strip_peep_comment_copy(tmp, lines[i + 1]);
+        if (strcmp(tmp, "ld l,b") != 0) continue;
+
+        insert_line_tagged(i + 1, "push bc", "minmax_value_c");
+        end++;
+        changed = 1;
+        i++;
+    }
+
+    /* Replace "ld b,c" (old loop counter recovery) with "pop bc" which
+     * now restores both B=p and C=value from the "push bc" inserted above.
+     * Pattern: "ld e,l" immediately followed by "ld b,c". */
+    for (i = start; i < end - 1; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strcmp(tmp, "ld e,l") != 0) continue;
+
+        strip_peep_comment_copy(tmp, lines[i + 1]);
+        if (strcmp(tmp, "ld b,c") != 0) continue;
+
+        replace1_tagged(i + 1, "pop bc", "minmax_value_c");
+        changed = 1;
+    }
+
+    return changed;
+}
+
+/*
+ * pass_shrink_minmax_frame1_after_value_c:
+ *
+ * After pass_minmax_value_c removes all (ix-1) references, the MinMax frame
+ * only needs 1 byte: (ix-2) = pieceMove.  The current "dec sp; dec sp"
+ * prologue (from the 2-byte frame) becomes a single "dec sp".
+ */
+static int pass_shrink_minmax_frame1_after_value_c(void)
+{
+    int start, end, i;
+    char tmp[MAX_LINE];
+
+    if (!peep_in_function_range("_MinMax:", &start, &end))
+        return 0;
+
+    for (i = start; i < end; i++) {
+        if (strstr(lines[i], "(ix-1)") != NULL)
+            return 0;
+        /* (ix-2) = pieceMove: still present, frame must stay at 2 bytes */
+        if (strstr(lines[i], "(ix-2)") != NULL)
+            return 0;
+    }
+
+    for (i = start; i + 1 < end; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strcmp(tmp, "dec sp") != 0) continue;
+        strip_peep_comment_copy(tmp, lines[i + 1]);
+        if (strcmp(tmp, "dec sp") != 0) continue;
+
+        delete_n(i + 1, 1);
+        return 1;
+    }
+
+    return 0;
+}
+
+/*
+ * pass_minmax_save_board_addr:
+ *
+ * In MinMax's blank-cell loop, &g_board[p] is computed twice: once before
+ * storing pieceMove and once after the recursive call to restore the cell.
+ * The address is in HL right after the first store, but HL is immediately
+ * clobbered by the arg setup for the recursive call.
+ *
+ * Before:
+ *   ld (hl),a                    ; g_board[p] = pieceMove  — HL = &g_board[p]
+ *   ld l,(ix-K)                  ; arg setup clobbers HL
+ *   ... (push 4 args)
+ *   call _MinMax
+ *   pop bc (×N)
+ *   ld e,l                       ; save score (E, not B — B is loop counter)
+ *   ld hl,_g_board               ; recompute &g_board[p]
+ *   ld e,(ix-K)
+ *   ld d,0
+ *   add hl,de
+ *   ld (hl),0                    ; g_board[p] = 0
+ *
+ * After:
+ *   ld (hl),a
+ *   push hl                      ; save address before arg clobber
+ *   ld l,(ix-K)
+ *   ... (push 4 args)
+ *   call _MinMax
+ *   pop bc (×N)
+ *   ld b,l
+ *   pop hl                       ; restore address — replaces 4-insn recompute
+ *   ld (hl),0
+ *
+ * Saves 47T (recompute) − 21T (push hl + pop hl) = 26T per blank cell visited.
+ */
+static int pass_minmax_save_board_addr(void)
+{
+    int start, end, i, j, changed = 0;
+    int K, k2, npopcnt;
+    char addr[128], tmp[MAX_LINE];
+
+    if (!peep_in_function_range("_MinMax:", &start, &end))
+        return 0;
+
+    for (i = start; i + 12 < end; i++) {
+        /* ld (hl),a — store pieceMove; HL = &g_board[p] */
+        if (!eq(i, "ld (hl),a")) continue;
+
+        /* Next must be ld l,(ix-K) — arg setup about to clobber HL */
+        if (!stride_parse_ld_r_ix_neg(lines[i + 1], 'l', &K)) continue;
+
+        /* Scan forward for call _MinMax (within 20 lines) */
+        for (j = i + 2; j < end && j < i + 20; j++)
+            if (eq(j, "call _MinMax")) break;
+        if (!eq(j, "call _MinMax")) continue;
+        j++;
+
+        /* Count consecutive pop bc */
+        npopcnt = 0;
+        while (j < end && eq(j, "pop bc")) { j++; npopcnt++; }
+        if (npopcnt == 0) continue;
+
+        /* ld e,l — score save (possibly tagged; E used by pass_minmax_score_e) */
+        strip_peep_comment_copy(tmp, lines[j]);
+        if (strcmp(tmp, "ld e,l") != 0) continue;
+        j++;
+
+        /* Recompute block: ld hl,_g_board; ld e,(ix-K); ld d,0; add hl,de */
+        if (!parse_ld_hl_imm(lines[j], addr))               continue;
+        if (strcmp(addr, "_g_board") != 0)                   continue; j++;
+        if (!stride_parse_ld_r_ix_neg(lines[j], 'e', &k2))  continue;
+        if (k2 != K)                                         continue; j++;
+        if (!eq(j, "ld d,0"))                               continue; j++;
+        if (!eq(j, "add hl,de"))                            continue; j++;
+
+        /* ld (hl),0 — restore board cell */
+        if (!eq(j, "ld (hl),0")) continue;
+
+        /* Pattern matched. Transform:
+         * - delete the 4-line recompute (at j-4 .. j-1)
+         * - insert pop hl before ld (hl),0
+         * - insert push hl after ld (hl),a (at i+1)
+         * Apply end-to-start to keep earlier indices valid. */
+        delete_n(j - 4, 4);
+        insert_line_tagged(j - 4, "pop hl", "minmax_save_board_addr");
+        insert_line(i + 1, "push hl");
+        changed = 1;
+    }
+
+    return changed;
+}
 
 static int pass_store_l_reload_a(void)
 {
@@ -6027,6 +6496,113 @@ static int pass_a_tracks_ix_byte(void)
 }
 
 /*
+ * pass_elim_redundant_ld_a_reg:
+ *
+ * Remove a "ld a,r" that is redundant because A already equals r.
+ *
+ * After "ld a,r", instructions that only affect flags (cp, jp) leave A
+ * unchanged.  A subsequent "ld a,r" for the same r is therefore dead.
+ *
+ * This fires twice in the MinMax inner loop after pass_minmax_score_b_cache
+ * promotes score into B.  The score-update branch pattern is:
+ *
+ *   ld a,b        ; score
+ *   cp (ix-1)     ; compare — does not touch A
+ *   jp z, L       ; conditional — does not touch A
+ *   jp c, L       ; conditional — does not touch A
+ *   ld a,b        ; ← redundant: A still equals B
+ *   ld (ix-1),a
+ *
+ * The window (12 lines) is kept small and only cp/jp are treated as
+ * A-transparent, so the rule is conservative and correct.
+ */
+static int pass_elim_redundant_ld_a_reg(void)
+{
+    int i, j, changed = 0;
+    char tmp[MAX_LINE], tmp2[MAX_LINE];
+    char r;
+
+    for (i = 0; i + 1 < nlines; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strncmp(tmp, "ld a,", 5) != 0)
+            continue;
+        r = tmp[5];
+        if (tmp[6] != 0)
+            continue;
+        if (r != 'b' && r != 'c' && r != 'd' &&
+            r != 'e' && r != 'h' && r != 'l')
+            continue;
+
+        for (j = i + 1; j < nlines && j < i + 12; j++) {
+            if (starts_label(lines[j]))
+                break;
+
+            strip_peep_comment_copy(tmp2, lines[j]);
+
+            if (strcmp(tmp2, tmp) == 0) {
+                delete_n(j, 1);
+                changed = 1;
+                break;
+            }
+
+            if (strncmp(tmp2, "cp ", 3) == 0)
+                continue;
+            if (strncmp(tmp2, "jp ", 3) == 0)
+                continue;
+            /* or a: A = A|A = A, value unchanged — transparent */
+            if (strcmp(tmp2, "or a") == 0)
+                continue;
+
+            break;
+        }
+    }
+
+    return changed;
+}
+
+/*
+ * pass_winner_check_dec_a:
+ *
+ * After the blank-cell test in MinMax's winner check, the piece identity
+ * test is: cp 1; jp nz, L_lose.  Since A holds the winner value (1 or 2)
+ * and is not live after the branch on either path, "dec a" is equivalent
+ * to "cp 1" for the NZ test but costs 4T instead of 7T (saves 3T).
+ *
+ * Detects (after pass_elim_redundant_ld_a_reg removes the intervening reload):
+ *
+ *   or a               ; Z if blank — A unchanged
+ *   jp z, L_blank
+ *   cp 1               ; ← replaced by dec a
+ *   jp nz, L_lose
+ *   ld hl,N            ; A not live on fall-through: safe to clobber with dec
+ */
+static int pass_winner_check_dec_a(void)
+{
+    int i, changed = 0;
+    char tmp[MAX_LINE], lab[128];
+
+    for (i = 0; i + 4 < nlines; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strcmp(tmp, "or a") != 0) continue;
+
+        if (!parse_jp_z_label(lines[i + 1], lab)) continue;
+
+        strip_peep_comment_copy(tmp, lines[i + 2]);
+        if (strcmp(tmp, "cp 1") != 0) continue;
+
+        if (!parse_jp_nz_label(lines[i + 3], lab)) continue;
+
+        /* ld hl,N immediately follows — confirms A is dead on fall-through */
+        if (!parse_ld_hl_imm(lines[i + 4], lab)) continue;
+
+        replace1_tagged(i + 2, "dec a", "winner_dec_a");
+        changed = 1;
+    }
+
+    return changed;
+}
+
+/*
  * pass_elim_redundant_ld_h_zero:
  *
  * Eliminate redundant "ld h,0" when H is already known to be zero.  DCC
@@ -6454,8 +7030,15 @@ int main(int argc, char **argv)
         if (pass_call_hl_stack_roundtrip()) changed = 1;
         if (pass_minmax_winner_result_no_temp()) changed = 1;
         if (pass_minmax_score_b_cache()) changed = 1;
+        if (pass_minmax_save_board_addr()) changed = 1;
+        if (pass_elim_redundant_ld_a_reg()) changed = 1;
+        if (pass_winner_check_dec_a()) changed = 1;
         if (pass_shrink_minmax_frame_after_callptr_temp_removed()) changed = 1;
         if (pass_shrink_minmax_frame3_after_score_cache()) changed = 1;
+        if (pass_minmax_loop_ctr_b()) changed = 1;
+        if (pass_shrink_minmax_frame2_after_loop_ctr_b()) changed = 1;
+        if (pass_minmax_value_c()) changed = 1;
+        if (pass_shrink_minmax_frame1_after_value_c()) changed = 1;
         if (pass_store_l_reload_a()) changed = 1;
         if (pass_reuse_board_addr_for_zero_store()) changed = 1;
         if (pass_array_base_push_to_de()) changed = 1;
@@ -6482,8 +7065,10 @@ int main(int argc, char **argv)
         if (pass_elim_redundant_ld_h_zero()) changed = 1;
         if (pass_elim_long_store_reload()) changed = 1;
         if (pass_branch_over_jump()) changed = 1;
+        if (pass_jump_thread()) changed = 1;
         if (pass_global_board_const_offsets()) changed = 1;
         if (pass_posfunc_ix1_to_b()) changed = 1;
+        if (pass_posfunc_collapse_b_setup()) changed = 1;
         if (pass_posfunc_b_cache()) changed = 1;
         if (pass_board_byte_eq_direct_load()) changed = 1;
         if (pass_lookforwinner_b_cache()) changed = 1;

@@ -1,7 +1,6 @@
 /*
     This app tests cp/m file system enumeration.
     It also tests the memory allocator and qsort for fun.
-    x_functions exist because the C runtime doesn't provide the normal versions.
 */
 
 #include <stdio.h>
@@ -10,15 +9,15 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-// One could instead use dcc's -c flag to compile these then assemble them to bsearch.rel, qsort.rel, and string.rel.
+// One could instead use dcc's -c flag to compile these then assemble them to bsearch.rel and qsort.rel
 // See mrel.bat / mrel.sh for an example of how to do that.
 // Then link those with something like this in ma.bat:
-//     ntvcm l80 /P:100,rtlmin,bsearch,qsort,string,%name%,%name%/N/E
+//     ntvcm l80 /P:100,rtlmin,bsearch,qsort,%name%,%name%/N/E
 
 #include <bsearch.c>
 #include <qsort.c>
 
-extern int bdos(int fn, int dearg);
+extern int bdos( int fn, int dearg );
 
 #ifdef _DCC_
 #define CPM80
@@ -87,10 +86,9 @@ uint32_t file_size( char * pfilename )
 {
     struct FCBCPM size_fcb;
     uint32_t size = 0;
-    int result;
 
     fcb_initialize( & size_fcb, pfilename );
-    result = bdos( 35, & size_fcb );
+    int result = bdos( 35, & size_fcb );
     if ( 0 == result )
     {
 #ifdef CPM80
@@ -127,7 +125,7 @@ int enumerate( char *pfile )
     char * pthis, ** presult;
     uint32_t fsize;
     char file[ 13 ];
-    static char * list[ 200 ];
+    static char * list[ 400 ];
 
     if ( ! fcb_initialize( & the_fcb, pfile ) )
         return false;
@@ -169,7 +167,7 @@ int enumerate( char *pfile )
 
     if ( 255 != result )
     {
-        printf( "unexpected result from find first: %d\n", result );
+        printf( "unexpected result from find first -- is the list array large enough?: %d\n", result );
         return false;
     }
 

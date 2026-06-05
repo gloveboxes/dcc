@@ -5,19 +5,19 @@
 
 int main(void)
 {
-    DIR *d;
-    struct dirent *dir;
-    int count;
-
-    d = opendir(".");
-    if (d == NULL) {
+    DIR * d = opendir(".");
+    if ( 0 == d )
+    {
         perror("opendir");
         return 1;
     }
 
-    count = 0;
+    int count = 0;
     int ok = 0;
-    while ((dir = readdir(d)) != NULL) {
+    struct dirent *dir;
+
+    while ((dir = readdir(d)) != NULL)
+    {
         //printf("%s\n", dir->d_name);
         if ( !strcmp( dir->d_name, "TDIRENT.COM" ) )
             ok = 1;

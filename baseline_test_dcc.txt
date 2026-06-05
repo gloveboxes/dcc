@@ -3065,8 +3065,8 @@ argv[ 4 ]: 'DDDD'
 argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
-__DATE__ Jun  3 2026
-__TIME__ 19:13:30
+__DATE__ Jun  5 2026
+__TIME__ 09:19:36
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3637,3 +3637,89 @@ test tlongsub
 tlongsub passed with great success
 test treg
 success
+test tret
+signed 8 to
+    i8_t a: -1
+    i8_t b: 69
+    i16_t a: -1
+    i16_t b: 69
+    i32_t a: -1
+    i32_t b: 69
+signed 16 to
+    i8_t a: -1
+    i8_t b: 69
+    i16_t a: -1
+    i16_t b: 69
+    i32_t a: -1
+    i32_t b: 69
+signed 32 to
+    i8_t a: -1
+    i8_t b: 69
+    i16_t a: -1
+    i16_t b: 69
+    i32_t a: -1
+    i32_t b: 69
+signed 8 to
+    ui8_t a: 255
+    ui8_t b: 69
+    ui16_t a: 65535
+    ui16_t b: 69
+    ui32_t a: 4294967295
+    ui32_t b: 69
+signed 16 to
+    ui8_t a: 255
+    ui8_t b: 69
+    ui16_t a: 65535
+    ui16_t b: 69
+    ui32_t a: 4294967295
+    ui32_t b: 69
+signed 32 to
+    ui8_t a: 255
+    ui8_t b: 69
+    ui16_t a: 65535
+    ui16_t b: 69
+    ui32_t a: 4294967295
+    ui32_t b: 69
+unsigned 8 to
+    i8_t a: -1
+    i8_t b: 69
+    i16_t a: 255
+    i16_t b: 69
+    i32_t a: 255
+    i32_t b: 69
+unsigned 16 to
+    i8_t a: -1
+    i8_t b: 69
+    i16_t a: -1
+    i16_t b: 69
+    i32_t a: 65535
+    i32_t b: 69
+unsigned 32 to
+    i8_t a: -1
+    i8_t b: 69
+    i16_t a: -1
+    i16_t b: 69
+    i32_t a: -1
+    i32_t b: 69
+unsigned 8 to
+    ui8_t a: 255
+    ui8_t b: 69
+    ui16_t a: 255
+    ui16_t b: 69
+    ui32_t a: 255
+    ui32_t b: 69
+unsigned 16 to
+    ui8_t a: 255
+    ui8_t b: 69
+    ui16_t a: 65535
+    ui16_t b: 69
+    ui32_t a: 65535
+    ui32_t b: 69
+unsigned 32 to
+    ui8_t a: 255
+    ui8_t b: 69
+    ui16_t a: 65535
+    ui16_t b: 69
+    ui32_t a: 4294967295
+    ui32_t b: 69
+    tret completed with great success

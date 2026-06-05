@@ -182,7 +182,7 @@ ttt_t LookForWinner()
 
 uint32_t g_Moves = 0;
 
-int MinMax( ttt_t alpha, ttt_t beta, ttt_t depth, ttt_t move )
+ttt_t MinMax( ttt_t alpha, ttt_t beta, ttt_t depth, ttt_t move )
 {
     ttt_t value, pieceMove, p, score;
 

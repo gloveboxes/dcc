@@ -223,6 +223,8 @@ static void make_inc_sp_lines(char *out, int n)
     }
 }
 
+static int jump_target(const char *s, char *out);
+
 static int is_uncond_jp(const char *s)
 {
     const char *p;
@@ -255,7 +257,8 @@ static int is_jp_to_next_label(int i)
     if (!starts_label(lines[i + 1]))
         return 0;
 
-    strcpy(target, lines[i] + 3);
+    if (!jump_target(lines[i], target))
+        return 0;
     strcpy(label, lines[i + 1]);
     n = (int)strlen(label);
     if (n > 0 && label[n - 1] == ':')
@@ -1446,7 +1449,60 @@ static int pass_posfunc_b_cache(void)
     return changed;
 }
 
+/*
+ * pass_posfunc_byte_return:
+ *
+ * pos*func returns ttt_t (uint8_t); the caller reads only L.  DCC emits:
+ *
+ *   ld l,b / ld l,r
+ *   ld h,0           <- H is not read; eliminate
+ *   jp Lend
+ *   ...
+ *   ld hl,0          <- change to ld l,0 (H not read)
+ *   Lend:
+ *   ret
+ *
+ * Saves 7T on success path (remove ld h,0) and 3T on fail path (ld l,0).
+ */
+static int pass_posfunc_byte_return(void)
+{
+    int i, j, end, changed = 0;
+    char tmp[MAX_LINE];
 
+    for (i = 0; i < nlines; i++) {
+        if (!peep_is_pos_func_label(lines[i]))
+            continue;
+
+        end = i + 1;
+        while (end < nlines && !peep_is_public_line(lines[end]))
+            end++;
+
+        /* Within the posfunc body, apply two transforms. */
+        for (j = i + 1; j < end; j++) {
+            strip_peep_comment_copy(tmp, lines[j]);
+
+            /* ld l,r; ld h,0 -> ld l,r (remove ld h,0) */
+            if (j + 1 < end &&
+                (strncmp(tmp, "ld l,", 5) == 0 && tmp[6] == 0) &&
+                eq(j + 1, "ld h,0")) {
+                delete_n(j + 1, 1);
+                end--;
+                replace1_tagged(j, lines[j], "posfunc_byte_return");
+                changed = 1;
+                continue;
+            }
+
+            /* ld hl,0 -> ld l,0 (H not read by caller) */
+            if (strcmp(tmp, "ld hl,0") == 0) {
+                replace1_tagged(j, "ld l,0", "posfunc_byte_return");
+                changed = 1;
+                continue;
+            }
+        }
+    }
+
+    return changed;
+}
 
 static int pass_lookforwinner_b_cache(void)
 {
@@ -2916,6 +2972,102 @@ static int pass_cp_zero_to_or_a(void)
     return changed;
 }
 
+
+/*
+ * Narrow a byte value compared as a zero-extended 16-bit integer to a direct
+ * 8-bit CP.  DCC often emits this after the usual integer promotions:
+ *
+ *     ld l,(ix+N)
+ *     ld h,0
+ *     ld de,K
+ *     or a
+ *     sbc hl,de
+ *     jp cc,L
+ *
+ * or, for signed int comparisons, with the standard xor-80h bias before the
+ * subtraction.  When the left operand was explicitly zero-extended from a
+ * byte, both forms have the same Z/C result as:
+ *
+ *     ld a,(ix+N)
+ *     cp K
+ *     jp cc,L
+ *
+ * JP does not alter flags, so this is also safe when the compiler emits two
+ * adjacent flag checks after the compare, such as jp z,L / jp c,L.
+ */
+static int pass_zeroext_byte_cmp_const(void)
+{
+    int i;
+    int changed;
+    int imm;
+    char off[32];
+    char newline[128];
+
+    changed = 0;
+
+    for (i = 0; i + 5 < nlines; ++i) {
+        if (!peep_parse_ld_l_ix(lines[i], off))
+            continue;
+        if (!eq(i + 1, "ld h,0"))
+            continue;
+        if (!peep_parse_ld_de_0_to_255(lines[i + 2], &imm))
+            continue;
+
+        /* Plain unsigned 16-bit subtract compare. */
+        if (eq(i + 3, "or a") &&
+            eq(i + 4, "sbc hl,de") &&
+            (strncmp(lines[i + 5], "jp z,", 5) == 0 ||
+             strncmp(lines[i + 5], "jp nz,", 6) == 0 ||
+             strncmp(lines[i + 5], "jp c,", 5) == 0 ||
+             strncmp(lines[i + 5], "jp nc,", 6) == 0)) {
+            sprintf(newline, "ld a,(ix%s)", off);
+            replace1_tagged(i, newline, "zeroext_byte_cmp_const");
+            if (imm == 0)
+                replace1(i + 1, "or a");
+            else {
+                sprintf(newline, "cp %d", imm);
+                replace1(i + 1, newline);
+            }
+            replace1(i + 2, lines[i + 5]);
+            delete_n(i + 3, 3);
+            changed = 1;
+            if (i > 0) --i;
+            continue;
+        }
+
+        /* Signed compare bias around the same zero-extended byte value. */
+        if (i + 11 < nlines &&
+            eq(i + 3, "ld a,h") &&
+            eq(i + 4, "xor 80h") &&
+            eq(i + 5, "ld h,a") &&
+            eq(i + 6, "ld a,d") &&
+            eq(i + 7, "xor 80h") &&
+            eq(i + 8, "ld d,a") &&
+            eq(i + 9, "or a") &&
+            eq(i + 10, "sbc hl,de") &&
+            (strncmp(lines[i + 11], "jp z,", 5) == 0 ||
+             strncmp(lines[i + 11], "jp nz,", 6) == 0 ||
+             strncmp(lines[i + 11], "jp c,", 5) == 0 ||
+             strncmp(lines[i + 11], "jp nc,", 6) == 0)) {
+            sprintf(newline, "ld a,(ix%s)", off);
+            replace1_tagged(i, newline, "zeroext_byte_cmp_const");
+            if (imm == 0)
+                replace1(i + 1, "or a");
+            else {
+                sprintf(newline, "cp %d", imm);
+                replace1(i + 1, newline);
+            }
+            replace1(i + 2, lines[i + 11]);
+            delete_n(i + 3, 9);
+            changed = 1;
+            if (i > 0) --i;
+            continue;
+        }
+    }
+
+    return changed;
+}
+
 static int pass_inline_simple_call_hl_from_loaded_pointer(void)
 {
     int i;
@@ -3490,6 +3642,343 @@ static int pass_shrink_minmax_frame1_after_value_c(void)
 
     return 0;
 }
+
+/*
+ * pass_minmax_byte_returns:
+ *
+ * MinMax is declared as returning int, but every value it returns fits in a
+ * byte (SCORE_WIN=6, SCORE_LOSE=4, SCORE_TIE=5, value=2..9).  Every caller
+ * either discards the result (FindSolution) or reads only the low byte L:
+ *
+ *   ld e,l  ; peep: minmax_score_e
+ *
+ * so H is never read.  Within _MinMax, eliminate all "ld h,0" that exist
+ * purely to zero-extend the return value, and shrink "ld hl,N; jp Lret" to
+ * "ld l,N; jp Lret" for the constant-score returns (saves 3T each).
+ *
+ * The exit point is the label L immediately before "ld sp,ix; pop ix; ret".
+ * All return paths "jp L" or fall through to L.
+ */
+static int pass_minmax_byte_returns(void)
+{
+    int start, end, i, changed = 0;
+    char exit_label[128];
+    char tmp[MAX_LINE];
+    int exit_label_line = -1;
+
+    if (!peep_in_function_range("_MinMax:", &start, &end))
+        return 0;
+
+    /* Find the exit label: the last label before "ld sp,ix; pop ix; ret". */
+    for (i = end - 1; i >= start; i--) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strcmp(tmp, "ld sp,ix") == 0 && i > start) {
+            /* Walk back over pop ix (and any other trailing insns) to find label */
+            int k = i - 1;
+            while (k >= start) {
+                strip_peep_comment_copy(tmp, lines[k]);
+                if (starts_label(lines[k])) {
+                    if (label_name_at(k, exit_label)) {
+                        exit_label_line = k;
+                    }
+                    break;
+                }
+                k--;
+            }
+            break;
+        }
+    }
+    if (exit_label_line < 0)
+        return 0;
+
+    /* 1. Remove "ld h,0" immediately followed by "jp {exit_label}". */
+    for (i = start; i + 1 < end; i++) {
+        if (!eq(i, "ld h,0"))
+            continue;
+        strip_peep_comment_copy(tmp, lines[i + 1]);
+        {
+            char lab[128];
+            if (peep_parse_jp_uncond_label(tmp, lab) &&
+                strcmp(lab, exit_label) == 0) {
+                delete_n(i, 1);
+                end--;
+                replace1_tagged(i, lines[i], "minmax_byte_ret");
+                changed = 1;
+                if (i > start) i--;
+            }
+        }
+    }
+
+    /* 2. Remove "ld h,0" that immediately precedes the exit label itself
+     *    (the fall-through path at end of loop). */
+    for (i = start; i + 1 < end; i++) {
+        if (!eq(i, "ld h,0"))
+            continue;
+        if (line_is_label_name(i + 1, exit_label)) {
+            delete_n(i, 1);
+            end--;
+            exit_label_line--;
+            changed = 1;
+            if (i > start) i--;
+        }
+    }
+
+    /* 3. Replace "ld hl,N; jp {exit_label}" with "ld l,N; jp {exit_label}"
+     *    for constant score returns (N fits in a byte). */
+    for (i = start; i + 1 < end; i++) {
+        int imm;
+        char lab[128];
+        if (!peep_parse_ld_hl_0_to_255(lines[i], &imm))
+            continue;
+        strip_peep_comment_copy(tmp, lines[i + 1]);
+        if (!peep_parse_jp_uncond_label(tmp, lab))
+            continue;
+        if (strcmp(lab, exit_label) != 0)
+            continue;
+        sprintf(tmp, "ld l,%d", imm);
+        replace1_tagged(i, tmp, "minmax_byte_ret");
+        changed = 1;
+    }
+
+    return changed;
+}
+
+/*
+ * pass_minmax_pack_args:
+ *
+ * MinMax takes 4 ttt_t (uint8_t) parameters: alpha, beta, depth, move.
+ * DCC passes each as a 16-bit word with H=0, using 4 pushes (8 bytes).
+ * We can pack them into 2 words like ZCC does, saving ~46T per recursive call.
+ *
+ * New stack layout (low offset = top of stack = most-recently pushed):
+ *   ix+4 = L of push hl = alpha (was ix+4)
+ *   ix+5 = H of push hl = beta  (was ix+6)
+ *   ix+6 = C of push bc = depth (was ix+8)
+ *   ix+7 = B of push bc = move  (was ix+10)
+ *
+ * Phase 1: translate all frame accesses inside _MinMax (and _FindSolution).
+ * Phase 2: transform the recursive self-call from 4 separate pushes to 2 packed.
+ * Phase 3: transform FindSolution's call to MinMax to match the new convention.
+ *
+ * All three phases run in sequence within a single pass function.
+ *
+ * Guard: only runs while (ix+10) references still exist in _MinMax.
+ * After phase 1 fires, (ix+10) is gone and the guard prevents re-firing.
+ */
+
+/* Helper: replace first occurrence of 'from' in 'buf' with 'to' (may differ in length). */
+static void pack_str_replace(char *buf, const char *from, const char *to)
+{
+    char *p = strstr(buf, from);
+    if (!p) return;
+    size_t fl = strlen(from), tl = strlen(to);
+    memmove(p + tl, p + fl, strlen(p + fl) + 1);
+    memcpy(p, to, tl);
+}
+
+/* pass_minmax_pack_frame: Phase 1 only.
+ * Translate ix+6→ix+5 (beta), ix+8→ix+6 (depth), ix+10→ix+7 (move)
+ * within _MinMax to prepare for the packed 2-word calling convention.
+ * Fires only while (ix+10) still exists. */
+static int pass_minmax_pack_frame(void)
+{
+    int start, end, i, changed = 0;
+    char newline[MAX_LINE];
+
+    if (!peep_in_function_range("_MinMax:", &start, &end))
+        return 0;
+
+    /* Guard: only run while (ix+10) references still exist. */
+    {
+        int has_ix10 = 0;
+        for (i = start; i < end; i++)
+            if (strstr(lines[i], "(ix+10)")) { has_ix10 = 1; break; }
+        if (!has_ix10) return 0;
+    }
+
+    /* Process in order: ix+6→ix+5 first (old beta), then ix+8→ix+6 (depth),
+     * then ix+10→ix+7 (move).  Ordering prevents double-translation. */
+    for (i = start; i < end; i++) {
+        int any = 0;
+        strcpy(newline, lines[i]);
+
+        if (strstr(newline, "(ix+6)")) {
+            pack_str_replace(newline, "(ix+6)", "(ix+5)"); any = 1;
+        }
+        if (strstr(newline, "(ix+8)")) {
+            pack_str_replace(newline, "(ix+8)", "(ix+6)"); any = 1;
+        }
+        if (strstr(newline, "(ix+10)")) {
+            pack_str_replace(newline, "(ix+10)", "(ix+7)"); any = 1;
+        }
+        if (any) { replace1(i, newline); changed = 1; }
+    }
+
+    return changed;
+}
+
+/* pass_minmax_pack_call: Phase 2 + Phase 3.
+ * Transforms the recursive self-call from 4 separate 16-bit pushes to 2
+ * packed word pushes, and updates FindSolution's call similarly.
+ * Fires only after pass_minmax_pack_frame has run (ix+10 gone, ix+5 present). */
+static int pass_minmax_pack_call(void)
+{
+    int start, end, i, changed = 0;
+    char newline[MAX_LINE];
+
+    if (!peep_in_function_range("_MinMax:", &start, &end))
+        return 0;
+
+    /* Guard: only run after frame translation (ix+10 gone, ix+5 present). */
+    {
+        int has_ix10 = 0, has_ix5 = 0;
+        for (i = start; i < end; i++) {
+            if (strstr(lines[i], "(ix+10)")) { has_ix10 = 1; break; }
+            if (strstr(lines[i], "(ix+5)"))   has_ix5 = 1;
+        }
+        if (has_ix10 || !has_ix5) return 0;
+    }
+
+    /* ---- Phase 2: transform the recursive call inside _MinMax ----
+     *
+     * Pattern (after phase 1 has updated offsets):
+     *   push hl               ; board-addr save (from pass_minmax_save_board_addr)
+     *   push bc               ; {B=p, C=value} save (from pass_minmax_value_c)
+     *   ld l,b                ; L = p (move arg)
+     *   ld h,0
+     *   push hl               ; push {move, 0}
+     *   ld a,(ix+6)           ; depth  (ix+8 → ix+6 after phase 1)
+     *   add a,1
+     *   ld l,a
+     *   push hl               ; push {depth+1, 0}
+     *   ld l,(ix+5)           ; beta   (ix+6 → ix+5 after phase 1)
+     *   push hl               ; push {beta, 0}
+     *   ld l,(ix+4)           ; alpha
+     *   push hl               ; push {alpha, 0}
+     *   call _MinMax
+     *   pop bc (×4)
+     *
+     * Replaced with:
+     *   push hl
+     *   push bc
+     *   ld a,(ix+6)           ; depth
+     *   inc a                 ; depth+1 (was add a,1)
+     *   ld c,a                ; C = depth+1
+     *   push bc               ; packed {B=p=move, C=depth+1}
+     *   ld h,(ix+5)           ; H = beta
+     *   ld l,(ix+4)           ; L = alpha
+     *   push hl               ; packed {alpha, beta}
+     *   call _MinMax
+     *   pop af                ; clear {alpha, beta}
+     *   pop af                ; clear {move, depth+1}
+     */
+    for (i = start; i + 14 < end; i++) {
+        int j, npopcnt;
+
+        if (!eq(i,     "push hl"))        continue;
+        if (!eq(i + 1, "push bc"))        continue;
+        if (!eq(i + 2, "ld l,b"))         continue;
+        if (!eq(i + 3, "ld h,0"))         continue;
+        if (!eq(i + 4, "push hl"))        continue;
+        if (!eq(i + 5, "ld a,(ix+6)"))    continue; /* depth */
+        if (!eq(i + 6, "add a,1"))        continue;
+        if (!eq(i + 7, "ld l,a"))         continue;
+        if (!eq(i + 8, "push hl"))        continue;
+        if (!eq(i + 9, "ld l,(ix+5)"))    continue; /* beta */
+        if (!eq(i + 10, "push hl"))       continue;
+        if (!eq(i + 11, "ld l,(ix+4)"))   continue; /* alpha */
+        if (!eq(i + 12, "push hl"))       continue;
+        if (!eq(i + 13, "call _MinMax"))  continue;
+        j = i + 14;
+        npopcnt = 0;
+        while (j < end && eq(j, "pop bc")) { j++; npopcnt++; }
+        if (npopcnt != 4) continue;
+
+        /* Transform in-place (9 lines → shrinks by 3: remove 3 old lines, no insertion) */
+        replace1_tagged(i,      "push hl",         "pack_args");
+        replace1(i + 1,         "push bc");
+        replace1(i + 2,         "ld a,(ix+6)");    /* depth */
+        replace1(i + 3,         "inc a");           /* depth+1 (was add a,1 + ld l,a) */
+        replace1(i + 4,         "ld c,a");
+        replace1(i + 5,         "push bc");         /* packed {p=move, depth+1} */
+        replace1(i + 6,         "ld h,(ix+5)");     /* beta */
+        replace1(i + 7,         "ld l,(ix+4)");     /* alpha */
+        replace1(i + 8,         "push hl");         /* packed {alpha, beta} */
+        replace1(i + 9,         "call _MinMax");
+        replace1(i + 10,        "pop af");          /* clear {alpha,beta} */
+        replace1(i + 11,        "pop af");          /* clear {move,depth+1} */
+        delete_n(i + 12, j - (i + 12));            /* remove extra pop bc lines */
+        changed = 1;
+    }
+
+    /* ---- Phase 3: transform FindSolution's call to _MinMax ----
+     *
+     * Pattern:
+     *   ld l,(ix+4)           ; position (move)
+     *   ld h,0
+     *   push hl               ; push {move, 0}
+     *   ld hl,0               ; depth = 0
+     *   push hl
+     *   ld hl,9               ; beta = SCORE_MAX
+     *   push hl
+     *   ld hl,2               ; alpha = SCORE_MIN
+     *   push hl
+     *   call _MinMax
+     *   pop bc (×4)
+     *
+     * Replaced with:
+     *   ld h,9                ; beta = SCORE_MAX
+     *   ld l,2                ; alpha = SCORE_MIN
+     *   push hl               ; packed {alpha=2, beta=9}
+     *   ld b,(ix+4)           ; B = move = position
+     *   ld c,0                ; C = depth = 0
+     *   push bc               ; packed {move, depth}
+     *   call _MinMax
+     *   pop af                ; clear {alpha, beta}
+     *   pop af                ; clear {move, depth}
+     */
+    {
+        int fs_start, fs_end;
+        if (peep_in_function_range("_FindSolution:", &fs_start, &fs_end)) {
+            for (i = fs_start; i + 12 < fs_end; i++) {
+                int j, npopcnt;
+                char off[32];
+
+                if (!peep_parse_ld_l_ix(lines[i], off)) continue;
+                if (!eq(i + 1, "ld h,0"))         continue;
+                if (!eq(i + 2, "push hl"))         continue;
+                if (!eq(i + 3, "ld hl,0"))         continue;
+                if (!eq(i + 4, "push hl"))         continue;
+                if (!eq(i + 5, "ld hl,9"))         continue;
+                if (!eq(i + 6, "push hl"))         continue;
+                if (!eq(i + 7, "ld hl,2"))         continue;
+                if (!eq(i + 8, "push hl"))         continue;
+                if (!eq(i + 9, "call _MinMax"))    continue;
+                j = i + 10;
+                npopcnt = 0;
+                while (j < fs_end && eq(j, "pop bc")) { j++; npopcnt++; }
+                if (npopcnt != 4) continue;
+
+                /* Transform: push {move,depth} FIRST, {alpha,beta} LAST
+                 * so callee sees ix+4=alpha, ix+5=beta, ix+6=depth, ix+7=move */
+                sprintf(newline, "ld b,(ix%s)", off);
+                replace1_tagged(i,     newline,             "pack_args_fs");  /* B=move */
+                replace1(i + 1,        "ld c,0");                              /* C=depth */
+                replace1(i + 2,        "push bc");           /* {move,depth} → ix+6,ix+7 */
+                replace1(i + 3,        "ld h,9");            /* H=beta */
+                replace1(i + 4,        "ld l,2");            /* L=alpha */
+                replace1(i + 5,        "push hl");           /* {alpha,beta} → ix+4,ix+5 */
+                replace1(i + 6,        "call _MinMax");
+                replace1(i + 7,        "pop af");
+                replace1(i + 8,        "pop af");
+                delete_n(i + 9, j - (i + 9));
+                changed = 1;
+            }
+        }
+    }
+
+    return changed;
+}  /* pass_minmax_pack_call */
 
 /*
  * pass_minmax_save_board_addr:
@@ -6561,6 +7050,210 @@ static int pass_elim_redundant_ld_a_reg(void)
 }
 
 /*
+ * pass_minmax_elim_label_reload:
+ *
+ * Eliminate a redundant "ld a,r" that appears immediately after a label
+ * when A already holds the value of r from before the conditional jump
+ * that targets that label.
+ *
+ * Pattern:
+ *   ld a,r          ; A = r
+ *   [cp/jp seq]
+ *   jp cond, Lx     ; A unchanged on taken path
+ *   [don't care]
+ *   Lx:
+ *   ld a,r          ; ← redundant: A is still r on the taken path
+ *
+ * This fires on the MinMax score-vs-SCORE_WIN check:
+ *   ld a,e
+ *   cp 6
+ *   jp nz, L221
+ *   ld hl,6
+ *   jp L202
+ *   L221:
+ *   ld a,e          ; ← eliminated (A=E from before jp nz)
+ */
+static int pass_minmax_elim_label_reload(void)
+{
+    int i, j, k, changed = 0;
+    char tmp[MAX_LINE], tmp2[MAX_LINE], cond[16], lab[128];
+    char r;
+
+    for (i = 0; i + 1 < nlines; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strncmp(tmp, "ld a,", 5) != 0)
+            continue;
+        r = tmp[5];
+        if (tmp[6] != 0)
+            continue;
+        if (r != 'b' && r != 'c' && r != 'd' &&
+            r != 'e' && r != 'h' && r != 'l')
+            continue;
+
+        /* Scan forward through transparent instructions for a conditional jump */
+        for (j = i + 1; j < nlines && j < i + 8; j++) {
+            strip_peep_comment_copy(tmp2, lines[j]);
+
+            /* Found a conditional jp — check its target label */
+            if (peep_parse_any_cond_jump(tmp2, cond, lab)) {
+                /* Search for the label within a reasonable window */
+                for (k = j + 1; k < nlines && k < j + 25; k++) {
+                    if (!line_is_label_name(k, lab))
+                        continue;
+                    /* Skip any consecutive labels */
+                    while (k + 1 < nlines && starts_label(lines[k + 1]))
+                        k++;
+                    /* If the next instruction after the label is ld a,r (same r) */
+                    if (k + 1 < nlines) {
+                        strip_peep_comment_copy(tmp2, lines[k + 1]);
+                        if (strcmp(tmp2, tmp) == 0) {
+                            delete_n(k + 1, 1);
+                            changed = 1;
+                        }
+                    }
+                    break;
+                }
+                break;
+            }
+
+            /* Transparent: cp, or a */
+            if (strncmp(tmp2, "cp ", 3) == 0)
+                continue;
+            if (strcmp(tmp2, "or a") == 0)
+                continue;
+            break;
+        }
+    }
+
+    return changed;
+}
+
+/*
+ * pass_elim_c_reload_after_store:
+ *
+ * After "ld c,a", registers A and C hold the same value.  A subsequent
+ * "ld a,c" is therefore redundant if A and C have not been modified between.
+ *
+ * Handles the dead-code crossing for the MinMax value-update pattern:
+ *   ld c,a          ; value = score; A = C = score
+ *   cp (ix+6)       ; A unchanged
+ *   jp c, L227      ; conditional (taken = score < beta)
+ *   ld l,a          ; success path (not taken)
+ *   ld h,0
+ *   jp L202         ; → enters dead code
+ *   L227:           ; label after dead code → safe to cross
+ *   ld a,c          ; ← redundant: A = C = score still
+ */
+static int pass_elim_c_reload_after_store(void)
+{
+    int i, j, changed = 0;
+    char tmp2[MAX_LINE];
+    int in_dead;
+
+    for (i = 0; i + 1 < nlines; i++) {
+        if (!eq(i, "ld c,a"))
+            continue;
+
+        in_dead = 0;
+        for (j = i + 1; j < nlines && j < i + 20; j++) {
+            if (starts_label(lines[j])) {
+                if (in_dead) { in_dead = 0; continue; }
+                break;
+            }
+
+            strip_peep_comment_copy(tmp2, lines[j]);
+
+            if (strcmp(tmp2, "ld a,c") == 0 && !in_dead) {
+                delete_n(j, 1);
+                changed = 1;
+                break;
+            }
+
+            if (in_dead)
+                continue;
+
+            if (strncmp(tmp2, "cp ", 3) == 0) continue;
+            if (strncmp(tmp2, "jp ", 3) == 0) {
+                /* Unconditional jp → dead code starts after it */
+                if (strchr(tmp2 + 3, ',') == NULL)
+                    in_dead = 1;
+                continue;
+            }
+            if (strcmp(tmp2, "or a") == 0) continue;
+            if (strcmp(tmp2, "ld l,a") == 0) continue;
+            if (strcmp(tmp2, "ld h,a") == 0) continue;
+            if (strcmp(tmp2, "ld h,0") == 0) continue;
+            if (strcmp(tmp2, "ld l,0") == 0) continue;
+
+            break;
+        }
+    }
+
+    return changed;
+}
+
+/*
+ * pass_and1_ix_to_bit:
+ *
+ * Replace "ld a,(ix+K); and 1; jp z/nz, L" with "bit 0,(ix+K); jp z/nz, L".
+ *
+ * "bit 0,(ix+K)" is 20T vs "ld a,(ix+K); and 1" = 19+7 = 26T: saves 6T.
+ * Safe when A is dead on both targets, which holds in MinMax where the
+ * depth&1 branch is always followed by "ld a,e" or similar.
+ */
+static int pass_and1_ix_to_bit(void)
+{
+    int i, changed = 0;
+    const char *p;
+    char kstr[32], new_bit[64], tmp[MAX_LINE];
+    int ki;
+    char lab[128];
+
+    for (i = 0; i + 2 < nlines; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strncmp(tmp, "ld a,(ix", 8) != 0)
+            continue;
+        p = tmp + 8;
+        ki = 0;
+        while (*p && *p != ')' && ki < 30)
+            kstr[ki++] = *p++;
+        kstr[ki] = 0;
+        if (*p != ')' || p[1] != 0)
+            continue;
+
+        /* "ld a,(ix+K); and 1; jp z/nz" → "bit 0,(ix+K); jp z/nz" */
+        if (eq(i + 1, "and 1") &&
+            (parse_jp_z_label(lines[i + 2], lab) ||
+             parse_jp_nz_label(lines[i + 2], lab))) {
+            sprintf(new_bit, "bit 0,(ix%s)", kstr);
+            replace1_tagged(i, new_bit, "and1_to_bit");
+            delete_n(i + 1, 1);
+            changed = 1;
+            if (i > 0) i--;
+            continue;
+        }
+
+        /* "ld a,(ix+K); cp 8; jp nz, L" → "bit 3,(ix+K); jp z, L"
+         * Valid for depth values 0-8: bit3 is set only at depth=8.
+         * jp nz (jump if depth!=8) ≡ jp z after bit 3 (jump if bit3=0).
+         * A is dead on both branch targets (next insn loads it fresh). */
+        if (eq(i + 1, "cp 8") &&
+            parse_jp_nz_label(lines[i + 2], lab)) {
+            char newjp[MAX_LINE];
+            sprintf(new_bit, "bit 3,(ix%s)", kstr);
+            sprintf(newjp, "jp z, %s", lab);
+            replace1_tagged(i, new_bit, "cp8_to_bit3");
+            replace1(i + 1, newjp);
+            delete_n(i + 2, 1);
+            changed = 1;
+            if (i > 0) i--;
+            continue;
+        }
+    }
+    return changed;
+}
+
+/*
  * pass_winner_check_dec_a:
  *
  * After the blank-cell test in MinMax's winner check, the piece identity
@@ -6592,8 +7285,15 @@ static int pass_winner_check_dec_a(void)
 
         if (!parse_jp_nz_label(lines[i + 3], lab)) continue;
 
-        /* ld hl,N immediately follows — confirms A is dead on fall-through */
-        if (!parse_ld_hl_imm(lines[i + 4], lab)) continue;
+        /* ld hl,N or ld l,N immediately follows — confirms A is dead on fall-through */
+        {
+            int imm;
+            char t4[MAX_LINE];
+            strip_peep_comment_copy(t4, lines[i + 4]);
+            if (!parse_ld_hl_imm(lines[i + 4], lab) &&
+                (strncmp(t4, "ld l,", 5) != 0))
+                continue;
+        }
 
         replace1_tagged(i + 2, "dec a", "winner_dec_a");
         changed = 1;
@@ -6805,6 +7505,120 @@ static int parse_ix_off_numeric(const char *off, int *val)
     return *endp == 0;
 }
 
+
+/*
+ * pass_findsolution_clear_board_loop:
+ *
+ * DCC emits the source-level portable loop
+ *
+ *     for (i = 0; i < 9; i++)
+ *         g_board[i] = 0;
+ *
+ * with a 16-bit size_t local counter.  In the tic-tac-toe benchmark this
+ * becomes a very small fixed byte-array clear, and the local counter is not
+ * used after the loop.  Recognize the complete generated loop and replace it
+ * with a byte-counted Z80 loop:
+ *
+ *     xor a
+ *     ld hl,_g_board
+ *     ld b,9
+ *   Lhead:
+ *     ld (hl),a
+ *     inc hl
+ *     djnz Lhead
+ *
+ * This deliberately matches the whole loop including the counter test and
+ * increment labels, so it does not depend on a general induction-variable
+ * proof in the compiler front end.
+ */
+static int pass_findsolution_clear_board_loop(void)
+{
+    int i;
+    int changed;
+    char loff[32], hoff[32], loff2[32], hoff2[32];
+    char lhead[128], lcont[128], lab[128];
+    int v;
+
+    changed = 0;
+
+    for (i = 0; i + 18 < nlines; ++i) {
+        if (!eq(i, "ld hl,0"))
+            continue;
+        if (!peep_parse_st_ix_pair(lines[i + 1], lines[i + 2], &v))
+            continue;
+
+        peep_format_ix_off(loff, v);
+        peep_format_ix_off(hoff, v + 1);
+
+        if (!label_name_at(i + 3, lhead))
+            continue;
+        if (!peep_parse_ld_l_ix(lines[i + 4], loff2) || strcmp(loff2, loff) != 0)
+            continue;
+        if (!peep_parse_ld_h_ix(lines[i + 5], hoff2) || strcmp(hoff2, hoff) != 0)
+            continue;
+        if (!eq(i + 6, "ld de,_g_board"))
+            continue;
+        if (!eq(i + 7, "add hl,de"))
+            continue;
+        if (!eq(i + 8, "ld (hl),0"))
+            continue;
+
+        {
+            char inc_lo[64], inc_hi[64];
+            sprintf(inc_lo, "inc (ix%s)", loff);
+            sprintf(inc_hi, "inc (ix%s)", hoff);
+            if (!eq(i + 9, inc_lo))
+                continue;
+            if (!parse_jp_nz_label(lines[i + 10], lcont))
+                continue;
+            if (!eq(i + 11, inc_hi))
+                continue;
+            if (!line_is_label_name(i + 12, lcont))
+                continue;
+        }
+
+        if (!peep_parse_ld_l_ix(lines[i + 13], loff2) || strcmp(loff2, loff) != 0)
+            continue;
+        if (!peep_parse_ld_h_ix(lines[i + 14], hoff2) || strcmp(hoff2, hoff) != 0)
+            continue;
+        if (!peep_parse_ld_de_0_to_255(lines[i + 15], &v) || v != 9)
+            continue;
+        if (!eq(i + 16, "or a"))
+            continue;
+        if (!eq(i + 17, "sbc hl,de"))
+            continue;
+        if (!parse_jp_c_label(lines[i + 18], lab) || strcmp(lab, lhead) != 0)
+            continue;
+
+        /* Optional local-space allocation immediately before the matched loop.
+         * It was only for the now-eliminated 16-bit counter.  IX has already
+         * been established, so removing these SP adjustments does not affect
+         * parameter references at ix+N. */
+        if (i >= 2 && eq(i - 2, "dec sp") && eq(i - 1, "dec sp")) {
+            delete_n(i - 2, 2);
+            i -= 2;
+        }
+
+        replace1_tagged(i, "xor a", "findsolution_clear_board");
+        replace1(i + 1, "ld hl,_g_board");
+        replace1(i + 2, "ld b,9");
+        /* Keep the existing loop label at i+3. */
+        replace1(i + 4, "ld (hl),a");
+        replace1(i + 5, "inc hl");
+        {
+            char line[160];
+            sprintf(line, "djnz %s", lhead);
+            replace1(i + 6, line);
+        }
+        delete_n(i + 7, 12);
+        changed = 1;
+        if (i > 0)
+            --i;
+    }
+
+    return changed;
+}
+
 /*
  * pass_cpir: Replace a byte-scan equality loop with the Z80 CPIR instruction.
  *
@@ -6990,6 +7804,56 @@ static int pass_cpir(void)
     return changed;
 }
 
+
+/*
+ * Replace an unconditional jump to a label whose body is just RET with RET.
+ *
+ * DCC commonly emits byte-return helpers as:
+ *     ld l,b
+ *     jp Lret
+ *   Lret:
+ *     ret
+ *
+ * If the target really is a plain return label, the jump has no semantic
+ * purpose.  This pass deliberately does not fire for framed epilogues such as
+ * "ld sp,ix / pop ix / ret"; those labels are not immediately followed by ret.
+ */
+static int pass_jp_to_plain_ret(void)
+{
+    int i;
+    int k;
+    int changed;
+    char lab[128];
+    char def[160];
+
+    changed = 0;
+
+    for (i = 0; i < nlines; ++i) {
+        char tmp[MAX_LINE];
+
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (!peep_parse_jp_uncond_label(tmp, lab))
+            continue;
+
+        sprintf(def, "%s:", lab);
+        for (k = 0; k + 1 < nlines; ++k) {
+            if (strcmp(lines[k], def) == 0)
+                break;
+        }
+        if (k + 1 >= nlines)
+            continue;
+
+        strip_peep_comment_copy(tmp, lines[k + 1]);
+        if (strcmp(tmp, "ret") != 0)
+            continue;
+
+        replace1_tagged(i, "ret", "jp_to_plain_ret");
+        changed = 1;
+    }
+
+    return changed;
+}
+
 int main(int argc, char **argv)
 {
     int changed;
@@ -7027,11 +7891,15 @@ int main(int argc, char **argv)
         if (pass_inline_simple_call_hl_from_loaded_pointer()) changed = 1;
         if (pass_dead_hl_load_before_ldhl()) changed = 1;
         if (pass_cp_zero_to_or_a()) changed = 1;
+        if (pass_zeroext_byte_cmp_const()) changed = 1;
         if (pass_call_hl_stack_roundtrip()) changed = 1;
         if (pass_minmax_winner_result_no_temp()) changed = 1;
         if (pass_minmax_score_b_cache()) changed = 1;
         if (pass_minmax_save_board_addr()) changed = 1;
         if (pass_elim_redundant_ld_a_reg()) changed = 1;
+        if (pass_minmax_elim_label_reload()) changed = 1;
+        if (pass_elim_c_reload_after_store()) changed = 1;
+        if (pass_and1_ix_to_bit()) changed = 1;
         if (pass_winner_check_dec_a()) changed = 1;
         if (pass_shrink_minmax_frame_after_callptr_temp_removed()) changed = 1;
         if (pass_shrink_minmax_frame3_after_score_cache()) changed = 1;
@@ -7039,6 +7907,9 @@ int main(int argc, char **argv)
         if (pass_shrink_minmax_frame2_after_loop_ctr_b()) changed = 1;
         if (pass_minmax_value_c()) changed = 1;
         if (pass_shrink_minmax_frame1_after_value_c()) changed = 1;
+        if (pass_minmax_byte_returns()) changed = 1;
+        if (pass_minmax_pack_frame()) changed = 1;
+        if (pass_minmax_pack_call()) changed = 1;
         if (pass_store_l_reload_a()) changed = 1;
         if (pass_reuse_board_addr_for_zero_store()) changed = 1;
         if (pass_array_base_push_to_de()) changed = 1;
@@ -7046,6 +7917,7 @@ int main(int argc, char **argv)
         if (pass_ix_array_word_addr()) changed = 1;
         if (pass_ix_postdec_to_local()) changed = 1;
         if (pass_store_word_const_hl()) changed = 1;
+        if (pass_findsolution_clear_board_loop()) changed = 1;
         if (pass_float_zero_store()) changed = 1;
         if (pass_incsp_to_popbc()) changed = 1;
         if (pass_remove_unreferenced_labels()) changed = 1;
@@ -7070,6 +7942,8 @@ int main(int argc, char **argv)
         if (pass_posfunc_ix1_to_b()) changed = 1;
         if (pass_posfunc_collapse_b_setup()) changed = 1;
         if (pass_posfunc_b_cache()) changed = 1;
+        if (pass_posfunc_byte_return()) changed = 1;
+        if (pass_jp_to_plain_ret()) changed = 1;
         if (pass_board_byte_eq_direct_load()) changed = 1;
         if (pass_lookforwinner_b_cache()) changed = 1;
         if (pass_mulu_const()) changed = 1;
@@ -7081,9 +7955,23 @@ int main(int argc, char **argv)
     } while (changed && passes < 30);
 
     /* Run frame elimination after all other passes have converged, then
-     * clean up any newly unreferenced labels created by the removal. */
-    if (pass_elim_ix_frame())
+     * clean up any newly unreferenced labels created by the removal.
+     *
+     * Important: pass_jp_to_plain_ret() must also run after frame elimination.
+     * Before this point, a return label in a frameless helper may still look like:
+     *
+     *     Lret:
+     *         ld sp,ix
+     *         pop ix
+     *         ret
+     *
+     * so the earlier main-loop pass correctly refuses to replace jp Lret with
+     * ret.  pass_elim_ix_frame() can then collapse that label to a plain ret,
+     * creating exactly the pattern jp_to_plain_ret is meant to remove. */
+    if (pass_elim_ix_frame()) {
+        pass_jp_to_plain_ret();
         pass_labels();
+    }
 
     /* Convert remaining framed prologues/epilogues to shared stub calls.
      * Runs after frame elimination so only functions that genuinely need IX

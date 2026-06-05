@@ -3905,6 +3905,8 @@ static void emit_incdec_sym_direct(struct Sym *s, int op)
 
 
 static void emit_load_from_hl(int type);
+static void emit_promote_byte_to_int(int actual_type);
+static void emit_extend_to_long_typed(int source_type);
 static void emit_extend_to_long(int source_is_unsigned);
 
 static int base_struct_id_from_type(int type)
@@ -5429,9 +5431,29 @@ static int try_inline_strcpy_call(char *name, long *arg_start, long *arg_end, in
 }
 
 
+static void emit_promote_byte_to_int(int actual_type)
+{
+    if ((actual_type & 15) != TYPE_CHAR || type_ptr_depth(actual_type) != 0)
+        return;
+
+    if (actual_type & TYPE_UNSIGNED)
+        emit("\tld h,0\n");
+    else
+        emit("\tld a,l\n\trlca\n\tsbc a,a\n\tld h,a\n");
+}
+
 static void emit_promote_int_to_long(int actual_type, int expected_type)
 {
     (void)expected_type;
+
+    /*
+     * A byte-typed expression, especially a function call returning
+     * unsigned char, is only guaranteed to have its value in L.  Normalize
+     * HL before forming DE:HL; otherwise stale/sign bits in H turn uint8_t
+     * 255 into 65535 or 0xffffffff when widened.
+     */
+    emit_promote_byte_to_int(actual_type);
+
     if ((actual_type & TYPE_UNSIGNED) || type_ptr_depth(actual_type)) {
         emit("\tld de,0\n");
     } else {
@@ -6720,7 +6742,7 @@ static void gen_unary(void)
              * an existing DE:HL long from just HL corrupts values whose low
              * word has bit 15 set, e.g. (int32_t)37000L. */
             if (!type_is_long(g_expr_type))
-                emit_extend_to_long(g_expr_type & TYPE_UNSIGNED);
+                emit_extend_to_long_typed(g_expr_type);
         } else if (type_size(t) == 1) {
             if (t & TYPE_UNSIGNED)
                 emit("\tld h,0\n");
@@ -8257,9 +8279,10 @@ static void gen_binop_typed(int op, int lhs_type)
 
 /* Zero-extend HL to DE:HL for implicit int-to-long promotion.
  * Explicit signed literals use the L suffix and are always emitted TYPE_LONG. */
-static void emit_extend_to_long(int source_is_unsigned)
+static void emit_extend_to_long_typed(int source_type)
 {
-    if (source_is_unsigned) {
+    emit_promote_byte_to_int(source_type);
+    if ((source_type & TYPE_UNSIGNED) || type_ptr_depth(source_type)) {
         emit("\tld de,0\n");
     } else {
         /* Sign-extend signed 16-bit HL into DE:HL.  This is also correct
@@ -8271,6 +8294,11 @@ static void emit_extend_to_long(int source_is_unsigned)
         emit("\tld d,a\n");
         emit("\tld e,a\n");
     }
+}
+
+static void emit_extend_to_long(int source_is_unsigned)
+{
+    emit_extend_to_long_typed(source_is_unsigned ? (TYPE_INT | TYPE_UNSIGNED) : TYPE_INT);
 }
 
 /*
@@ -8519,7 +8547,7 @@ static int common_arith_type(int a, int b)
 static void emit_cast_16_to_common(int from_type, int common_type)
 {
     if (type_is_long(common_type) && !type_is_long(from_type))
-        emit_extend_to_long(promote_int_type(from_type) & TYPE_UNSIGNED);
+        emit_extend_to_long_typed(from_type);
 }
 
 static int peek_simple_unary_type(void)
@@ -9804,7 +9832,9 @@ static void gen_assign(void)
                 emit_convert_float_to_intlike(direct_sym->type);
             }
             if (type_is_long(direct_sym->type) && !type_is_long(g_expr_type))
-                emit_extend_to_long(g_expr_type & TYPE_UNSIGNED);
+                emit_extend_to_long_typed(g_expr_type);
+            else if (type_size(direct_sym->type) > 1 && !type_is_long(g_expr_type))
+                emit_promote_byte_to_int(g_expr_type);
             emit_store_hl_to_sym_direct(direct_sym);
             return;
         }
@@ -9893,7 +9923,7 @@ static void gen_assign(void)
 
         if (type_is_long(direct_sym->type)) {
             if (!type_is_long(g_expr_type))
-                emit_extend_to_long(g_expr_type & TYPE_UNSIGNED);
+                emit_extend_to_long_typed(g_expr_type);
             if (op == TOK_ADDEQ) gen_binop32('+', direct_sym->type);
             else if (op == TOK_SUBEQ) gen_binop32('-', direct_sym->type);
             else if (op == TOK_MULEQ) gen_binop32('*', direct_sym->type);
@@ -9974,7 +10004,7 @@ normal_assign:
                 emit_store_bitfield_from_hl();
             } else if (type_is_long(t)) {
                 if (!type_is_long(g_expr_type))
-                    emit_extend_to_long(g_expr_type & TYPE_UNSIGNED);
+                    emit_extend_to_long_typed(g_expr_type);
                 /* emit_store_de_to_addr_hl for 32-bit pops the address itself */
                 emit_store_de_to_addr_hl(t);
                 /* result: value gone (address popped inside store) */
@@ -10098,7 +10128,7 @@ normal_assign:
             emit_store_de_to_addr_hl(t); /* pops saved lvalue address */
         } else if (type_is_long(t)) {
             if (!type_is_long(g_expr_type))
-                emit_extend_to_long(g_expr_type & TYPE_UNSIGNED);
+                emit_extend_to_long_typed(g_expr_type);
             if (op == TOK_ADDEQ) gen_binop32('+', t);
             else if (op == TOK_SUBEQ) gen_binop32('-', t);
             else if (op == TOK_MULEQ) gen_binop32('*', t);
@@ -10740,7 +10770,7 @@ static int try_fast_crc_update_byte_statement(void)
     gen_assign();                       /* arg1: crc */
     t_arg1 = g_expr_type;
     if (!type_is_long(t_arg1))
-        emit_extend_to_long(t_arg1 & TYPE_UNSIGNED);
+        emit_extend_to_long_typed(t_arg1);
     emit("\tpush de\n\tpush hl\n");
 
     expect(',');
@@ -10755,7 +10785,7 @@ static int try_fast_crc_update_byte_statement(void)
     gen_assign();                       /* arg3: mask32 */
     t_arg3 = g_expr_type;
     if (!type_is_long(t_arg3))
-        emit_extend_to_long(t_arg3 & TYPE_UNSIGNED);
+        emit_extend_to_long_typed(t_arg3);
     emit("\tpush de\n\tpush hl\n");
 
     expect(',');
@@ -11214,9 +11244,11 @@ static void gen_local_decl_after_type(int base)
                 gen_expr_no_comma();
                 if (type_is_long(type)) {
                     if (!type_is_long(g_expr_type))
-                        emit_extend_to_long(g_expr_type & TYPE_UNSIGNED);
+                        emit_extend_to_long_typed(g_expr_type);
                     emit_store_de_to_addr_hl(type);
                 } else {
+                    if (type_size(type) > 1 && !type_is_long(g_expr_type))
+                        emit_promote_byte_to_int(g_expr_type);
                     emit("\tex de,hl\n\tpop hl\n");
                     emit_store_de_to_addr_hl(type);
                 }
@@ -11253,9 +11285,11 @@ static void gen_local_decl_after_type(int base)
                     /* For long locals, emit_store_de_to_addr_hl pops the
                      * address itself via "pop de", so don't consume it here. */
                     if (!type_is_long(g_expr_type))
-                        emit_extend_to_long(g_expr_type & TYPE_UNSIGNED);
+                        emit_extend_to_long_typed(g_expr_type);
                     emit_store_de_to_addr_hl(type);
                 } else {
+                    if (type_size(type) > 1 && !type_is_long(g_expr_type))
+                        emit_promote_byte_to_int(g_expr_type);
                     emit("\tex de,hl\n\tpop hl\n");
                     emit_store_de_to_addr_hl(type);
                 }
@@ -11759,6 +11793,21 @@ static void gen_return(void)
             emit_convert_int_to_float(g_expr_type);
         } else if (!type_is_float(current_return_type) && type_is_float(g_expr_type)) {
             emit_convert_float_to_intlike(current_return_type);
+        } else if (type_size(current_return_type) == 1 && !type_is_long(g_expr_type)) {
+            /*
+             * Normalize byte-sized function returns.  The ABI returns all
+             * integer scalars in HL, and callers use the function's declared
+             * return type to decide whether later widening is signed or
+             * unsigned.  Therefore a uint8_t return must leave HL as 00xx,
+             * not FFxx inherited from the promoted expression used by
+             * `return -1;`.  Likewise an int8_t return should leave HL sign
+             * extended from L so direct assignment to wider signed types works.
+             */
+            if (current_return_type & TYPE_UNSIGNED)
+                emit("\tld h,0\n");
+            else
+                emit("\tld a,l\n\trlca\n\tsbc a,a\n\tld h,a\n");
+            g_expr_type = current_return_type;
         } else if (type_is_long(current_return_type) && !type_is_long(g_expr_type)) {
             /*
              * Long returns use DE:HL.  A plain int expression such as

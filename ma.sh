@@ -82,18 +82,22 @@ to_crlf() {
 
 # Detect optional compiler/runtime roots from source. Keep this conservative so
 # normal non-float programs do not pull in float printf code.
-dcc_flags=()
-strip_flags=()
+dcc_floatio=0
 if grep -Eiq '%[-+ #0-9.*]*[fF]' "$source_file"; then
-    dcc_flags+=("-ffloatio")
-    strip_flags+=("-k" "_pffio")
+    dcc_floatio=1
 fi
 
 rm -f "$app_mac" "$app_rel" "$app_com" "${upper_base}.PRN" \
       "$peep_tmp" "$rtl_min" RTLMIN.REL RTLMIN.PRN
 
 # Compile directly to an uppercase .MAC file.
-"$DCC" "${dcc_flags[@]}" -stack 512 "$source_file" -o "$app_mac"
+# Avoid empty-array expansion here: macOS ships Bash 3.2, where
+# "${array[@]}" under set -u can fail when the array is empty.
+if [ "$dcc_floatio" -eq 1 ]; then
+    "$DCC" -ffloatio -stack 512 "$source_file" -o "$app_mac"
+else
+    "$DCC" -stack 512 "$source_file" -o "$app_mac"
+fi
 
 if [ "$use_peep" -eq 1 ]; then
     "$DCCPEEP" "$app_mac" "$peep_tmp"
@@ -107,7 +111,11 @@ to_crlf "$app_mac"
 
 # Strip runtime using the final app .MAC, then assemble/link uppercase modules.
 to_crlf "$rtl_src"
-"$DCCRTLSTRIP" "${strip_flags[@]}" -r "$rtl_src" -o "$rtl_min" "$app_mac"
+if [ "$dcc_floatio" -eq 1 ]; then
+    "$DCCRTLSTRIP" -k _pffio -r "$rtl_src" -o "$rtl_min" "$app_mac"
+else
+    "$DCCRTLSTRIP" -r "$rtl_src" -o "$rtl_min" "$app_mac"
+fi
 to_crlf "$rtl_min"
 
 "$NTVCM" "$M80" "=${rtl_min}" /X /O /Z

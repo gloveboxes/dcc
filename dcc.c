@@ -175,19 +175,6 @@ static int opt_stack_size;  /* bytes reserved above heap for C stack */
 
 static struct Sym *find_global(const char *name);
 
-static int asm_name_needs_call_extrn(const char *cname)
-{
-    /*
-     * These are runtime/library entry points not emitted unconditionally.
-     * M80 wants an EXTRN in the module before resolving an external call,
-     * but LINK-80 treats unused EXTRNs as undefined, so only emit them
-     * immediately before an actual call.
-     */
-    return !strcmp(cname, "rand") ||
-           !strcmp(cname, "srand") ||
-           !strcmp(cname, "exit");
-}
-
 static int asm_name_must_mangle(const char *cname)
 {
     struct Sym *s;
@@ -1781,14 +1768,6 @@ static int macro_param_index(int di, const char *ident)
             return j;
     }
     return -1;
-}
-
-static void trim_trailing_space_text(char *s)
-{
-    int n;
-    n = (int)strlen(s);
-    while (n > 0 && isspace((unsigned char)s[n - 1]))
-        s[--n] = 0;
 }
 
 static void macro_expand_argument_text(const char *in, char *out, int outsz, int depth)
@@ -3594,11 +3573,6 @@ static int add_string_ex(const char *s, int is_wide)
     return nstrings++;
 }
 
-static int add_string(const char *s)
-{
-    return add_string_ex(s, 0);
-}
-
 static char *read_adjacent_string_literals_ex(int *is_widep)
 {
     char *buf;
@@ -3640,12 +3614,6 @@ static char *read_adjacent_string_literals_ex(int *is_widep)
         *is_widep = is_wide;
     return buf;
 }
-
-static char *read_adjacent_string_literals(void)
-{
-    return read_adjacent_string_literals_ex(NULL);
-}
-
 
 /* If an extern symbol had its extrn deferred, emit it now (once). */
 static void emit_extrn_if_needed(struct Sym *s)
@@ -3845,16 +3813,6 @@ static void emit_store_hl_to_sym_direct(struct Sym *s)
     } else {
         fprintf(outf, "\tld (ix%+d),l\n", s->offset);
         fprintf(outf, "\tld (ix%+d),h\n", s->offset + 1);
-    }
-}
-
-static void emit_store_de_to_sym_direct(struct Sym *s)
-{
-    if (type_size(s->type) == 1) {
-        fprintf(outf, "\tld (ix%+d),e\n", s->offset);
-    } else {
-        fprintf(outf, "\tld (ix%+d),e\n", s->offset);
-        fprintf(outf, "\tld (ix%+d),d\n", s->offset + 1);
     }
 }
 
@@ -5849,7 +5807,6 @@ static void gen_lvalue_addr(int *ptype)
     int cur_type;
     int arrow;
     int field_is_array;
-    int di;
 
     if (tok.kind == TOK_ID) {
         strncpy(name, tok.text, sizeof(name) - 1);
@@ -6910,66 +6867,6 @@ static void emit_store_bitfield_from_hl(void)
 
 static void emit_load_float_bits(unsigned long bits);
 static void emit_float_compare_call(int op);
-
-
-static int try_inline_nmfpart_call(const char *name, long *arg_start, long *arg_end, int argc)
-{
-    char *arg_code;
-    int l_else;
-    int l_done;
-    int k;
-
-    if (strcmp(name, "nmfpart") != 0 || argc != 1)
-        return 0;
-
-    /*
-     * Inline:
-     *     float nmfpart(float x) { return x >= 1.0f ? x - 1.0f : x; }
-     *
-     * This preserves the exact high-level arithmetic order and still uses the
-     * runtime float compare/subtract helpers.  It only removes the C helper
-     * call frame and the local d/x stack traffic inside nmfpart().
-     */
-    arg_code = copy_range(arg_start[0], arg_end[0]);
-    gen_snippet_expr(arg_code);
-    free(arg_code);
-
-    if (!type_is_float(g_expr_type))
-        emit_convert_int_to_float(g_expr_type);
-
-    l_else = new_label();
-    l_done = new_label();
-
-    /* Save x for whichever result path is taken. */
-    emit("\tpush de\n\tpush hl\n");
-
-    /* Compare x >= 1.0f. */
-    emit("\tpush de\n\tpush hl\n");
-    emit_load_float_bits(0x3f800000UL);
-    emit("\tpush de\n\tpush hl\n");
-    emit_float_compare_call(TOK_GE);       /* leaves boolean in HL, cleans compare args */
-
-    emit("\tld a,h\n\tor l\n");
-    emit_jp_label("jp z,", l_else);
-
-    /* True path: restore x and compute x - 1.0f. */
-    emit("\tpop hl\n\tpop de\n");
-    emit("\tpush de\n\tpush hl\n");
-    emit_load_float_bits(0x3f800000UL);
-    emit("\tpush de\n\tpush hl\n");
-    emit_runtime_call("__fsub");
-    for (k = 0; k < 4; ++k)
-        emit("\tpop bc\n");
-    emit_jp_label("jp", l_done);
-
-    /* False path: result is original x. */
-    emit_label(l_else);
-    emit("\tpop hl\n\tpop de\n");
-
-    emit_label(l_done);
-    g_expr_type = TYPE_FLOAT;
-    return 1;
-}
 
 
 static int try_inline_cb_is_zero_call(const char *name,
@@ -8231,13 +8128,6 @@ static int const_positive_snippet_value(const char *s, long *out)
     return 0;
 }
 
-static int const_positive_snippet(const char *s)
-{
-    long v;
-    return const_positive_snippet_value(s, &v);
-}
-
-
 static int snippet_const_expr_value(const char *snippet, struct ConstVal *out)
 {
     char *old_src;
@@ -8413,102 +8303,6 @@ static void scan_until_stop_at_depth0(int stop_kind)
     }
 }
 
-static void gen_direct_rel_branch(int op, int label, int branch_when_true)
-{
-    long lhs_start;
-    long lhs_end;
-    long rhs_start;
-    long rhs_end;
-    char *lhs_code;
-    char *rhs_code;
-    long rhs_const;
-
-    lhs_start = tok_start_pos;
-
-    /* Find the top-level relational operator.  The caller already checked
-       that this is a simple direct condition. */
-    for (;;) {
-        if (is_relop_token(tok.kind))
-            break;
-        next_token();
-    }
-
-    lhs_end = tok_start_pos;
-    op = tok.kind;
-    next_token();
-    rhs_start = tok_start_pos;
-
-    scan_until_stop_at_depth0(')');
-
-    rhs_end = tok_start_pos;
-
-    lhs_code = copy_range(lhs_start, lhs_end);
-    rhs_code = copy_range(rhs_start, rhs_end);
-
-    {
-        struct ConstVal lhs_cv;
-        struct ConstVal rhs_cv;
-        int rel_result;
-        if (snippet_const_expr_value(lhs_code, &lhs_cv) &&
-            snippet_const_expr_value(rhs_code, &rhs_cv) &&
-            const_rel_result(lhs_cv, op, rhs_cv, &rel_result)) {
-            emit_const_rel_branch(rel_result, label, branch_when_true);
-            free(lhs_code);
-            free(rhs_code);
-            return;
-        }
-    }
-
-    if (const_positive_snippet_value(rhs_code, &rhs_const) &&
-        (op == '<' || op == TOK_GE || op == '>' || op == TOK_LE)) {
-        int ptr_cmp;
-        ptr_cmp = snippet_is_single_pointer_id(lhs_code);
-        gen_snippet_expr(lhs_code);
-        emit_ld_de_const(rhs_const);
-        if ((g_expr_type & TYPE_UNSIGNED) || ptr_cmp) {
-            if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
-            else emit_cmp_branch_false_unsigned(op, label);
-        } else {
-            if (branch_when_true) emit_cmp_branch_true(op, label);
-            else emit_cmp_branch_false(op, label);
-        }
-    } else {
-        int lhs_type;
-        int ptr_cmp;
-        int common_type;
-
-        if (snippet_needs_long_compare(lhs_code, rhs_code, &common_type)) {
-            gen_snippet_expr(lhs_code);
-            lhs_type = g_expr_type;
-            emit_cast_16_to_common(lhs_type, common_type);
-            emit("\tpush de\n\tpush hl\n");
-            gen_snippet_expr(rhs_code);
-            emit_cast_16_to_common(g_expr_type, common_type);
-            gen_cmp32(op, common_type);
-            emit_branch_on_bool_hl(label, branch_when_true);
-        } else {
-            ptr_cmp = snippet_is_single_pointer_id(lhs_code) ||
-                      snippet_is_single_pointer_id(rhs_code);
-            gen_snippet_expr(lhs_code);
-            lhs_type = g_expr_type;
-            emit("\tpush hl\n");
-            gen_snippet_expr(rhs_code);
-            emit("\tex de,hl\n\tpop hl\n");
-            if ((lhs_type & TYPE_UNSIGNED) || ptr_cmp) {
-                if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
-                else emit_cmp_branch_false_unsigned(op, label);
-            } else {
-                if (branch_when_true) emit_cmp_branch_true(op, label);
-                else emit_cmp_branch_false(op, label);
-            }
-        }
-    }
-
-    free(lhs_code);
-    free(rhs_code);
-}
-
-
 static int invert_relop_for_swap(int op)
 {
     if (op == '<') return '>';
@@ -8516,26 +8310,6 @@ static int invert_relop_for_swap(int op)
     if (op == TOK_LE) return TOK_GE;
     if (op == TOK_GE) return TOK_LE;
     return op;
-}
-
-static int parse_direct_byte_sym_operand(struct Sym **sp)
-{
-    struct Sym *s;
-
-    if (tok.kind != TOK_ID)
-        return 0;
-
-    s = find_sym(tok.text);
-    if (!sym_can_ix_direct(s))
-        return 0;
-    if (type_size(s->type) != 1)
-        return 0;
-    if (!(s->type & TYPE_UNSIGNED))
-        return 0;
-
-    sp[0] = s;
-    next_token();
-    return 1;
 }
 
 static int parse_byte_const_operand(long *vp)
@@ -14928,25 +14702,6 @@ static void parse_global_init_type(struct Sym *s, int type, int size)
         next_token();
 }
 
-static int parse_simple_global_initializer(int *has_init)
-{
-    long v;
-
-    has_init[0] = 0;
-    v = 0;
-
-    if (!accept('='))
-        return 0;
-
-    has_init[0] = 1;
-
-    if (!parse_global_init_atom(&v, NULL, 0))
-        return 0;
-
-    return (int)(v & 0xffffL);
-}
-
-
 static void parse_global_scalar_array_init_scalar(struct Sym *s, int *np)
 {
     long v;
@@ -15253,8 +15008,6 @@ static void parse_function_or_global(int base_type)
          * Treat this as a function declaration.  Pointer declarators such as
          * fn_t *fp have already cleared base_is_func_typedef above. */
         if (base_is_func_typedef && g_funcptr_decl_array_len == 0) {
-            int already_declared;
-            already_declared = (find_global(name) != NULL);
             s = add_global(name, type, SC_FUNC);
             parse_function_return_type = type;
             if (decl_is_static) {
@@ -15270,9 +15023,6 @@ static void parse_function_or_global(int base_type)
 
         /* Function declarator or definition. */
         if (g_funcptr_decl_array_len == 0 && accept('(')) {
-            int already_declared;
-
-            already_declared = (find_global(name) != NULL);
             s = add_global(name, type, SC_FUNC);
             parse_function_return_type = type;
             if (decl_is_static) {
@@ -16074,209 +15824,6 @@ static char *preprocess_includes_file(const char *name, int depth, long *out_len
  * records only function-like macros, not object-like include guards such as
  * _ASSERT_H, so it does not change later conditional parsing of header bodies.
  */
-static void prescan_function_macros_from_source(void)
-{
-    long p;
-    long line_start;
-    long line_end;
-    int active_stack[MAX_IFSTACK];
-    int branch_taken[MAX_IFSTACK];
-    int seen_else[MAX_IFSTACK];
-    int sp;
-    int active;
-
-    p = 0;
-    sp = 0;
-    active = 1;
-
-    while (p < src_len) {
-        const char *s;
-        const char *e;
-        const char *q;
-        char word[32];
-
-        line_start = p;
-        while (p < src_len && src[p] != '\n')
-            p++;
-        line_end = p;
-        if (p < src_len && src[p] == '\n')
-            p++;
-
-        s = src + line_start;
-        e = src + line_end;
-
-        while (s < e && (*s == ' ' || *s == '\t'))
-            s++;
-        if (s >= e || *s != '#')
-            continue;
-        s++;
-        while (s < e && (*s == ' ' || *s == '\t'))
-            s++;
-
-        {
-            int wi;
-            wi = 0;
-            while (s < e && is_ident_char((unsigned char)*s) && wi < (int)sizeof(word) - 1)
-                word[wi++] = *s++;
-            word[wi] = 0;
-        }
-
-        if (!strcmp(word, "ifdef") || !strcmp(word, "ifndef")) {
-            char name[64];
-            int ni;
-            int cond;
-            while (s < e && (*s == ' ' || *s == '\t')) s++;
-            ni = 0;
-            while (s < e && is_ident_char((unsigned char)*s) && ni < 63)
-                name[ni++] = *s++;
-            name[ni] = 0;
-
-            if (sp < MAX_IFSTACK) {
-                cond = (name[0] && find_define(name) >= 0);
-                if (!strcmp(word, "ifndef"))
-                    cond = !cond;
-                active_stack[sp] = active;
-                branch_taken[sp] = (active && cond) ? 1 : 0;
-                seen_else[sp] = 0;
-                active = active && cond;
-                sp++;
-            }
-            continue;
-        }
-
-        if (!strcmp(word, "if")) {
-            char expr[512];
-            int ei;
-            int cond;
-            while (s < e && (*s == ' ' || *s == '\t')) s++;
-            ei = 0;
-            while (s < e && ei < (int)sizeof(expr) - 1)
-                expr[ei++] = *s++;
-            expr[ei] = 0;
-            cond = pp_eval_simple_expr(expr);
-            if (sp < MAX_IFSTACK) {
-                active_stack[sp] = active;
-                branch_taken[sp] = (active && cond) ? 1 : 0;
-                seen_else[sp] = 0;
-                active = active && cond;
-                sp++;
-            }
-            continue;
-        }
-
-        if (!strcmp(word, "else")) {
-            if (sp > 0) {
-                int parent;
-                int i;
-                i = sp - 1;
-                parent = active_stack[i];
-                if (!seen_else[i]) {
-                    active = parent && !branch_taken[i];
-                    branch_taken[i] = 1;
-                    seen_else[i] = 1;
-                } else {
-                    active = 0;
-                }
-            }
-            continue;
-        }
-
-        if (!strcmp(word, "elif")) {
-            if (sp > 0) {
-                int parent;
-                int i;
-                int cond;
-                char expr[512];
-                int ei;
-                i = sp - 1;
-                parent = active_stack[i];
-                if (seen_else[i] || branch_taken[i]) {
-                    active = 0;
-                } else {
-                    while (s < e && (*s == ' ' || *s == '\t')) s++;
-                    ei = 0;
-                    while (s < e && ei < (int)sizeof(expr) - 1)
-                        expr[ei++] = *s++;
-                    expr[ei] = 0;
-                    cond = pp_eval_simple_expr(expr);
-                    active = parent && cond;
-                    if (active)
-                        branch_taken[i] = 1;
-                }
-            }
-            continue;
-        }
-
-        if (!strcmp(word, "endif")) {
-            if (sp > 0) {
-                sp--;
-                active = active_stack[sp];
-            }
-            continue;
-        }
-
-        if (!active || strcmp(word, "define"))
-            continue;
-
-        while (s < e && (*s == ' ' || *s == '\t')) s++;
-
-        {
-            char name[64];
-            char val[256];
-            char params[8][32];
-            int ni;
-            int nargs;
-            int ppidx;
-
-            ni = 0;
-            while (s < e && is_ident_char((unsigned char)*s) && ni < 63)
-                name[ni++] = *s++;
-            name[ni] = 0;
-
-            /* Function-like macro: '(' must immediately follow macro name. */
-            if (!name[0] || s >= e || *s != '(')
-                continue;
-
-            memset(params, 0, sizeof(params));
-            nargs = 0;
-            s++;
-
-            while (s < e && *s != ')') {
-                while (s < e && (*s == ' ' || *s == '\t')) s++;
-                if (s >= e || *s == ')')
-                    break;
-
-                ppidx = 0;
-                while (s < e && is_ident_char((unsigned char)*s) && ppidx < 31)
-                    params[nargs][ppidx++] = *s++;
-                params[nargs][ppidx] = 0;
-                if (params[nargs][0] && nargs < 7)
-                    nargs++;
-
-                while (s < e && (*s == ' ' || *s == '\t')) s++;
-                if (s < e && *s == ',')
-                    s++;
-            }
-
-            if (s < e && *s == ')')
-                s++;
-            while (s < e && (*s == ' ' || *s == '\t')) s++;
-
-            ppidx = 0;
-            q = s;
-            while (q < e && ppidx < (int)sizeof(val) - 1)
-                val[ppidx++] = *q++;
-            while (ppidx > 0 && (val[ppidx - 1] == ' ' || val[ppidx - 1] == '\t' || val[ppidx - 1] == '\r'))
-                ppidx--;
-            val[ppidx] = 0;
-
-            add_define_ex(name, val[0] ? val : "1", 1, nargs, params);
-        }
-    }
-}
-
-
-
 /* Reduce preprocessor conditionals after include expansion.
  *
  * DCC's lexer-level preprocessor is intentionally small, but handling

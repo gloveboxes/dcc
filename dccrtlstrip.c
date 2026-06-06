@@ -149,15 +149,6 @@ static int ci_strncmp(const char *a, const char *b, int n)
     return 0;
 }
 
-static int starts_with_word(const char *s, const char *w)
-{
-    int n = (int)strlen(w);
-    s = skipws(s);
-    if (strncmp(s, w, n) != 0)
-        return 0;
-    return s[n] == 0 || s[n] == ' ' || s[n] == '\t';
-}
-
 static void add_root(const char *name)
 {
     int i;
@@ -354,48 +345,6 @@ static void read_runtime(const char *fn)
  * first PUBLIC are kept as a preamble.  Each PUBLIC block includes its PUBLIC
  * directive and all following private labels/data until the next PUBLIC.
  */
-static int prev_nonblank_is_public(int i)
-{
-    int j;
-    for (j = i - 1; j >= 0; --j) {
-        const char *p = skipws(lines[j].s);
-        if (*p == 0 || *p == ';')
-            continue;
-        return is_public_line(lines[j].s);
-    }
-    return 0;
-}
-
-static int line_public_count(const char *line)
-{
-    char clean[MAX_LINE];
-    const char *p;
-    char sym[128];
-    int n;
-
-    strip_comment_copy(line, clean, sizeof(clean));
-    p = skipws(clean);
-    if (ci_strncmp(p, "public", 6) != 0 ||
-        !(p[6] == ' ' || p[6] == '\t'))
-        return 0;
-    p += 6;
-
-    n = 0;
-    for (;;) {
-        p = skipws(p);
-        if (!parse_ident_token(&p, sym))
-            break;
-        n++;
-        p = skipws(p);
-        if (*p == ',') {
-            p++;
-            continue;
-        }
-        break;
-    }
-    return n;
-}
-
 static int collect_public_names_from_range(int first, int last, char names[][128], int maxnames)
 {
     int i;

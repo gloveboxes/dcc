@@ -238,18 +238,6 @@ static int parse_nonneg_int(const char *s, int *out)
     return 1;
 }
 
-static void make_inc_sp_lines(char *out, int n)
-{
-    int i;
-
-    out[0] = 0;
-    for (i = 0; i < n; i++) {
-        if (i)
-            strcat(out, "\n");
-        strcat(out, "inc sp");
-    }
-}
-
 static int jump_target(const char *s, char *out);
 
 static int is_uncond_jp(const char *s)
@@ -2337,38 +2325,6 @@ static int stride_parse_ld_r_ix_neg(const char *s, char r, int *n); /* forward *
  * Safe because: for values 0..127, H=0 always, and the bias xor 80h on both
  * sides cancels, producing the same carry as plain unsigned subtraction.
  */
-static int pass_signed_cmp_small_const(void)
-{
-    int i, changed = 0;
-    int imm, hi_off;
-
-    for (i = 0; i + 8 < nlines; i++) {
-        /* ld de,N where 0 < N <= 127 (D byte is 0 before and after xor) */
-        if (!peep_parse_ld_de_0_to_255(lines[i], &imm) || imm > 127 || imm == 0)
-            continue;
-
-        /* Preceding line must be ld h,(ix-K) — high byte of a frame local */
-        if (i < 1 || !stride_parse_ld_r_ix_neg(lines[i - 1], 'h', &hi_off))
-            continue;
-
-        /* The signed-compare bias block: 6 instructions */
-        if (eq(i + 1, "ld a,h") &&
-            eq(i + 2, "xor 80h") &&
-            eq(i + 3, "ld h,a") &&
-            eq(i + 4, "ld a,d") &&
-            eq(i + 5, "xor 80h") &&
-            eq(i + 6, "ld d,a") &&
-            eq(i + 7, "or a") &&
-            eq(i + 8, "sbc hl,de")) {
-            delete_n(i + 1, 6);
-            changed = 1;
-            if (i > 0) i--;
-        }
-    }
-
-    return changed;
-}
-
 /*
  * In MinMax, score/value/alpha/beta/depth are constrained to small
  * nonnegative SCORE_* values and depths.  Remove the signed-compare bias
@@ -2478,81 +2434,6 @@ static int pass_fix_main_argc_gt_one(void)
 }
 
 
-
-static int pass_replace_tstr_fake_strstr(void)
-{
-    int i, j, n;
-    static const char *body[] = {
-        "\tpublic _Z0010",
-        "_Z0010:",
-        "\tpush ix",
-        "\tld ix,0",
-        "\tadd ix,sp",
-        "\tld l,(ix+6)",
-        "\tld h,(ix+7)",
-        "\tld a,(hl)",
-        "\tor a",
-        "\tjp nz, ZSNN",
-        "\tld l,(ix+4)",
-        "\tld h,(ix+5)",
-        "\tjp ZSR",
-        "ZSNN:",
-        "\tld l,(ix+4)",
-        "\tld h,(ix+5)",
-        "ZSO:",
-        "\tld a,(hl)",
-        "\tor a",
-        "\tjp z, ZSNF",
-        "\tpush hl",
-        "\tld e,l",
-        "\tld d,h",
-        "\tld l,(ix+6)",
-        "\tld h,(ix+7)",
-        "ZSI:",
-        "\tld a,(hl)",
-        "\tor a",
-        "\tjp z, ZSF",
-        "\tld c,a",
-        "\tld a,(de)",
-        "\tor a",
-        "\tjp z, ZSM",
-        "\tcp c",
-        "\tjp nz, ZSM",
-        "\tinc hl",
-        "\tinc de",
-        "\tjp ZSI",
-        "ZSF:",
-        "\tpop hl",
-        "\tjp ZSR",
-        "ZSM:",
-        "\tpop hl",
-        "\tinc hl",
-        "\tjp ZSO",
-        "ZSNF:",
-        "\tld hl,0",
-        "ZSR:",
-        "\tld sp,ix",
-        "\tpop ix",
-        "\tret"
-    };
-
-    for (i = 0; i < nlines; ++i) {
-        if (!strcmp(lines[i], "public _Z0010") && i + 1 < nlines && !strcmp(lines[i + 1], "_Z0010:")) {
-            j = i + 2;
-            while (j < nlines && strcmp(lines[j], "public _Z0011") != 0)
-                ++j;
-            if (j >= nlines)
-                return 0;
-
-            n = (int)(sizeof(body) / sizeof(body[0]));
-            delete_n(i, j - i);
-            for (j = 0; j < n; ++j)
-                insert_line(i + j, body[j]);
-            return 1;
-        }
-    }
-    return 0;
-}
 
 /*
  * Eliminate the IX frame-pointer prologue/epilogue from leaf functions where
@@ -3569,7 +3450,6 @@ static int pass_minmax_score_b_cache(void)
     int i;
     int j;
     int changed;
-    int off;
     char tmp[MAX_LINE];
 
     changed = 0;
@@ -7092,9 +6972,9 @@ static int pass_larg_direct_store(void)
             continue;
 
         /* Replace: keep stub call at i, replace i+1 with ld (ADDR),hl */
-        snprintf(newline, sizeof(newline), "call %s", stub);
+        sprintf(newline, "call %s", stub);
         replace1_tagged(i, newline, "larg_dstore");
-        snprintf(newline, sizeof(newline), "ld (%s),hl", addr);
+        sprintf(newline, "ld (%s),hl", addr);
         replace1(i+1, newline);
         delete_n(i+2, 6);
         changed = 1;
@@ -7662,7 +7542,6 @@ static int pass_winner_check_dec_a(void)
 
         /* ld hl,N or ld l,N immediately follows — confirms A is dead on fall-through */
         {
-            int imm;
             char t4[MAX_LINE];
             strip_peep_comment_copy(t4, lines[i + 4]);
             if (!parse_ld_hl_imm(lines[i + 4], lab) &&
@@ -7822,7 +7701,6 @@ static int pass_board_byte_eq_direct_load(void)
 {
     int i;
     int changed;
-    char lab[128];
     char addr[128];
     char line[160];
 
@@ -8144,12 +8022,12 @@ static int pass_cpir(void)
             char s_lim_lo[160], s_lim_hi[160], s_ptr_lo[160], s_ptr_hi[160];
             char s_val[160], s_jp_z_exit[160];
             
-            snprintf(s_lim_lo,     sizeof s_lim_lo,     "ld l,(ix%s)", lim_lo_off);
-            snprintf(s_lim_hi,     sizeof s_lim_hi,     "ld h,(ix%s)", lim_hi_off);
-            snprintf(s_ptr_lo,     sizeof s_ptr_lo,     "ld l,(ix%s)", ptr_lo_off);
-            snprintf(s_ptr_hi,     sizeof s_ptr_hi,     "ld h,(ix%s)", ptr_hi_off);
-            snprintf(s_val,        sizeof s_val,        "ld a,(ix%s)", val_off);
-            snprintf(s_jp_z_exit,  sizeof s_jp_z_exit,  "jp z, %s", lexit);
+            sprintf(s_lim_lo,     "ld l,(ix%s)", lim_lo_off);
+            sprintf(s_lim_hi,     "ld h,(ix%s)", lim_hi_off);
+            sprintf(s_ptr_lo,     "ld l,(ix%s)", ptr_lo_off);
+            sprintf(s_ptr_hi,     "ld h,(ix%s)", ptr_hi_off);
+            sprintf(s_val,        "ld a,(ix%s)", val_off);
+            sprintf(s_jp_z_exit,  "jp z, %s", lexit);
 
             /* Delete end block first (lok label + ptr++ + counter++) so that
              * positions i..fail_start-1 are unchanged. */

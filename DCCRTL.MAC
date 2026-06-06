@@ -374,21 +374,22 @@ _bdos:
 
         public  __slen
 __slen:
+        ; size_t strlen(const char *s)
+        ; Use CPIR to scan for NUL.  This is much faster than a hand loop
+        ; on long strings (21T/byte for CPIR vs ~42T/byte before).
         push    ix
         ld      ix,0
         add     ix,sp
         ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      de,0
-sl1:
-        ld      a,(hl)
+        ld      h,(ix+5)        ; HL = s
+        ld      e,l
+        ld      d,h             ; DE = original s
+        ld      bc,0ffffh
+        xor     a               ; search for NUL
+        cpir                    ; HL = byte after NUL
         or      a
-        jr      z,sl2
-        inc     hl
-        inc     de
-        jr      sl1
-sl2:
-        ex      de,hl
+        sbc     hl,de           ; bytes scanned including NUL
+        dec     hl              ; length excluding NUL
         pop     ix
         ret
 
@@ -432,11 +433,8 @@ sp1:
         inc     hl
         jr      sp1
 sp2:
-        ld      c,a
-        ld      a,(hl)
-        ld      b,a
-        ld      a,c
-        sub     b
+        ; A still holds *s1 after CP (HL), so compute *s1 - *s2 directly.
+        sub     (hl)
         ld      l,a
         ld      h,0
         jr      nc,sp4
@@ -453,6 +451,7 @@ sp3:
         public  __srch
 __srch:
         ; char *strrchr(const char *s, int c)
+        ; A remains the loaded character after CP, so do not reload (HL).
         push    ix
         ld      ix,0
         add     ix,sp
@@ -460,19 +459,18 @@ __srch:
         ld      h,(ix+5)        ; HL = scan pointer
         ld      c,(ix+6)        ; C = target char
         ld      de,0            ; DE = last match / NULL
-src_loop:
+srch_loop:
         ld      a,(hl)
         cp      c
-        jr      nz,src_no_match
+        jr      nz,srch_no_match
         ld      e,l
         ld      d,h
-src_no_match:
-        ld      a,(hl)
+srch_no_match:
         or      a
-        jr      z,src_done
+        jr      z,srch_done
         inc     hl
-        jr      src_loop
-src_done:
+        jr      srch_loop
+srch_done:
         ex      de,hl           ; return last match
         pop     ix
         ret
@@ -506,43 +504,53 @@ schr_not_found:
         public  __sstr
 __sstr:
         ; char *strstr(const char *haystack, const char *needle)
+        ; Optimized for the common first-character-mismatch case.
+        ; Keep DE as the current haystack candidate/scan pointer and B as
+        ; needle[0].  Only push the candidate after the first character matches.
         push    ix
         ld      ix,0
         add     ix,sp
         ld      e,(ix+4)
-        ld      d,(ix+5)        ; DE = haystack
+        ld      d,(ix+5)        ; DE = haystack scan/candidate
         ld      l,(ix+6)
         ld      h,(ix+7)        ; HL = needle
-        ld      a,(hl)
+        ld      b,(hl)          ; B = first needle char
+        ld      a,b
         or      a
-        jr      nz,sstr_search
+        jr      nz,sstr_scan
         ex      de,hl           ; empty needle => haystack
         pop     ix
         ret
-sstr_search:
+sstr_scan:
         ld      a,(de)
         or      a
         jr      z,sstr_not_found
-        push    de              ; candidate
-        push    hl              ; needle start
+        cp      b
+        jr      z,sstr_cand
+        inc     de
+        jr      sstr_scan
+sstr_cand:
+        push    de              ; save candidate for return/failure restart
+        inc     de              ; first char already matched
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        inc     hl              ; compare from needle[1]
 sstr_cmp:
         ld      a,(hl)
         or      a
         jr      z,sstr_found
-        ld      c,a             ; needle char
-        ld      a,(de)          ; haystack char
+        ld      c,a
+        ld      a,(de)
         cp      c
         jr      nz,sstr_fail
         inc     de
         inc     hl
         jr      sstr_cmp
 sstr_fail:
-        pop     hl              ; restore needle start
         pop     de              ; restore candidate
-        inc     de
-        jr      sstr_search
+        inc     de              ; next candidate
+        jr      sstr_scan
 sstr_found:
-        pop     hl              ; discard needle start
         pop     hl              ; return candidate
         pop     ix
         ret
@@ -577,11 +585,8 @@ sncmp_loop:
         dec     bc
         jr      sncmp_loop
 sncmp_diff:
-        ld      c,a
-        ld      a,(hl)
-        ld      b,a
-        ld      a,c
-        sub     b
+        ; A still holds *s1 after CP (HL), so compute *s1 - *s2 directly.
+        sub     (hl)
         ld      l,a
         ld      h,0
         jr      nc,sncmp_ret
@@ -886,39 +891,36 @@ nc1dn:
         public  __mcmp
 __mcmp:
         ; int memcmp(const void *s1, const void *s2, size_t n)
+        ; Keep HL = s2 and DE = s1 so CP (HL) compares *s1 - *s2
+        ; without saving BC on every byte.
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      l,(ix+4)
-        ld      h,(ix+5)        ; HL = s1
-        ld      e,(ix+6)
-        ld      d,(ix+7)        ; DE = s2
+        ld      e,(ix+4)
+        ld      d,(ix+5)        ; DE = s1
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; HL = s2
         ld      c,(ix+8)
         ld      b,(ix+9)        ; BC = n
 mcmp_loop:
         ld      a,b
         or      c
         jr      z,mcmp_eq
-        ld      a,(de)
-        push    bc
-        ld      b,a             ; B = *s2
-        ld      a,(hl)          ; A = *s1
-        cp      b
+        ld      a,(de)          ; A = *s1
+        cp      (hl)            ; compare against *s2
         jr      nz,mcmp_diff
-        pop     bc
-        inc     hl
         inc     de
+        inc     hl
         dec     bc
         jr      mcmp_loop
 mcmp_diff:
-        ; A still has s1 byte, B has s2 byte. Return signed byte difference.
-        sub     b
+        ; A still has *s1.  Compute *s1 - *s2 for the return value.
+        sub     (hl)
         ld      l,a
         ld      h,0
         jr      nc,mcmp_diff_done
         ld      h,0ffh
 mcmp_diff_done:
-        pop     bc
         pop     ix
         ret
 mcmp_eq:
@@ -1040,27 +1042,23 @@ snc_term:
 
         public  __mcpy
 __mcpy:
+        ; void *memcpy(void *dst, const void *src, size_t n)
+        ; Use Z80 block copy.  C memcpy is undefined for overlap, so LDIR is OK.
         push    ix
         ld      ix,0
         add     ix,sp
         ld      e,(ix+4)
-        ld      d,(ix+5)
+        ld      d,(ix+5)        ; DE = dst
         ld      l,(ix+6)
-        ld      h,(ix+7)
+        ld      h,(ix+7)        ; HL = src
         ld      c,(ix+8)
-        ld      b,(ix+9)
-        push    de
-mc1:
+        ld      b,(ix+9)        ; BC = n
+        push    de              ; return dst
         ld      a,b
         or      c
-        jr      z,mc2
-        ld      a,(hl)
-        ld      (de),a
-        inc     hl
-        inc     de
-        dec     bc
-        jr      mc1
-mc2:
+        jr      z,mcpy_done
+        ldir
+mcpy_done:
         pop     hl
         pop     ix
         ret
@@ -1125,47 +1123,49 @@ mu2:
         pop     bc
         ret
 
-        public  __divmodu_slow
-__divmodu_slow:
+        public  __divu
+        public  __modu
+        public  __divs
+        public  __mods
+DRSU:
+        ; Unsigned 16-bit divide by repeated subtraction.
+        ; Input:  HL = dividend, DE = divisor
+        ; Output: HL = quotient, DE = remainder
+        ;
+        ; This is intentionally the default helper again: workloads such as
+        ; e.c divide by variable n with small quotients, where repeated
+        ; subtraction beats a fixed 16-step divider.
         push    bc
         push    af
         ld      a,d
         or      e
-        jr      nz,dms0
-        ld      d,h
-        ld      e,l
+        jr      nz,dms_rs0
+        ld      d,h             ; divide by zero: quotient = 0xffff,
+        ld      e,l             ; remainder = original dividend
         ld      hl,0ffffh
-        jr      dms_done
-dms0:
-        ld      bc,0
-        push    de
-        ex      de,hl
-dms1:
-        pop     hl
-        push    hl
-        ld      a,e
-        sub     l
-        ld      a,d
-        sbc     a,h
-        jr      c,dms2
-        ld      a,e
-        sub     l
-        ld      e,a
-        ld      a,d
-        sbc     a,h
-        ld      d,a
+        jr      dms_rs_done
+
+dms_rs0:
+        ld      bc,0            ; BC = quotient, HL = running remainder
+
+dms_rs1:
+        or      a
+        sbc     hl,de
+        jr      c,dms_rs2
         inc     bc
-        jr      dms1
-dms2:
-        pop     hl
-        ld      h,b
+        jr      dms_rs1
+
+dms_rs2:
+        add     hl,de           ; undo failed subtract; HL = remainder
+        ex      de,hl           ; DE = remainder
+        ld      h,b             ; HL = quotient
         ld      l,c
-dms_done:
+
+dms_rs_done:
         pop     af
         pop     bc
         ret
 
-        public  __divu
 __divu:
         ; Faster cache-aware unsigned divide.
         ; Input:  HL = dividend, DE = divisor
@@ -1206,7 +1206,7 @@ du_miss_save:
         ld      (__dmc_rhs),hl
         ex      de,hl
 
-        call    __divmodu_slow        ; HL = quotient, DE = remainder
+        call    DRSU        ; HL = quotient, DE = remainder
 
         ld      (__dmquot),hl
         ex      de,hl
@@ -1216,10 +1216,9 @@ du_miss_save:
         ld      hl,(__dmquot)
         ret
 
-        public  __modu
 __modu:
         ; Cache-aware unsigned modulo.  Same cache as __divu, so x%n then x/n
-        ; (or x/n then x%n) with identical operands calls __divmodu_slow once.
+        ; (or x/n then x%n) with identical operands calls DRSU once.
         ; Input:  HL = dividend, DE = divisor
         ; Output: HL = remainder
         ld      a,(__dmval)
@@ -1252,7 +1251,7 @@ dm_miss:
         ex      de,hl
         ld      (__dmc_rhs),hl
         ex      de,hl
-        call    __divmodu_slow  ; HL = quotient, DE = remainder
+        call    DRSU  ; HL = quotient, DE = remainder
         ld      (__dmquot),hl
         ex      de,hl
         ld      (__dmrem),hl    ; HL = remainder
@@ -1265,7 +1264,6 @@ dm_miss:
 ; Input:  HL = signed dividend, DE = signed divisor
 ; Output: HL = quotient (__divs) or remainder (__mods)
 ; Semantics: quotient truncates toward zero; remainder has dividend sign.
-        public  __divs
 __divs:
         ; Fast path: if both operands are non-negative, signed division is
         ; identical to unsigned division.  This avoids the sign-wrapper
@@ -1317,7 +1315,6 @@ __ds_done:
         pop     bc
         ret
 
-        public  __mods
 __mods:
         ; Fast path: if both operands are non-negative, signed modulo is
         ; identical to unsigned modulo.  Jump directly so cache pairing with
@@ -1361,6 +1358,164 @@ __ms_rpos:
         sbc     a,h
         ld      h,a
 __ms_done:
+        pop     bc
+        ret
+
+
+        public  __q2u
+        public  __r2u
+        public  __q2s
+        public  __r2s
+; Fixed 16-iteration unsigned divider for constant divisors.
+; dccpeep rewrites ld de,<const> / call __div*/__mod* to these short
+; public names.  Names are 5 chars and unique under short external matching.
+D16U:
+        ; Input:  HL = dividend, DE = divisor
+        ; Output: HL = quotient, DE = remainder
+        push    bc
+        push    af
+        ld      a,d
+        or      e
+        jr      nz,D16U0
+        ld      d,h
+        ld      e,l
+        ld      hl,0ffffh
+        jr      D16UD
+D16U0:
+        ld      bc,0            ; BC = partial remainder
+        ld      a,16
+        ld      (__dmcnt),a
+D16U1:
+        add     hl,hl           ; shift next dividend bit into carry;
+        rl      c               ; BC = (BC << 1) | carry
+        rl      b
+
+        ; if BC >= DE, BC -= DE and set current quotient bit.
+        ld      a,c
+        sub     e
+        ld      a,b
+        sbc     a,d
+        jr      c,D16U2
+
+        ld      a,c
+        sub     e
+        ld      c,a
+        ld      a,b
+        sbc     a,d
+        ld      b,a
+        inc     l               ; low bit is known clear after add hl,hl
+D16U2:
+        ld      a,(__dmcnt)
+        dec     a
+        ld      (__dmcnt),a
+        jr      nz,D16U1
+
+        ld      d,b             ; DE = remainder
+        ld      e,c
+D16UD:
+        pop     af
+        pop     bc
+        ret
+
+__q2u:
+        call    D16U             ; fixed divider quotient
+        ret
+
+__r2u:
+        call    D16U             ; fixed divider remainder
+        ex      de,hl
+        ret
+
+__q2s:
+        ; Signed fixed 16-step quotient.  Same semantics as __divs.
+        ld      a,h
+        or      d
+        jp      p,__q2u
+        push    bc
+        ld      b,0
+        ld      a,h
+        or      a
+        jp      p,Q2SLP
+        ld      a,b
+        xor     1
+        ld      b,a
+        xor     a
+        sub     l
+        ld      l,a
+        ld      a,0
+        sbc     a,h
+        ld      h,a
+Q2SLP:
+        ld      a,d
+        or      a
+        jp      p,Q2SRP
+        ld      a,b
+        xor     1
+        ld      b,a
+        ex      de,hl
+        xor     a
+        sub     l
+        ld      l,a
+        ld      a,0
+        sbc     a,h
+        ld      h,a
+        ex      de,hl
+Q2SRP:
+        call    __q2u
+        ld      a,b
+        or      a
+        jp      z,Q2SDN
+        xor     a
+        sub     l
+        ld      l,a
+        ld      a,0
+        sbc     a,h
+        ld      h,a
+Q2SDN:
+        pop     bc
+        ret
+
+__r2s:
+        ; Signed fixed 16-step remainder.  Same semantics as __mods.
+        ld      a,h
+        or      d
+        jp      p,__r2u
+        push    bc
+        ld      b,0
+        ld      a,h
+        or      a
+        jp      p,R2SLP
+        ld      b,1
+        xor     a
+        sub     l
+        ld      l,a
+        ld      a,0
+        sbc     a,h
+        ld      h,a
+R2SLP:
+        ld      a,d
+        or      a
+        jp      p,R2SRP
+        ex      de,hl
+        xor     a
+        sub     l
+        ld      l,a
+        ld      a,0
+        sbc     a,h
+        ld      h,a
+        ex      de,hl
+R2SRP:
+        call    __r2u
+        ld      a,b
+        or      a
+        jp      z,R2SDN
+        xor     a
+        sub     l
+        ld      l,a
+        ld      a,0
+        sbc     a,h
+        ld      h,a
+R2SDN:
         pop     bc
         ret
 
@@ -2069,7 +2224,7 @@ pf_count_u_digits:
 pfcud1:
         inc     c
         ld      de,10
-        call    __divmodu_slow   ; HL = quotient, DE = remainder
+        call    DRSU   ; HL = quotient, DE = remainder
         ld      a,h
         or      l
         jr      nz,pfcud1
@@ -2091,7 +2246,7 @@ pf_print_u:
 pfu1:
         dec     ix
         ld      de,10
-        call    __divmodu_slow
+        call    DRSU
         ld      a,e
         add     a,'0'
         ld      (ix+0),a
@@ -3536,6 +3691,8 @@ __dmquot:
         dw      0
 __dmrem:
         dw      0
+__dmcnt:
+        db      0
 
 __fdeof:        ds      4       ; EOF flag per slot (index = fd - FIRSTFD)
 __fderr:        ds      4       ; error flag per slot

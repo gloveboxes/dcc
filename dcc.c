@@ -6418,6 +6418,151 @@ static int try_inline_cb_is_zero_call(const char *name,
     return 1;
 }
 
+
+static int try_gen_parenthesized_const_size_expr(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    int save_errors;
+    int save_long_suffix;
+    int save_unsigned_suffix;
+    struct Token save_tok;
+    long scan;
+    int depth;
+    int saw_sizeof;
+    long v;
+
+    if (tok.kind != '(')
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_errors = errors;
+    save_long_suffix = g_tok_long_suffix;
+    save_unsigned_suffix = g_tok_unsigned_suffix;
+    save_tok = tok;
+
+    /* This optimization is intentionally limited to parenthesized expressions
+     * containing sizeof.  It folds macro forms such as:
+     *     ( sizeof(x) / sizeof(x[0]) )
+     * but avoids touching ordinary parentheses/casts like:
+     *     ((unsigned int)rand() % 300)
+     */
+    scan = tok_start_pos + 1;
+    depth = 1;
+    saw_sizeof = 0;
+    while (scan < src_len && depth > 0) {
+        if (src[scan] == '(') {
+            depth++;
+            scan++;
+            continue;
+        }
+        if (src[scan] == ')') {
+            depth--;
+            scan++;
+            continue;
+        }
+
+        /*
+         * Keep this speculative fold extremely conservative.  It is meant for
+         * pure constant macros such as:
+         *     ( sizeof(a) / sizeof(a[0]) )
+         *
+         * Do not try to fold mixed runtime/sizeof expressions such as:
+         *     (buf + sizeof(struct Pair))
+         * or stdarg.h va_arg macro internals.  The real parser can handle
+         * those; the speculative constant parser would emit diagnostics before
+         * it discovers the expression is not constant.
+         */
+        if (src[scan] == '*')
+            return 0;
+
+        if (is_ident_start((unsigned char)src[scan])) {
+            char word[64];
+            int wi;
+            long p;
+
+            wi = 0;
+            p = scan;
+            while (p < src_len && is_ident_char((unsigned char)src[p])) {
+                if (wi < (int)sizeof(word) - 1)
+                    word[wi++] = src[p];
+                p++;
+            }
+            word[wi] = 0;
+
+            if (!strcmp(word, "sizeof")) {
+                int sd;
+
+                saw_sizeof = 1;
+                scan = p;
+                while (scan < src_len && isspace((unsigned char)src[scan]))
+                    scan++;
+
+                /* Skip sizeof(type-or-expression) as one opaque constant
+                 * operand for this pre-scan.  parse_const_long_expr() will
+                 * validate it for real after the scan succeeds. */
+                if (scan < src_len && src[scan] == '(') {
+                    sd = 1;
+                    scan++;
+                    while (scan < src_len && sd > 0) {
+                        if (src[scan] == '(')
+                            sd++;
+                        else if (src[scan] == ')')
+                            sd--;
+                        scan++;
+                    }
+                    continue;
+                }
+
+                /* sizeof identifier */
+                if (scan < src_len && is_ident_start((unsigned char)src[scan])) {
+                    scan++;
+                    while (scan < src_len && is_ident_char((unsigned char)src[scan]))
+                        scan++;
+                    continue;
+                }
+
+                continue;
+            }
+
+            /* Any other identifier means this is not a pure constant sizeof
+             * expression.  Leave it for normal expression codegen. */
+            return 0;
+        }
+
+        scan++;
+    }
+
+    if (!saw_sizeof || depth != 0)
+        return 0;
+
+    next_token();
+    v = parse_const_long_expr();
+    if (tok.kind != ')')
+        goto fail;
+
+    next_token();
+    fprintf(outf, "\tld hl,%ld\n", v & 0xffffL);
+    g_expr_type = TYPE_INT;
+    return 1;
+
+fail:
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    errors = save_errors;
+    g_tok_long_suffix = save_long_suffix;
+    g_tok_unsigned_suffix = save_unsigned_suffix;
+    tok = save_tok;
+    return 0;
+}
+
 static void gen_primary(void)
 {
     current_field_bit_width = 0;
@@ -6479,6 +6624,9 @@ static void gen_primary(void)
         g_expr_type = TYPE_INT;
         return;
     }
+
+    if (try_gen_parenthesized_const_size_expr())
+        return;
 
     if (paren_starts_indirect_call()) {
         long fp_arg_start[MAX_SNAPSHOT];

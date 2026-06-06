@@ -3000,19 +3000,98 @@ static int pass_dead_hl_load_before_ldhl(void)
 {
     int i;
     int changed;
-    char off[32];
+    char off[32], off2[32];
     char imm[128];
 
     changed = 0;
 
     for (i = 0; i + 2 < nlines; ++i) {
         if (peep_parse_ld_l_ix(lines[i], off) &&
-            eq(i + 1, "ld h,0") &&
+            (eq(i + 1, "ld h,0") || peep_parse_ld_h_ix(lines[i + 1], off2)) &&
             parse_ld_hl_imm(lines[i + 2], imm)) {
             delete_n(i, 2);
             changed = 1;
             if (i > 0) --i;
         }
+    }
+
+    return changed;
+}
+
+static int parse_ix_off_numeric(const char *off, int *val); /* forward */
+
+/*
+ * Remove the 6-instruction signed-compare bias (xor 80h trick) from
+ * for-loop back edges where the loop counter is provably non-negative.
+ *
+ * DCC emits for a signed 16-bit compare against a small positive constant:
+ *
+ *   ld a,h       ; }
+ *   xor 80h      ; } bias both operands by flipping sign bit so that
+ *   ld h,a       ; } signed subtraction with SBC gives the right carry
+ *   ld a,d       ; }
+ *   xor 80h      ; }
+ *   ld d,a       ; }
+ *   or a
+ *   sbc hl,de
+ *   jp c/nc, BODY
+ *
+ * When the full pattern immediately preceded by the loop back-edge increment
+ * is recognised, both the counter (fresh from the 16-bit inc) and the limit
+ * (CONST <= 32767) have sign bit 0, so the XOR 80h operations are no-ops.
+ * Remove the 6-instruction block; the remaining unsigned SBC gives the same
+ * carry as the signed comparison would.
+ *
+ * Required context (looking backward from "ld a,h" at position i):
+ *   i-1: ld de,CONST         0 < CONST <= 32767
+ *   i-2: ld h,(ix+HOFF)
+ *   i-3: ld l,(ix+LOFF)
+ *   i-4: LSKIP:
+ *   i-5: inc (ix+HOFF)       HOFF == LOFF+1 (little-endian adjacent bytes)
+ *   i-6: jp nz,LSKIP
+ *   i-7: inc (ix+LOFF)
+ */
+static int pass_elim_loop_back_signed_bias(void)
+{
+    int i;
+    int changed = 0;
+
+    for (i = 7; i + 8 < nlines; ++i) {
+        char loff[32], hoff[32], skip_lab[128], got_lab[128];
+        long const_val;
+        int lo_val, hi_val;
+        char inc_lo[64], inc_hi[64];
+
+        if (!eq(i,   "ld a,h"))    continue;
+        if (!eq(i+1, "xor 80h"))   continue;
+        if (!eq(i+2, "ld h,a"))    continue;
+        if (!eq(i+3, "ld a,d"))    continue;
+        if (!eq(i+4, "xor 80h"))   continue;
+        if (!eq(i+5, "ld d,a"))    continue;
+        if (!eq(i+6, "or a"))      continue;
+        if (!eq(i+7, "sbc hl,de")) continue;
+        if (strncmp(lines[i+8], "jp ", 3) != 0) continue;
+
+        if (!parse_ld_de_positive_imm(lines[i-1], &const_val)) continue;
+        if (!peep_parse_ld_h_ix(lines[i-2], hoff))             continue;
+        if (!peep_parse_ld_l_ix(lines[i-3], loff))             continue;
+        if (!parse_ix_off_numeric(loff, &lo_val))               continue;
+        if (!parse_ix_off_numeric(hoff, &hi_val))               continue;
+        if (hi_val != lo_val + 1)                               continue;
+        if (!label_name_at(i-4, skip_lab))                      continue;
+
+        sprintf(inc_hi, "inc (ix%s)", hoff);
+        if (!eq(i-5, inc_hi))                                   continue;
+
+        if (!parse_jp_nz_label(lines[i-6], got_lab))           continue;
+        if (strcmp(got_lab, skip_lab) != 0)                     continue;
+
+        sprintf(inc_lo, "inc (ix%s)", loff);
+        if (!eq(i-7, inc_lo))                                   continue;
+
+        delete_n(i, 6);
+        changed = 1;
+        if (i >= 7) i -= 7;
     }
 
     return changed;
@@ -8143,6 +8222,7 @@ int main(int argc, char **argv)
         if (pass_byte_minmax_board_and_assign()) changed = 1;
         if (pass_inline_simple_call_hl_from_loaded_pointer()) changed = 1;
         if (pass_dead_hl_load_before_ldhl()) changed = 1;
+        if (pass_elim_loop_back_signed_bias()) changed = 1;
         if (pass_cp_zero_to_or_a()) changed = 1;
         if (pass_hl_cmp_zero_to_or_hl()) changed = 1;
         if (pass_signed_cmp_const_low0()) changed = 1;

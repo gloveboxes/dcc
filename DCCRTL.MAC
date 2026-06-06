@@ -451,90 +451,89 @@ sp3:
         public  __srch
 __srch:
         ; char *strrchr(const char *s, int c)
-        ; A remains the loaded character after CP, so do not reload (HL).
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      l,(ix+4)
-        ld      h,(ix+5)        ; HL = scan pointer
-        ld      c,(ix+6)        ; C = target char
-        ld      de,0            ; DE = last match / NULL
-srch_loop:
-        ld      a,(hl)
-        cp      c
-        jr      nz,srch_no_match
-        ld      e,l
-        ld      d,h
-srch_no_match:
-        or      a
-        jr      z,srch_done
-        inc     hl
-        jr      srch_loop
-srch_done:
-        ex      de,hl           ; return last match
-        pop     ix
+        ; CPIR finds end of string, then CPDR scans backward for last match.
+        ; 37T/byte combined vs 52T/byte forward scan (~30% faster on typical strings).
+        pop     de              ; pop return address
+        pop     hl              ; HL = s
+        pop     bc              ; BC = c (C = char)
+        push    bc              ; restore c for caller cleanup
+        push    hl              ; restore s for caller cleanup
+        push    de              ; restore return address
+        ld      e,c             ; save target char in E (CPIR clobbers BC)
+        xor     a               ; A = 0, search for NUL
+        ld      c,a
+        ld      b,a             ; BC = 0 = 65536 max CPIR iterations
+        cpir                    ; scan forward to NUL: 21T/byte
+        dec     hl              ; HL = NUL position
+        ld      a,c             ; negate BC to get strlen+1
+        cpl
+        ld      c,a
+        ld      a,b
+        cpl
+        ld      b,a
+        inc     bc              ; BC = strlen+1
+        ld      a,e             ; A = target char
+        cpdr                    ; scan backward: 16T/byte
+        jp      nz,srch_not_found
+        inc     hl              ; CPDR leaves HL one before match
+        ret
+srch_not_found:
+        ld      hl,0
         ret
 
 
         public  __schr
 __schr:
         ; char *strchr(const char *s, int c)
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      c,(ix+6)
+        ; ret z returns immediately on match (38T/byte vs 47T/byte).
+        pop     de              ; pop return address
+        pop     hl              ; HL = s
+        pop     bc              ; BC = c (C = char)
+        push    bc              ; restore c for caller cleanup
+        push    hl              ; restore s for caller cleanup
+        push    de              ; restore return address
 schr_loop:
         ld      a,(hl)
         cp      c
-        jr      z,schr_found
-        or      a
-        jr      z,schr_not_found
+        ret     z               ; found: HL points to match
         inc     hl
-        jr      schr_loop
-schr_found:
-        pop     ix
-        ret
-schr_not_found:
-        ld      hl,0
-        pop     ix
+        or      a
+        jr      nz,schr_loop
+        ld      hl,0            ; not found
         ret
 
         public  __sstr
 __sstr:
         ; char *strstr(const char *haystack, const char *needle)
-        ; Optimized for the common first-character-mismatch case.
-        ; Keep DE as the current haystack candidate/scan pointer and B as
-        ; needle[0].  Only push the candidate after the first character matches.
+        ; cp (hl) outer scan: 43T/byte vs 47T/byte.
+        ; Save/restore needle ptr around candidate comparison so no IX reload needed.
         push    ix
         ld      ix,0
         add     ix,sp
         ld      e,(ix+4)
-        ld      d,(ix+5)        ; DE = haystack scan/candidate
+        ld      d,(ix+5)        ; DE = haystack
         ld      l,(ix+6)
         ld      h,(ix+7)        ; HL = needle
-        ld      b,(hl)          ; B = first needle char
-        ld      a,b
+        pop     ix              ; done with frame
+        ld      a,(hl)
         or      a
         jr      nz,sstr_scan
-        ex      de,hl           ; empty needle => haystack
-        pop     ix
+        ex      de,hl           ; empty needle => return haystack
         ret
 sstr_scan:
-        ld      a,(de)
-        or      a
-        jr      z,sstr_not_found
-        cp      b
-        jr      z,sstr_cand
-        inc     de
-        jr      sstr_scan
+        ld      a,(de)          ; 7T: haystack char
+        cp      (hl)            ; 7T: vs needle[0]
+        jr      z,sstr_cand     ; 7T/12T
+        inc     de              ; 6T
+        or      a               ; 4T: haystack NUL?
+        jr      nz,sstr_scan    ; 12T/7T
+        ld      hl,0            ; not found
+        ret
 sstr_cand:
-        push    de              ; save candidate for return/failure restart
-        inc     de              ; first char already matched
-        ld      l,(ix+6)
-        ld      h,(ix+7)
-        inc     hl              ; compare from needle[1]
+        push    hl              ; save needle ptr for fail recovery
+        push    de              ; save candidate start (for return on match)
+        inc     de              ; haystack past first matched char
+        inc     hl              ; needle past first char
 sstr_cmp:
         ld      a,(hl)
         or      a
@@ -547,16 +546,13 @@ sstr_cmp:
         inc     hl
         jr      sstr_cmp
 sstr_fail:
-        pop     de              ; restore candidate
-        inc     de              ; next candidate
+        pop     de              ; discard candidate start
+        pop     hl              ; restore needle ptr
+        inc     de              ; try next haystack position
         jr      sstr_scan
 sstr_found:
-        pop     hl              ; return candidate
-        pop     ix
-        ret
-sstr_not_found:
-        ld      hl,0
-        pop     ix
+        pop     hl              ; HL = candidate start (the match)
+        pop     bc              ; discard saved needle ptr
         ret
 
         public  __ncmp
@@ -891,8 +887,9 @@ nc1dn:
         public  __mcmp
 __mcmp:
         ; int memcmp(const void *s1, const void *s2, size_t n)
-        ; Keep HL = s2 and DE = s1 so CP (HL) compares *s1 - *s2
-        ; without saving BC on every byte.
+        ; DJNZ inner loop: 46T/byte vs 66T/byte (~30% faster on large buffers).
+        ; BC = n split as B=n_high (256-byte chunk count), C=n_low (tail byte count).
+        ; Pop IX early after loading args -- frame no longer needed in hot loop.
         push    ix
         ld      ix,0
         add     ix,sp
@@ -902,30 +899,52 @@ __mcmp:
         ld      h,(ix+7)        ; HL = s2
         ld      c,(ix+8)
         ld      b,(ix+9)        ; BC = n
-mcmp_loop:
+        pop     ix              ; caller ix restored; done with frame
         ld      a,b
         or      c
-        jr      z,mcmp_eq
-        ld      a,(de)          ; A = *s1
-        cp      (hl)            ; compare against *s2
-        jr      nz,mcmp_diff
+        jr      z,mc2eq         ; n == 0
+        ld      a,b
+        or      a
+        jr      z,mc2tail       ; n < 256: no 256-byte chunks
+        push    bc              ; save [n_high, n_low] across chunk loop
+mc2chunk:
+        ld      b,0             ; DJNZ with B=0 runs 256 iterations
+mc2clp:
+        ld      a,(de)
+        cp      (hl)
+        jr      nz,mc2dkl
         inc     de
         inc     hl
-        dec     bc
-        jr      mcmp_loop
-mcmp_diff:
-        ; A still has *s1.  Compute *s1 - *s2 for the return value.
-        sub     (hl)
+        djnz    mc2clp
+        pop     bc              ; restore [n_high, n_low]
+        djnz    mc2more         ; dec n_high; more chunks if nonzero
+        jr      mc2tail         ; all chunks done, handle tail
+mc2more:
+        push    bc
+        jr      mc2chunk
+mc2tail:
+        ld      a,c             ; A = n_low (remaining bytes)
+        or      a
+        jr      z,mc2eq
+        ld      b,a
+mc2tlp:
+        ld      a,(de)
+        cp      (hl)
+        jr      nz,mc2dtl
+        inc     de
+        inc     hl
+        djnz    mc2tlp
+mc2eq:
+        ld      hl,0
+        ret
+mc2dkl:
+        pop     bc              ; clean [n_high, n_low] off stack
+mc2dtl:
+        sub     (hl)            ; A = *s1 - *s2
         ld      l,a
         ld      h,0
-        jr      nc,mcmp_diff_done
+        ret     nc
         ld      h,0ffh
-mcmp_diff_done:
-        pop     ix
-        ret
-mcmp_eq:
-        ld      hl,0
-        pop     ix
         ret
 
         public  __mmov

@@ -2087,6 +2087,163 @@ static int pass_float_zero_store(void)
     return changed;
 }
 
+
+static int pass_const_divmod_helpers(void)
+{
+    int i;
+    int changed;
+
+    changed = 0;
+
+    for (i = 0; i + 1 < nlines; ++i) {
+        long divv;
+        int has_extrn;
+        const char *oldname;
+        const char *newname;
+        char call_old[64];
+        char extrn_old[64];
+        char call_new[64];
+        char extrn_new[64];
+
+        if (!parse_ld_de_positive_imm(lines[i], &divv))
+            continue;
+
+        /* Leave divide-by-zero and unusual negative constants alone. */
+        if (divv <= 0)
+            continue;
+
+        oldname = NULL;
+        newname = NULL;
+
+#define TRY_DIVMOD_HELPER(OLD, NEW) \
+        do { \
+            sprintf(call_old, "call %s", OLD); \
+            sprintf(extrn_old, "extrn %s", OLD); \
+            if (eq(i + 1, call_old) || \
+                (i + 2 < nlines && eq(i + 1, extrn_old) && eq(i + 2, call_old))) { \
+                oldname = OLD; \
+                newname = NEW; \
+            } \
+        } while (0)
+
+        TRY_DIVMOD_HELPER("__divu", "__q2u");
+        if (!oldname) TRY_DIVMOD_HELPER("__modu", "__r2u");
+        if (!oldname) TRY_DIVMOD_HELPER("__divs", "__q2s");
+        if (!oldname) TRY_DIVMOD_HELPER("__mods", "__r2s");
+
+#undef TRY_DIVMOD_HELPER
+
+        if (!oldname)
+            continue;
+
+        sprintf(call_old, "call %s", oldname);
+        sprintf(extrn_old, "extrn %s", oldname);
+        sprintf(call_new, "call %s", newname);
+        sprintf(extrn_new, "extrn %s", newname);
+
+        has_extrn = (i + 2 < nlines && eq(i + 1, extrn_old) && eq(i + 2, call_old));
+        if (has_extrn) {
+            replace1_tagged(i + 1, extrn_new, "const_divmod_helper");
+            replace1(i + 2, call_new);
+        } else {
+            replace1_tagged(i + 1, call_new, "const_divmod_helper");
+        }
+        changed = 1;
+    }
+
+    return changed;
+}
+
+
+static int peep_is_exact_extrn_for(const char *line, const char *name)
+{
+    char clean[MAX_LINE];
+    char want[64];
+
+    strip_peep_comment_copy(clean, line);
+    sprintf(want, "extrn %s", name);
+    return strcmp(clean, want) == 0;
+}
+
+static int peep_is_exact_call_for(const char *line, const char *name)
+{
+    char clean[MAX_LINE];
+    char want[64];
+
+    strip_peep_comment_copy(clean, line);
+    sprintf(want, "call %s", name);
+    return strcmp(clean, want) == 0;
+}
+
+static int peep_line_is_divmod_extrn(const char *line)
+{
+    static const char *names[] = {
+        "__divu", "__modu", "__divs", "__mods",
+        "__q2u", "__r2u", "__q2s", "__r2s",
+        NULL
+    };
+    int i;
+
+    for (i = 0; names[i]; ++i)
+        if (peep_is_exact_extrn_for(line, names[i]))
+            return 1;
+    return 0;
+}
+
+/*
+ * pass_fix_divmod_extrns:
+ *
+ * pass_const_divmod_helpers may rewrite the first call after an EXTRN from
+ * __modu/__mods/etc. to the constant-divisor helper __r2u/__r2s/etc.  If the
+ * same function later still contains variable-divisor calls to the old helper,
+ * M80 reports them as undefined at assembly time because the only EXTRN was
+ * consumed by the rewrite.  Conversely, leaving an unused EXTRN is bad for the
+ * reduced-runtime link because dccrtlstrip/L80 can keep or require an unused
+ * block.
+ *
+ * Normalize this small helper family at the very end: remove stale EXTRNs for
+ * the div/mod helper names, scan the final calls, then insert exactly the EXTRNs
+ * still required by the optimized module.
+ */
+static void pass_fix_divmod_extrns(void)
+{
+    static const char *names[] = {
+        "__divu", "__modu", "__divs", "__mods",
+        "__q2u", "__r2u", "__q2s", "__r2s",
+        NULL
+    };
+    int used[8];
+    int i, k;
+    char line[64];
+
+    for (k = 0; k < 8; ++k)
+        used[k] = 0;
+
+    /* Delete all existing EXTRNs for this helper family. */
+    for (i = 0; i < nlines; ++i) {
+        if (peep_line_is_divmod_extrn(lines[i])) {
+            delete_n(i, 1);
+            --i;
+        }
+    }
+
+    /* Scan final code for calls that remain. */
+    for (i = 0; i < nlines; ++i) {
+        for (k = 0; names[k]; ++k) {
+            if (peep_is_exact_call_for(lines[i], names[k]))
+                used[k] = 1;
+        }
+    }
+
+    /* Insert in reverse so final order matches names[]. */
+    for (k = 7; k >= 0; --k) {
+        if (used[k]) {
+            sprintf(line, "extrn %s", names[k]);
+            insert_line(0, line);
+        }
+    }
+}
+
 static int pass_mulu_const(void)
 {
     int i, changed = 0;
@@ -2980,6 +3137,49 @@ static int pass_dead_hl_load_before_ldhl(void)
     return changed;
 }
 
+
+/*
+ * Replace a full 16-bit compare against zero used only for a Z/NZ branch:
+ *
+ *     ld de,0
+ *     or a
+ *     sbc hl,de
+ *     jp z,L        ; or jp nz,L
+ *
+ * with the standard 16-bit zero test:
+ *
+ *     ld a,h
+ *     or l
+ *     jp z,L        ; or jp nz,L
+ *
+ * This is safe only for equality/non-equality branches.  Carry is different,
+ * so relational branches must not be rewritten by this pass.
+ */
+static int pass_hl_cmp_zero_to_or_hl(void)
+{
+    int i;
+    int changed;
+
+    changed = 0;
+
+    for (i = 0; i + 3 < nlines; ++i) {
+        if (eq(i, "ld de,0") &&
+            eq(i + 1, "or a") &&
+            eq(i + 2, "sbc hl,de") &&
+            (strncmp(lines[i + 3], "jp z,", 5) == 0 ||
+             strncmp(lines[i + 3], "jp nz,", 6) == 0)) {
+            replace1_tagged(i, "ld a,h", "cmp0_or_hl");
+            replace1(i + 1, "or l");
+            delete_n(i + 2, 1);
+            changed = 1;
+            if (i > 0)
+                --i;
+        }
+    }
+
+    return changed;
+}
+
 static int pass_cp_zero_to_or_a(void)
 {
     int i;
@@ -3022,6 +3222,75 @@ static int pass_cp_zero_to_or_a(void)
  * JP does not alter flags, so this is also safe when the compiler emits two
  * adjacent flag checks after the compare, such as jp z,L / jp c,L.
  */
+
+/*
+ * Optimize the common signed 16-bit compare against a positive constant whose
+ * low byte is zero.  DCC emits signed compares by biasing both high bytes and
+ * doing a full 16-bit subtract:
+ *
+ *     ld de,4096
+ *     ld a,h
+ *     xor 80h
+ *     ld h,a
+ *     ld a,d
+ *     xor 80h
+ *     ld d,a
+ *     or a
+ *     sbc hl,de
+ *     jp nc,L          ; branch when HL >= 4096
+ *
+ * For constants K*256, the low byte cannot affect < or >=, so compare the
+ * biased high byte directly.  This is useful for loops such as i < 4096.
+ */
+static int pass_signed_cmp_const_low0(void)
+{
+    int i;
+    int changed;
+    int imm;
+    char line[128];
+
+    changed = 0;
+
+    for (i = 0; i + 8 < nlines; ++i) {
+        if (!peep_parse_ld_de_signed(lines[i], &imm))
+            continue;
+        if (imm <= 0 || imm > 32767 || (imm & 255) != 0)
+            continue;
+        if (!eq(i + 1, "ld a,h"))
+            continue;
+        if (!eq(i + 2, "xor 80h"))
+            continue;
+        if (!eq(i + 3, "ld h,a"))
+            continue;
+        if (!eq(i + 4, "ld a,d"))
+            continue;
+        if (!eq(i + 5, "xor 80h"))
+            continue;
+        if (!eq(i + 6, "ld d,a"))
+            continue;
+        if (!eq(i + 7, "or a"))
+            continue;
+        if (!eq(i + 8, "sbc hl,de"))
+            continue;
+        if (i + 9 >= nlines)
+            continue;
+        if (strncmp(lines[i + 9], "jp nc,", 6) != 0 &&
+            strncmp(lines[i + 9], "jp c,", 5) != 0)
+            continue;
+
+        replace1_tagged(i, "ld a,h", "signed_cmp_const_low0");
+        replace1(i + 1, "xor 80h");
+        sprintf(line, "cp %d", ((imm >> 8) ^ 0x80) & 255);
+        replace1(i + 2, line);
+        delete_n(i + 3, 6);
+        changed = 1;
+        if (i > 0)
+            --i;
+    }
+
+    return changed;
+}
+
 static int pass_zeroext_byte_cmp_const(void)
 {
     int i;
@@ -7997,6 +8266,8 @@ int main(int argc, char **argv)
         if (pass_inline_simple_call_hl_from_loaded_pointer()) changed = 1;
         if (pass_dead_hl_load_before_ldhl()) changed = 1;
         if (pass_cp_zero_to_or_a()) changed = 1;
+        if (pass_hl_cmp_zero_to_or_hl()) changed = 1;
+        if (pass_signed_cmp_const_low0()) changed = 1;
         if (pass_zeroext_byte_cmp_const()) changed = 1;
         if (pass_call_hl_stack_roundtrip()) changed = 1;
         if (pass_minmax_winner_result_no_temp()) changed = 1;
@@ -8052,6 +8323,7 @@ int main(int argc, char **argv)
         if (pass_jp_to_plain_ret()) changed = 1;
         if (pass_board_byte_eq_direct_load()) changed = 1;
         if (pass_lookforwinner_b_cache()) changed = 1;
+        if (pass_const_divmod_helpers()) changed = 1;
         if (pass_mulu_const()) changed = 1;
         if (pass_minmax_unsigned_compares()) changed = 1;
         if (pass_fix_main_argc_gt_one()) changed = 1;
@@ -8124,6 +8396,8 @@ int main(int argc, char **argv)
         pass_ldwl_stub();    /* -231 bytes, +8% perf */
 #endif
     }
+
+    pass_fix_divmod_extrns();
 
     write_file(outfile);
     return 0;

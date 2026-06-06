@@ -56,7 +56,7 @@ m80.com and l80.com are part of the M80 Assembler product from Microsoft. I didn
 
 ## C89+ language 
 
-The compiler accepts some syntax from later C standards including declaring variables where you like and initializing them with complex expressions. Only 4-byte floats are supported; 8-byte doubles are not. I'm almost certain more arcane C89 expressions/features aren't implemented (yet), but the test cases have pretty good coverage. Only a small subset of the C runtime is implemented in DCCRTL.MAC, but the samples implement a bunch more that you can copy/paste where needed. The register and const keywords are ignored. Structure assignment and return values aren't implemented.
+The compiler accepts some syntax from later C standards including declaring variables where you like and initializing them with complex expressions. Only 4-byte floats are supported; 8-byte doubles are not. I'm almost certain more arcane C89 expressions/features aren't implemented (yet), but the test cases have pretty good coverage. Only a small subset of the C runtime is implemented in DCCRTL.MAC, but the samples implement a bunch more that you can copy/paste where needed. The register, volatile, and const keywords are ignored.
 
 ## Memory layout
 
@@ -79,10 +79,12 @@ Generally, dcc compares very well with all other compilers that target CP/M, esp
 
 Benchmark times are in milliseconds on a 4Mhz Z80. CP/M file sizes are rounded up to the next multiple of 128 bytes due to how the file system works.
 
-<img width="3455" height="1181" alt="table" src="https://github.com/user-attachments/assets/5b495370-aa53-47cc-b7e8-0398b1899480" />
+<img width="3456" height="1184" alt="table" src="https://github.com/user-attachments/assets/89fba053-d4b5-4b6e-bdd2-6eb770de09ef" />
 
 ## Notes
 
 I built the compiler using AI. I wanted to use Claude and ChatGPT on something reasonably complicated. I used each about equally and found them both to be extemely helpful and infurriating at the same time. They are lazy, forgetful, brilliant, fast, insightful, and seemingly willfully ignorant. They remind me of the hundreds of people I worked with over the years. They wrote about half the test cases, Google wrote a few, and I had the rest from other projects. It took me hundreds of prompts to get the compiler this far along. I had to drive the architecture. I also had to do a bunch of the debugging when they got stuck. asme.mac, asmsieve.mac, and asmttt.mac are my assembly versions of the benchmarks. They proved useful in prompts to get the AIs to optimize their generated code.
 
 Why dcc? All compilers from that era were K&R since the first ANSI C standard was C89 (1989). I wanted a compiler with modern syntax for CP/M. I was also curious how hard it would be to generate better code than the older compilers. It's  easier than ever to code for old machines, and I think that's pretty cool.
+
+Compiler writers generally avoid adding optimizations for specific apps; that's long been considered "cheating" by those who run benchmarks. In this case, I encourage you to "cheat" for your app. Point Claude at your source code and dcc's soucrce code and tell it to make dcc optimize code generation for your app (size or speed). It's the future.

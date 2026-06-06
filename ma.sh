@@ -122,6 +122,11 @@ to_crlf "$rtl_min"
 "$NTVCM" "$L80" "/P:100,RTLMIN,${upper_base},${upper_base}/N/E"
 
 # Convenience lowercase copy for host-side scripts/emulators that prefer it.
+# On macOS's usual case-insensitive filesystems, TTT.COM and ttt.com may be
+# the same file.  Avoid cp's "identical" error under set -e.
+lower_com="${lower_base}.com"
 if [ -f "$app_com" ] && [ "$lower_base" != "$upper_base" ]; then
-    cp -f "$app_com" "${lower_base}.com"
+    if [ ! -e "$lower_com" ] || [ ! "$app_com" -ef "$lower_com" ]; then
+        cp -f "$app_com" "$lower_com"
+    fi
 fi

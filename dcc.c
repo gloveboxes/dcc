@@ -14067,6 +14067,138 @@ static void remember_proto_param_type(int type)
     g_proto_nargs++;
 }
 
+static int old_style_param_list_starts(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    int r;
+
+    if (tok.kind != TOK_ID || find_typedef(tok.text) >= 0)
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    r = 1;
+    for (;;) {
+        if (tok.kind != TOK_ID || find_typedef(tok.text) >= 0) {
+            r = 0;
+            break;
+        }
+        next_token();
+        if (tok.kind == ')')
+            break;
+        if (tok.kind != ',') {
+            r = 0;
+            break;
+        }
+        next_token();
+    }
+
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return r;
+}
+
+static void recompute_param_offsets(void)
+{
+    int i;
+    int off;
+    int sz;
+
+    off = ((parse_function_return_type & TYPE_STRUCT) &&
+           type_ptr_depth(parse_function_return_type) == 0) ? 6 : 4;
+
+    for (i = 0; i < nlocals; ++i) {
+        if (locals[i].storage != SC_PARAM)
+            continue;
+        sz = type_size(locals[i].type);
+        if (sz < 2) sz = 2;
+        locals[i].offset = off;
+        locals[i].size = sz;
+        off += sz;
+    }
+    param_offset = off;
+}
+
+static void parse_old_style_param_id_list(void)
+{
+    char name[64];
+
+    for (;;) {
+        if (tok.kind != TOK_ID) {
+            error_here("parameter name expected");
+            break;
+        }
+        strncpy(name, tok.text, sizeof(name) - 1);
+        name[sizeof(name) - 1] = 0;
+        next_token();
+        add_param_alloc(name, TYPE_INT);
+        if (!accept(','))
+            break;
+    }
+}
+
+static void parse_old_style_param_declarations(void)
+{
+    int base;
+    int type;
+    char name[64];
+    struct Sym *s;
+
+    while (tok.kind != TOK_EOF && tok.kind != '{' && starts_type()) {
+        base = parse_base_type();
+
+        for (;;) {
+            type = base;
+            while (accept('*')) {
+                skip_type_qualifiers();
+                type = type_add_ptr(type);
+            }
+
+            if (tok.kind != TOK_ID) {
+                error_here("parameter declaration name expected");
+                while (tok.kind != ';' && tok.kind != TOK_EOF && tok.kind != '{')
+                    next_token();
+                break;
+            }
+
+            strncpy(name, tok.text, sizeof(name) - 1);
+            name[sizeof(name) - 1] = 0;
+            next_token();
+
+            skip_prototype_array_suffixes(&type);
+            if (tok.kind == '(') {
+                skip_prototype_function_suffix();
+                type = type_add_ptr(type);
+            }
+
+            s = find_local(name);
+            if (!s || s->storage != SC_PARAM) {
+                error_here("old-style parameter declaration does not match parameter list");
+            } else {
+                s->type = type;
+            }
+
+            if (!accept(','))
+                break;
+        }
+
+        expect(';');
+    }
+
+    recompute_param_offsets();
+}
+
 static void parse_param_list(void)
 {
     int type;
@@ -14086,6 +14218,11 @@ static void parse_param_list(void)
 
     /* Empty parentheses in C89 mean old-style/no prototype. */
     if (tok.kind == ')') return;
+
+    if (old_style_param_list_starts()) {
+        parse_old_style_param_id_list();
+        return;
+    }
 
     for (;;) {
         if (tok.kind == TOK_ELLIPSIS) {
@@ -15292,6 +15429,9 @@ static void parse_function_or_global(int base_type)
             parse_param_list();
             copy_parsed_prototype_to_sym(s);
             expect(')');
+
+            if (!g_proto_has && tok.kind != '{' && tok.kind != ';' && tok.kind != ',')
+                parse_old_style_param_declarations();
 
             if (tok.kind == '{') {
                 saved_pos = posi;

@@ -3066,7 +3066,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ Jun  7 2026
-__TIME__ 06:28:41
+__TIME__ 07:56:07
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3407,6 +3407,17 @@ atan2f -1.000000 -1.000000: -2.356195
 atan2f -1.000000 0.000000: -1.570796
 atan2f -1.000000 1.000000: -0.785398
 atan2f 0.000000 0.000000: 0.000000
+value 0.000000. sinf 0.000000, xsinf 0.000000
+value 0.500000. sinf 0.479426, xsinf 0.479426
+value 1.000000. sinf 0.841471, xsinf 0.841471
+value 1.500000. sinf 0.997498, xsinf 0.997463
+value -0.500000. sinf -0.479426, xsinf -0.479426
+value -1.000000. sinf -0.841471, xsinf -0.841471
+value -1.500000. sinf -0.997498, xsinf -0.997463
+value 3.000000. sinf 0.141120, xsinf 0.141120
+value -3.000000. sinf -0.141120, xsinf -0.141120
+value 5.000000. sinf -0.958925, xsinf -0.958923
+value -5.000000. sinf 0.958925, xsinf 0.958923
 ttrig completed with great success
 test tlog
 === Custom C89 Float Math Verification ===

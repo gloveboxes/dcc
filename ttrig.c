@@ -1,7 +1,198 @@
+/*
+    this test implements various floating point functions and either prints or validates the results
+    so regressions can be found.
+*/
+
 #include <stdio.h>
 #include <math.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <float.h>  /* For FLT_EPSILON */
 
 #define _countof( X ) ( sizeof( X ) / sizeof( X[0] ) )
+const size_t max_N_Iterations = 12; // 12 will fit in uint32_t
+
+#define TRIG_FLT_EPSILON 0.00004f /* much larger than FLT_EPSILON because Taylor Series version is not great */
+
+static void check_same_f( const char * operation, float a, float b, float dbgval )
+{
+    float diff = a - b;
+    float abs_diff = fabsf( diff );
+    //printf( "abs_diff %f, TRUG_FLT_EPSILON %f\n", abs_diff, TRIG_FLT_EPSILON );
+    bool eq = ( abs_diff <= TRIG_FLT_EPSILON );
+    if ( !eq )
+    {
+        printf( "operation %s: float %.20f is not the same as float %.20f\n", operation, a, b );
+        printf( "  original value: %.20f\n", dbgval );
+        exit( 0 );
+    }
+} //check_same_f
+
+uint32_t factorial( uint32_t n )
+{
+    if ( 0 == n )
+        return 1;
+    return n * factorial( n - 1 );
+}
+
+#define LN2 0.69314718056f
+
+float expf(float x)
+{
+    float sum, term, r;
+    int n, i;
+
+    /* Handle extreme edge cases to prevent overflow */
+    if (x > 88.0f) {
+        return 3.40282347e+38f; /* Approximate FLT_MAX */
+    }
+    if (x < -88.0f) {
+        return 0.0f;
+    }
+
+    /* Argument reduction: x = n * ln(2) + r */
+    /* C89 requires explicit floor/rounding logic if math.h is omitted */
+    n = (int)(x / LN2);
+    if (x < 0.0f && (x / LN2) != (float)n) {
+        n--;
+    }
+    r = x - (float)n * LN2;
+
+    /* Taylor Series for e^r = 1 + r + r^2/2! + r^3/3! + ... */
+    sum = 1.0f;
+    term = 1.0f;
+    for (i = 1; i <= 10; i++) {
+        term = term * r / (float)i;
+        sum += term;
+    }
+
+    /* Scale back up by 2^n using bit shifting or multiplication loops */
+    if (n >= 0) {
+        while (n > 0) {
+            sum *= 2.0f;
+            n--;
+        }
+    } else {
+        while (n < 0) {
+            sum /= 2.0f;
+            n++;
+        }
+    }
+
+    return sum;
+} //expf
+
+float logf(float x)
+{
+    float m, y, y2, term, sum;
+    int n, i;
+
+    /* Domain validation: log(x) is undefined for x <= 0 */
+    if (x <= 0.0f) {
+        return -3.40282347e+38f; /* Return large negative value or NaN proxy */
+    }
+
+    /* Argument reduction: Find n such that x = m * 2^n and 1.0 <= m < 2.0 */
+    n = 0;
+    m = x;
+    if (m >= 1.0f) {
+        while (m >= 2.0f) {
+            m /= 2.0f;
+            n++;
+        }
+    } else {
+        while (m < 1.0f) {
+            m *= 2.0f;
+            n--;
+        }
+    }
+
+    /* Map m to variable y where y = (m - 1) / (m + 1) */
+    y = (m - 1.0f) / (m + 1.0f);
+    y2 = y * y;
+
+    /* Taylor Series for ln(m) = 2 * (y + y^3/3 + y^5/5 + ...) */
+    sum = 0.0f;
+    term = y;
+    for (i = 1; i <= 13; i += 2) {
+        sum += term / (float)i;
+        term *= y2;
+    }
+    sum *= 2.0f;
+
+    /* Reconstruct: ln(x) = ln(m) + n * ln(2) */
+    return sum + (float)n * LN2;
+} //logf
+
+float powf(float base, float exponent)
+{
+    float result;
+    long int_exp;
+
+    /* Case 1: Exponent is exactly 0 -> x^0 = 1 */
+    if (exponent == 0.0f) {
+        return 1.0f;
+    }
+
+    /* Case 2: Base is exactly 0 -> 0^y */
+    if (base == 0.0f) {
+        if (exponent > 0.0f) {
+            return 0.0f;
+        } else {
+            /* Division by zero / undefined case, return 0 or INF depending on platform handling */
+            return 0.0f; 
+        }
+    }
+
+    /* Case 3: Base is negative */
+    if (base < 0.0f) {
+        /* Check if the exponent is a whole integer */
+        if (exponent == (float)((long)exponent)) {
+            int_exp = (long)exponent;
+            
+            /* Calculate using the absolute value of the base */
+            result = (float)expf(int_exp * logf(-base));
+            
+            /* If the exponent is odd, negate the result */
+            if (int_exp % 2 != 0) {
+                return -result;
+            }
+            return result;
+        } else {
+            /* Domain Error: Negative base with a fractional exponent results in a complex number */
+            return 0.0f; 
+        }
+    }
+
+    /* Case 4: General positive base fractional exponent (x^y = e^(y * ln(x))) */
+    return (float)expf(exponent * logf(base));
+} //powf
+
+float xsinf(float x) /* this version is much slower than the sinf() version. It's only here for testing */
+{
+    const float PI = 3.14159265f;
+    const float TWO_PI = 6.28318531f;
+    float result = 0.0f;
+    int sign = 1;
+    uint8_t i;
+
+    x = fmodf(x, TWO_PI);
+    if (x > PI)  x -= TWO_PI;
+    if (x < -PI) x += TWO_PI;
+
+    if (x > 1.57079632f) {
+        x = PI - x;
+    } else if (x < -1.57079632f) {
+        x = -PI - x;
+    }
+
+    for (i = 1; i <= max_N_Iterations; i++) {
+        result += sign * powf(x, 2 * i - 1) / factorial(2 * i - 1);
+        sign *= -1;
+    }
+
+    return result;
+}
 
 /* results compare to msvc's results aside from the occasional least-significant digit */
 
@@ -219,5 +410,14 @@ int main(void)
         printf( "atan2f %f %f: %f\n", y, x, atan2f( y, x ) );
     }
 
-    printf( "ttrig completed with great success\n" );
+     /* 4. Direct Sweep Testing: sinf vs. xsinf (Taylor Series Slow) version */
+    for (i = 0; i < _countof( angles ); i++) {
+        float test_val = angles[i];
+        float result = sinf( test_val );
+        float xresult = xsinf( test_val );
+        printf( "value %f. sinf %f, xsinf %f\n", test_val, result, xresult );
+        check_same_f( "sinf vs. xsinf", result, xresult, test_val );
+    }
+
+   printf( "ttrig completed with great success\n" );
 }

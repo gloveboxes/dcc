@@ -626,6 +626,7 @@ static int getc_src(void)
 }
 
 static int define_number_value(const char *name, long *out, int depth);
+static void strip_macro_replacement_comments(char *s);
 
 static int find_define(const char *name)
 {
@@ -1318,6 +1319,7 @@ static void parse_preprocessor_line(void)
                 while ((c = peekc()) != 0 && c != '\n' && i < (int)sizeof(val) - 1)
                     val[i++] = (char)getc_src();
                 val[i] = 0;
+                strip_macro_replacement_comments(val);
 
                 if (name[0]) add_define_ex(name, val[0] ? val : "1", 1, nargs, params);
                 (void)pi;
@@ -1328,6 +1330,7 @@ static void parse_preprocessor_line(void)
                 while ((c = peekc()) != 0 && c != '\n' && i < (int)sizeof(val) - 1)
                     val[i++] = (char)getc_src();
                 val[i] = 0;
+                strip_macro_replacement_comments(val);
 
                 if (name[0]) add_define(name, val[0] ? val : "1");
             }
@@ -1614,6 +1617,66 @@ static void trim_arg(char *s)
         s[n - 1] = 0;
         n--;
     }
+}
+
+static void strip_macro_replacement_comments(char *s)
+{
+    int i;
+    int o;
+    int quote;
+    int c;
+
+    /*
+     * #define replacement text ends at newline, but comments are replaced by
+     * whitespace before macro replacement is stored.  Do not strip comment
+     * markers that occur inside string or character literals.
+     */
+    i = 0;
+    o = 0;
+    quote = 0;
+
+    while (s[i]) {
+        c = (unsigned char)s[i];
+
+        if (quote) {
+            s[o++] = s[i++];
+            if (c == '\\' && s[i]) {
+                s[o++] = s[i++];
+                continue;
+            }
+            if (c == quote)
+                quote = 0;
+            continue;
+        }
+
+        if (c == '"' || c == '\'') {
+            quote = c;
+            s[o++] = s[i++];
+            continue;
+        }
+
+        if (c == '/' && s[i + 1] == '*') {
+            i += 2;
+            while (s[i] && !(s[i] == '*' && s[i + 1] == '/'))
+                i++;
+            if (s[i])
+                i += 2;
+            if (o > 0 && !isspace((unsigned char)s[o - 1]))
+                s[o++] = ' ';
+            continue;
+        }
+
+        if (c == '/' && s[i + 1] == '/') {
+            if (o > 0 && !isspace((unsigned char)s[o - 1]))
+                s[o++] = ' ';
+            break;
+        }
+
+        s[o++] = s[i++];
+    }
+
+    s[o] = 0;
+    trim_arg(s);
 }
 
 static int read_macro_call_args(char args[8][128], int *nargs)

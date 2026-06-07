@@ -21,41 +21,59 @@ void verify_str(const char *actual, const char *expected, const char *test_name)
     }
 }
 
-/* Feature 1 & 3 Setup: Token Pasting & Function-Like Macro Isolation */
+/* Token pasting and function-like macro isolation. */
 #define GLUE(a, b) a ## b
-
-/* A function-like macro hides '100' from premature evaluation in MSVC */
 #define SUB_MACRO_VAL() 100
-
-/* Pastes the token 'PREFIX_' directly onto whatever text token is passed */
 #define EVALUATE_TEST(x) GLUE(PREFIX_, x)
 
-/* Feature 4 Setup: Hierarchy Macros */
+/* Stringification and argument pre-expansion. */
 #define TEST_VALUE 99
 #define STR_IMMEDIATE(x) #x
 #define STR_DEFERRED(x) STR_IMMEDIATE(x)
 
+/* Function-like macro expansion through object macros and macro arguments. */
+#define ADD1(x) ((x)+1)
+#define VALUE_FROM_CALL ADD1(4)
+#define STR_DEFERRED_CALL(x) STR_IMMEDIATE(x)
+
+/* Pasted tokens must be rescanned as normal preprocessing tokens. */
+#define VALUE_7 123
+#define MAKE_VALUE(n) GLUE(VALUE_, n)
+
+/* Conditional expression handling. */
+#define PP_A 3
+#define PP_B 4
+#if defined(PP_A) && !defined(PP_MISSING) && ((PP_A + PP_B * 2) == 11)
+#define CONDITIONAL_VALUE 456
+#else
+#define CONDITIONAL_VALUE -1
+#endif
+
+#undef PP_B
+#ifdef PP_B
+#define UNDEF_VALUE -1
+#elif defined(PP_A)
+#define UNDEF_VALUE 789
+#else
+#define UNDEF_VALUE -2
+#endif
+
 int main(void) {
-    /* Define the target variable name using the function-like token wrapper name */
     int PREFIX_SUB_MACRO_VAL = 777;
 
     printf("Running Universal C89 Preprocessor Tests...\n\n");
 
-    /* 1. Test Token Pasting (##) */
-    /* Pastes 'PREFIX_' and 'SUB_MACRO_VAL' literal into the variable identifier */
     verify_int(GLUE(PREFIX_, SUB_MACRO_VAL), 777, "1. Token Pasting (##)");
-
-    /* 2. Test Automatic String Literal Concatenation */
     verify_str("Part A " "and Part B", "Part A and Part B", "2. String Concatenation");
-
-    /* 3. Test Function-like Macro Isolation during Pasting */
-    /* If isolation fails, 'SUB_MACRO_VAL' evaluates, generating a call or error. */
-    /* Because it works properly, it joins the exact token names into 'PREFIX_SUB_MACRO_VAL' */
     verify_int(EVALUATE_TEST(SUB_MACRO_VAL), 777, "3. Macro Isolation during Pasting");
-
-    /* 4. Test Macro Argument Substitution Hierarchy */
     verify_str(STR_IMMEDIATE(TEST_VALUE), "TEST_VALUE", "4a. Immediate Stringify");
     verify_str(STR_DEFERRED(TEST_VALUE), "99", "4b. Deferred Stringify");
+
+    verify_int(VALUE_FROM_CALL, 5, "5. Object Macro Rescans Function-like Macro");
+    verify_str(STR_DEFERRED(ADD1(4)), "((4)+1)", "6. Function-like Macro Argument Pre-expansion");
+    verify_int(MAKE_VALUE(7), 123, "7. Pasted Token Rescan");
+    verify_int(CONDITIONAL_VALUE, 456, "8. #if defined/expression");
+    verify_int(UNDEF_VALUE, 789, "9. #undef and #elif");
 
     printf("\n----------------------------------------\n");
     if (g_failed == 0) {

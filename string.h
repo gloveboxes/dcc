@@ -16,15 +16,17 @@ char *   strcpy( char *, const char * );
 char *   strerror( int );
 char *   strncat( char *, const char *, size_t );
 char *   strrchr( const char *, int );
-char *   strchr(const char * str, char c );
+char *   strchr( const char *, int );
 char *   strstr( const char *, const char * );
-int      strncmp(const char *a, const char *b, int n );
+int      strncmp( const char *, const char *, size_t );
 char *   strcat( char *, const char * );
 char *   strncpy( char *, const char *, size_t );
 int      strcoll( const char *, const char * );
 size_t   strcspn( const char *, const char * );
 char *   strpbrk( const char *, const char * );
 size_t   strspn( const char *, const char * );
+
+/* dcc extension; not part of C89 */
 char *   strdup( const char * );
 
 #endif

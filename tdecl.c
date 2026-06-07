@@ -1,0 +1,102 @@
+/* C89 declaration syntax regression test */
+#include <stdio.h>
+
+static int g_failed = 0;
+
+static void vri(int actual, int expected, const char *name)
+{
+    if (actual != expected) {
+        printf("FAIL decl %s got %d expected %d\n", name, actual, expected);
+        g_failed++;
+    }
+}
+
+int add(int a, int b) { return a + b; }
+int sub(int a, int b) { return a - b; }
+int mul2(int x) { return x * 2; }
+
+/* Raw and typedefed function-pointer declarators. */
+int (*fp)(int, int);
+int (*ops[2])(int, int);
+typedef int (*binop_t)(int, int);
+binop_t top;
+binop_t tops[2];
+
+/* Abstract function-pointer declarator in a prototype. */
+int call2(int (*)(int, int), int, int);
+
+/* Arrays of pointers and pointer-to-array declarators. */
+int a0 = 10;
+int a1 = 20;
+int *pa[2];
+int mat[2][3] = { { 1, 2, 3 }, { 4, 5, 6 } };
+int (*rowp)[3];
+int (*matp)[2][3];
+
+int call2(int (*f)(int, int), int x, int y)
+{
+    return f(x, y);
+}
+
+int sum_row(int (*rp)[3], int row)
+{
+    return rp[row][0] + rp[row][1] + rp[row][2];
+}
+
+static int lpa(void)
+{
+    int local[2][3];
+    int (*lp)[3];
+
+    local[0][0] = 7;
+    local[0][1] = 8;
+    local[0][2] = 9;
+    local[1][0] = 11;
+    local[1][1] = 12;
+    local[1][2] = 13;
+
+    lp = local;
+    if (lp[1][2] != 13)
+        return 10 + lp[1][2];
+    if (sum_row(lp, 0) != 24)
+        return 20 + sum_row(lp, 0);
+    return 1;
+}
+
+int main(void)
+{
+    int r;
+
+    fp = add;
+    ops[0] = add;
+    ops[1] = sub;
+    top = sub;
+    tops[0] = add;
+    tops[1] = sub;
+
+    pa[0] = &a0;
+    pa[1] = &a1;
+    rowp = mat;
+    matp = &mat;
+
+    vri(fp(2, 3), 5, "fp-call");
+    vri(ops[1](7, 2), 5, "funcptr-array-call");
+    vri(top(9, 4), 5, "typedef-funcptr-call");
+    vri(tops[0](2, 3), 5, "typedef-funcptr-array-call");
+    vri(call2(add, 4, 5), 9, "abstract-funcptr-param");
+
+    vri(*pa[1], 20, "array-of-pointers");
+    vri(rowp[1][2], 6, "pointer-to-array-index");
+    vri((*matp)[0][2], 3, "pointer-to-multidim-array-deref");
+
+    r = lpa();
+    vri(r, 1, "local-pointer-to-array");
+
+    if (g_failed) {
+        printf("declaration syntax test failed: %d\n", g_failed);
+        return 1;
+    }
+
+    printf("declaration syntax test passed with great success\n");
+    return 0;
+}

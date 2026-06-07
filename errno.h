@@ -1,6 +1,9 @@
 #ifndef _ERRNO_H
 #define _ERRNO_H
 
-extern int errno; // just one thread so use an int not a macro looking at tls
+extern int errno; /* single-threaded dcc runtime */
+
+#define EDOM   33
+#define ERANGE 34
 
 #endif

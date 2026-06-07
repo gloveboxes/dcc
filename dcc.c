@@ -230,6 +230,21 @@ static const char *asm_name_for_runtime(const char *cname)
     if (!strcmp(cname, "memmove")) return "__mmov";
     if (!strcmp(cname, "memset"))  return "__mset";
 
+    if (!strcmp(cname, "realloc")) return "__real";
+
+    if (!strcmp(cname, "isalpha")) return "__caa";
+    if (!strcmp(cname, "isalnum")) return "__can";
+    if (!strcmp(cname, "isspace")) return "__csp";
+    if (!strcmp(cname, "isdigit")) return "__cdg";
+    if (!strcmp(cname, "isupper")) return "__cup";
+    if (!strcmp(cname, "islower")) return "__clo";
+    if (!strcmp(cname, "isxdigit")) return "__cxd";
+    if (!strcmp(cname, "isprint")) return "__cpr";
+    if (!strcmp(cname, "iscntrl")) return "__cct";
+    if (!strcmp(cname, "ispunct")) return "__cpu";
+    if (!strcmp(cname, "toupper")) return "__ctu";
+    if (!strcmp(cname, "tolower")) return "__ctl";
+
     if (!strcmp(cname, "strlen"))  return "__slen";
     if (!strcmp(cname, "strcpy"))  return "__scpy";
     if (!strcmp(cname, "strcmp"))  return "__scmp";
@@ -418,6 +433,15 @@ static char enum_const_names[MAX_ENUM_CONSTS][64];
 static int  enum_const_values[MAX_ENUM_CONSTS];
 static int  nenum_consts;
 
+static int find_enum_const(const char *name)
+{
+    int i;
+    for (i = 0; i < nenum_consts; ++i)
+        if (!strcmp(enum_const_names[i], name))
+            return i;
+    return -1;
+}
+
 /* Communicates array length from array-typedef through parse_base_type to declarators */
 static int g_typedef_array_len;
 static int g_typedef_is_func;
@@ -431,6 +455,9 @@ static int g_proto_nargs;
 static int g_proto_variadic;
 static int g_proto_types[MAX_PROTO_PARAMS];
 static int g_funcptr_decl_array_len;
+static int g_ptr_array_dim_count;
+static int g_ptr_array_dims[8];
+static int g_ptr_array_elem_size;
 static int g_last_array_dim_count;
 static int g_last_array_dims[8];
 
@@ -1836,6 +1863,106 @@ static int macro_param_index(int di, const char *ident)
     return -1;
 }
 
+
+static void expand_function_macro(int di, char args[8][128], char *out, int outsz);
+
+static int read_macro_call_args_text(const char **pp, char args[8][128], int *nargs)
+{
+    const char *p;
+    int c;
+    int depth;
+    int ai;
+    int ap;
+
+    p = *pp;
+    while (*p && isspace((unsigned char)*p))
+        p++;
+
+    if (*p != '(')
+        return 0;
+
+    p++;
+    ai = 0;
+    ap = 0;
+    depth = 0;
+    memset(args, 0, 8 * 128);
+
+    for (;;) {
+        c = (unsigned char)*p++;
+        if (c == 0)
+            return 0;
+
+        if (c == '"') {
+            if (ap < 127) args[ai][ap++] = (char)c;
+            while ((c = (unsigned char)*p++) != 0) {
+                if (ap < 127) args[ai][ap++] = (char)c;
+                if (c == '\\') {
+                    c = (unsigned char)*p++;
+                    if (c == 0) return 0;
+                    if (ap < 127) args[ai][ap++] = (char)c;
+                } else if (c == '"') {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if (c == '\'') {
+            if (ap < 127) args[ai][ap++] = (char)c;
+            while ((c = (unsigned char)*p++) != 0) {
+                if (ap < 127) args[ai][ap++] = (char)c;
+                if (c == '\\') {
+                    c = (unsigned char)*p++;
+                    if (c == 0) return 0;
+                    if (ap < 127) args[ai][ap++] = (char)c;
+                } else if (c == '\'') {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if (c == '(' || c == '[' || c == '{') {
+            depth++;
+            if (ap < 127) args[ai][ap++] = (char)c;
+            continue;
+        }
+
+        if (c == ')' && depth == 0) {
+            args[ai][ap] = 0;
+            trim_arg(args[ai]);
+            ai++;
+            break;
+        }
+
+        if (c == ')' || c == ']' || c == '}') {
+            depth--;
+            if (ap < 127) args[ai][ap++] = (char)c;
+            continue;
+        }
+
+        if (c == ',' && depth == 0) {
+            args[ai][ap] = 0;
+            trim_arg(args[ai]);
+            ai++;
+            if (ai >= 8)
+                fatal("too many macro arguments");
+            ap = 0;
+            continue;
+        }
+
+        if (ap < 127)
+            args[ai][ap++] = (char)c;
+    }
+
+    if (ai == 1 && args[0][0] == 0)
+        ai = 0;
+
+    *nargs = ai;
+    *pp = p;
+    return 1;
+}
+
 static void macro_expand_argument_text(const char *in, char *out, int outsz, int depth)
 {
     int oi;
@@ -1850,6 +1977,36 @@ static void macro_expand_argument_text(const char *in, char *out, int outsz, int
     oi = 0;
     p = in;
     while (*p && oi < outsz - 1) {
+        if (*p == '"') {
+            out[oi++] = *p++;
+            while (*p && oi < outsz - 1) {
+                out[oi++] = *p;
+                if (*p == '\\' && p[1] && oi < outsz - 1) {
+                    p++;
+                    out[oi++] = *p++;
+                    continue;
+                }
+                if (*p++ == '"')
+                    break;
+            }
+            continue;
+        }
+
+        if (*p == '\'') {
+            out[oi++] = *p++;
+            while (*p && oi < outsz - 1) {
+                out[oi++] = *p;
+                if (*p == '\\' && p[1] && oi < outsz - 1) {
+                    p++;
+                    out[oi++] = *p++;
+                    continue;
+                }
+                if (*p++ == '\'')
+                    break;
+            }
+            continue;
+        }
+
         if (is_ident_start((unsigned char)*p)) {
             char ident[64];
             int ii;
@@ -1861,15 +2018,36 @@ static void macro_expand_argument_text(const char *in, char *out, int outsz, int
             ident[ii] = 0;
 
             di = find_define(ident);
-            if (di >= 0 && !defs[di].is_func) {
-                char tmp[256];
-                macro_expand_argument_text(defs[di].value, tmp, sizeof(tmp), depth + 1);
-                for (ii = 0; tmp[ii] && oi < outsz - 1; ++ii)
-                    out[oi++] = tmp[ii];
-            } else {
-                for (ii = 0; ident[ii] && oi < outsz - 1; ++ii)
-                    out[oi++] = ident[ii];
+            if (di >= 0) {
+                if (defs[di].is_func) {
+                    const char *after_ident;
+                    char args[8][128];
+                    int nargs;
+
+                    after_ident = p;
+                    if (read_macro_call_args_text(&after_ident, args, &nargs)) {
+                        char tmp[512];
+                        char tmp2[512];
+                        if (nargs != defs[di].nargs)
+                            fatal("wrong number of macro arguments");
+                        expand_function_macro(di, args, tmp, sizeof(tmp));
+                        macro_expand_argument_text(tmp, tmp2, sizeof(tmp2), depth + 1);
+                        for (ii = 0; tmp2[ii] && oi < outsz - 1; ++ii)
+                            out[oi++] = tmp2[ii];
+                        p = after_ident;
+                        continue;
+                    }
+                } else {
+                    char tmp[512];
+                    macro_expand_argument_text(defs[di].value, tmp, sizeof(tmp), depth + 1);
+                    for (ii = 0; tmp[ii] && oi < outsz - 1; ++ii)
+                        out[oi++] = tmp[ii];
+                    continue;
+                }
             }
+
+            for (ii = 0; ident[ii] && oi < outsz - 1; ++ii)
+                out[oi++] = ident[ii];
         } else {
             out[oi++] = *p++;
         }
@@ -2306,7 +2484,6 @@ static void next_token(void)
         if (di >= 0) {
             long dv;
             const char *rv;
-            char repl[64];
             int ri;
 
             if (defs[di].is_func) {
@@ -2327,9 +2504,11 @@ static void next_token(void)
                 posi = save_pos;
                 tok.kind = TOK_ID;
             } else {
+                const char *rv_base;
                 rv = defs[di].value;
                 while (*rv && isspace((unsigned char)*rv))
                     rv++;
+                rv_base = rv;
 
                 if (macro_value_is_float_literal(rv)) {
                     replace_source_range(tok_start_pos, posi, rv);
@@ -2354,9 +2533,10 @@ static void next_token(void)
                     const char *rv0;
                     rv0 = rv;
                     ri = 0;
-                    while (is_ident_char((unsigned char)*rv) && ri < 63)
-                        repl[ri++] = *rv++;
-                    repl[ri] = 0;
+                    while (is_ident_char((unsigned char)*rv) && ri < 63) {
+                        rv++;
+                        ri++;
+                    }
                     while (*rv && isspace((unsigned char)*rv))
                         rv++;
                     if (*rv == 0) {
@@ -2382,7 +2562,7 @@ static void next_token(void)
                  * were left as undefined identifiers.  Reinsert the replacement
                  * text and lex it normally.
                  */
-                replace_source_range(tok_start_pos, posi, rv);
+                replace_source_range(tok_start_pos, posi, rv_base);
                 next_token();
                 return;
             }
@@ -2779,6 +2959,27 @@ static int sym_array_index_elem_size(struct Sym *s, int index_count)
     return sym_array_inner_count_from(s, index_count + 1) * elem;
 }
 
+static int sym_pointer_array_index_elem_size(struct Sym *s, int cur_type, int index_count)
+{
+    int elem;
+
+    if (s && !s->is_array && s->dim_count > 0 && s->elem_size > 0) {
+        if (index_count == 0)
+            return s->elem_size;
+
+        elem = type_size(type_decay_ptr(s->type));
+        if (elem <= 0)
+            elem = type_index_elem_size(cur_type);
+        if (elem <= 0)
+            elem = 2;
+
+        if (index_count < s->dim_count)
+            return sym_array_inner_count_from(s, index_count) * elem;
+    }
+
+    return type_index_elem_size(cur_type);
+}
+
 static void infer_omitted_first_dim_from_init(struct Sym *s, int init_elems)
 {
     int inner;
@@ -3102,11 +3303,17 @@ static int parse_base_type(void)
                     strncpy(ename, tok.text, sizeof(ename) - 1);
                     ename[sizeof(ename) - 1] = 0;
                     next_token();
+
+                    /* C89 enumerator values are integer constant expressions,
+                     * not just bare numeric literals.  This accepts forms such
+                     * as B = A + 2, C = (1 << 4), D = sizeof(int), and
+                     * negative expressions. */
                     if (accept('=')) cur_val = parse_enum_const_value();
+
                     dup = 0;
                     for (ei = 0; ei < nenum_consts; ++ei) {
                         if (!strcmp(enum_const_names[ei], ename)) {
-                            enum_const_values[ei] = cur_val;
+                            error_here("duplicate enum constant");
                             dup = 1;
                             break;
                         }
@@ -3114,11 +3321,15 @@ static int parse_base_type(void)
                     if (!dup && nenum_consts < MAX_ENUM_CONSTS) {
                         strncpy(enum_const_names[nenum_consts], ename,
                                 sizeof(enum_const_names[nenum_consts]) - 1);
+                        enum_const_names[nenum_consts][sizeof(enum_const_names[nenum_consts]) - 1] = 0;
                         enum_const_values[nenum_consts] = cur_val;
                         nenum_consts++;
                     }
                     cur_val++;
                     if (!accept(',')) break;
+                    /* Be liberal for common code that leaves a trailing comma
+                     * before the closing brace. */
+                    if (tok.kind == '}') break;
                 }
                 expect('}');
             }
@@ -3289,6 +3500,14 @@ static long parse_const_long_primary(void)
     int sign;
 
     sign = 1;
+    if (tok.kind == '!') {
+        next_token();
+        return !parse_const_long_primary();
+    }
+    if (tok.kind == '~') {
+        next_token();
+        return ~parse_const_long_primary();
+    }
     if (tok.kind == '-') {
         sign = -1;
         next_token();
@@ -3426,14 +3645,50 @@ static long parse_const_long_shift(void)
     return v;
 }
 
+static long parse_const_long_rel(void)
+{
+    long v;
+    int op;
+    long r;
+
+    v = parse_const_long_shift();
+    while (tok.kind == '<' || tok.kind == '>' || tok.kind == TOK_LE || tok.kind == TOK_GE) {
+        op = tok.kind;
+        next_token();
+        r = parse_const_long_shift();
+        if (op == '<') v = (v < r);
+        else if (op == '>') v = (v > r);
+        else if (op == TOK_LE) v = (v <= r);
+        else v = (v >= r);
+    }
+    return v;
+}
+
+static long parse_const_long_eq(void)
+{
+    long v;
+    int op;
+    long r;
+
+    v = parse_const_long_rel();
+    while (tok.kind == TOK_EQ || tok.kind == TOK_NE) {
+        op = tok.kind;
+        next_token();
+        r = parse_const_long_rel();
+        if (op == TOK_EQ) v = (v == r);
+        else v = (v != r);
+    }
+    return v;
+}
+
 static long parse_const_long_band(void)
 {
     long v;
 
-    v = parse_const_long_shift();
+    v = parse_const_long_eq();
     while (tok.kind == '&') {
         next_token();
-        v &= parse_const_long_shift();
+        v &= parse_const_long_eq();
     }
     return v;
 }
@@ -3450,7 +3705,7 @@ static long parse_const_long_xor(void)
     return v;
 }
 
-static long parse_const_long_expr(void)
+static long parse_const_long_bitor(void)
 {
     long v;
 
@@ -3458,6 +3713,30 @@ static long parse_const_long_expr(void)
     while (tok.kind == '|') {
         next_token();
         v |= parse_const_long_xor();
+    }
+    return v;
+}
+
+static long parse_const_long_andand(void)
+{
+    long v;
+
+    v = parse_const_long_bitor();
+    while (tok.kind == TOK_ANDAND) {
+        next_token();
+        v = (v && parse_const_long_bitor());
+    }
+    return v;
+}
+
+static long parse_const_long_expr(void)
+{
+    long v;
+
+    v = parse_const_long_andand();
+    while (tok.kind == TOK_OROR) {
+        next_token();
+        v = (v || parse_const_long_andand());
     }
     return v;
 }
@@ -5020,6 +5299,9 @@ static int parse_funcptr_declarator(int *ptype, char *name, int namesz)
     struct Token save_tok;
 
     g_funcptr_decl_array_len = 0;
+    g_ptr_array_dim_count = 0;
+    g_ptr_array_elem_size = 0;
+    memset(g_ptr_array_dims, 0, sizeof(g_ptr_array_dims));
 
     if (tok.kind != '(')
         return 0;
@@ -5061,6 +5343,9 @@ static int parse_funcptr_declarator(int *ptype, char *name, int namesz)
         tok_line = save_tok_line;
         tok = save_tok;
         g_funcptr_decl_array_len = 0;
+        g_ptr_array_dim_count = 0;
+        g_ptr_array_elem_size = 0;
+        memset(g_ptr_array_dims, 0, sizeof(g_ptr_array_dims));
         return 0;
     }
 
@@ -5070,6 +5355,105 @@ static int parse_funcptr_declarator(int *ptype, char *name, int namesz)
         while (tok.kind != ')' && tok.kind != TOK_EOF)
             next_token();
         expect(')');
+    } else if (tok.kind == '[') {
+        int dims[8];
+        int ndims;
+        int i;
+        int n;
+        int elem_bytes;
+        int total;
+
+        ndims = 0;
+        memset(dims, 0, sizeof(dims));
+        while (accept('[')) {
+            if (tok.kind == ']') {
+                n = 0;
+                next_token();
+            } else {
+                n = parse_const_int_expr();
+                expect(']');
+            }
+            if (n < 0) n = 0;
+            if (ndims < 8) dims[ndims++] = n;
+        }
+
+        elem_bytes = type_size(ptype[0]);
+        if (elem_bytes <= 0) elem_bytes = 2;
+        total = 1;
+        for (i = 0; i < ndims; ++i) {
+            if (dims[i] <= 0) {
+                total = 0;
+                break;
+            }
+            total *= dims[i];
+        }
+        g_ptr_array_dim_count = ndims;
+        g_ptr_array_elem_size = total > 0 ? total * elem_bytes : elem_bytes;
+        for (i = 0; i < ndims && i < 8; ++i)
+            g_ptr_array_dims[i] = dims[i];
+    }
+
+    ptype[0] = type;
+    return 1;
+}
+
+
+static int parse_abstract_funcptr_declarator(int *ptype)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    int type;
+
+    if (tok.kind != '(')
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    next_token();
+    if (!accept('*')) {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        tok = save_tok;
+        return 0;
+    }
+
+    if (!accept(')')) {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        tok = save_tok;
+        return 0;
+    }
+
+    type = type_add_ptr(ptype[0]);
+
+    if (accept('(')) {
+        while (tok.kind != ')' && tok.kind != TOK_EOF)
+            next_token();
+        expect(')');
+    } else if (tok.kind == '[') {
+        while (accept('[')) {
+            if (tok.kind != ']')
+                (void)parse_const_int_expr();
+            expect(']');
+        }
+    } else {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        tok = save_tok;
+        return 0;
     }
 
     ptype[0] = type;
@@ -5335,20 +5719,12 @@ static int find_or_alloc_user_label(const char *name)
     return ulabel_ids[nulabels++];
 }
 
-/* Parse a signed integer constant value used in enum bodies (e.g. = -1) */
+/* Parse an integer constant expression used in enum bodies.
+ * Keep the signed target value in an int-sized host object; code generation
+ * masks it back to the 16-bit target representation when emitted. */
 static int parse_enum_const_value(void)
 {
-    int sign = 1;
-    int v;
-    if (tok.kind == '-') { sign = -1; next_token(); }
-    else if (tok.kind == '+') { next_token(); }
-    if (tok.kind != TOK_NUM) {
-        error_here("integer constant expected in enum");
-        return 0;
-    }
-    v = (int)(tok.val & 0xffffL);
-    next_token();
-    return sign * v;
+    return (int)parse_const_long_expr();
 }
 
 
@@ -5926,7 +6302,7 @@ static void gen_lvalue_addr(int *ptype)
                 if (s->is_array)
                     elem_size = sym_array_index_elem_size(s, addr_array_index_count);
                 else
-                    elem_size = type_index_elem_size(cur_type);
+                    elem_size = sym_pointer_array_index_elem_size(s, cur_type, addr_array_index_count);
                 addr_array_index_count++;
 
                 emit_add_const_to_hl(const_index * elem_size);
@@ -5938,7 +6314,7 @@ static void gen_lvalue_addr(int *ptype)
                 if (s->is_array)
                     elem_size = sym_array_index_elem_size(s, addr_array_index_count);
                 else
-                    elem_size = type_index_elem_size(cur_type);
+                    elem_size = sym_pointer_array_index_elem_size(s, cur_type, addr_array_index_count);
                 addr_array_index_count++;
 
                 if (elem_size == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
@@ -5989,7 +6365,7 @@ static void gen_lvalue_addr(int *ptype)
                 if (addr_is_array)
                     elem_size = type_size(cur_type);
                 else
-                    elem_size = type_index_elem_size(cur_type);
+                    elem_size = sym_pointer_array_index_elem_size(s, cur_type, addr_array_index_count);
 
                 emit_add_const_to_hl(const_index * elem_size);
                 } else {
@@ -6000,7 +6376,7 @@ static void gen_lvalue_addr(int *ptype)
                 if (addr_is_array)
                     elem_size = type_size(cur_type);
                 else
-                    elem_size = type_index_elem_size(cur_type);
+                    elem_size = sym_pointer_array_index_elem_size(s, cur_type, addr_array_index_count);
 
                 if (elem_size == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
                 else if (elem_size == 2) emit("\tadd hl,hl\n");
@@ -7144,6 +7520,104 @@ fail:
     return 0;
 }
 
+
+static int try_gen_parenthesized_deref_array_value(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    char name[64];
+    struct Sym *s;
+    int index_count;
+    int elem_bytes;
+    int elem_size;
+    int cur_type;
+
+    if (tok.kind != '(')
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    next_token();
+    if (!accept('*') || tok.kind != TOK_ID)
+        goto fail;
+
+    strncpy(name, tok.text, sizeof(name) - 1);
+    name[sizeof(name) - 1] = 0;
+    s = find_sym(name);
+    if (!s || type_ptr_depth(s->type) <= 0 || s->dim_count <= 0)
+        goto fail;
+
+    next_token();
+    if (!accept(')') || tok.kind != '[')
+        goto fail;
+
+    if (is_global_word_sym(s)) {
+        emit_load_global_word_direct(s);
+    } else {
+        emit_load_sym_addr(s);
+        emit_load_from_hl(s->type);
+    }
+
+    elem_bytes = type_size(type_decay_ptr(s->type));
+    if (elem_bytes <= 0)
+        elem_bytes = 2;
+
+    index_count = 0;
+    cur_type = type_decay_ptr(s->type);
+
+    while (accept('[')) {
+        long const_index;
+
+        elem_size = elem_bytes;
+        if (index_count < s->dim_count)
+            elem_size = sym_array_inner_count_from(s, index_count + 1) * elem_bytes;
+        if (elem_size <= 0)
+            elem_size = elem_bytes;
+
+        if (try_parse_const_subscript(&const_index)) {
+            emit_add_const_to_hl(const_index * elem_size);
+        } else {
+            emit("\tpush hl\n");
+            gen_expr();
+            expect(']');
+            if (elem_size == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
+            else if (elem_size == 2) emit("\tadd hl,hl\n");
+            else if (elem_size > 4) {
+                fprintf(outf, "\tld de,%d\n", elem_size);
+                emit_runtime_call("__mulu");
+            }
+            emit("\tex de,hl\n");
+            emit("\tpop hl\n");
+            emit("\tadd hl,de\n");
+        }
+
+        index_count++;
+    }
+
+    if (index_count < s->dim_count) {
+        g_expr_type = type_add_ptr(cur_type);
+    } else {
+        g_expr_type = cur_type;
+        emit_load_from_hl(cur_type);
+    }
+    return 1;
+
+fail:
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return 0;
+}
+
 static void gen_primary(void)
 {
     current_field_bit_width = 0;
@@ -7207,6 +7681,9 @@ static void gen_primary(void)
     }
 
     if (try_gen_parenthesized_const_size_expr())
+        return;
+
+    if (try_gen_parenthesized_deref_array_value())
         return;
 
     if (paren_starts_indirect_call()) {
@@ -7530,7 +8007,8 @@ static void gen_primary(void)
         val_is_array = s->is_array;
         val_array_index_count = 0;
 
-        while (accept('[')) {
+        while (tok.kind == '[' && (!s->is_array || val_is_array)) {
+            accept('[');
             indexed = 1;
             cur_type = val_type;
 
@@ -7553,7 +8031,7 @@ static void gen_primary(void)
                 if (val_is_array)
                     elem_size = sym_array_index_elem_size(s, val_array_index_count);
                 else
-                    elem_size = type_index_elem_size(cur_type);
+                    elem_size = sym_pointer_array_index_elem_size(s, cur_type, val_array_index_count);
 
                 emit_add_const_to_hl(const_index * elem_size);
                 } else {
@@ -7564,7 +8042,7 @@ static void gen_primary(void)
                 if (val_is_array)
                     elem_size = sym_array_index_elem_size(s, val_array_index_count);
                 else
-                    elem_size = type_index_elem_size(cur_type);
+                    elem_size = sym_pointer_array_index_elem_size(s, cur_type, val_array_index_count);
 
                 if (elem_size == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
                 else if (elem_size == 2) emit("\tadd hl,hl\n");
@@ -7584,6 +8062,7 @@ static void gen_primary(void)
                 if (s->dim_count <= 0 || val_array_index_count >= s->dim_count)
                     val_is_array = 0;
             } else {
+                val_array_index_count++;
                 val_type = type_decay_ptr(cur_type);
             }
         }
@@ -9757,13 +10236,40 @@ static int peek_simple_unary_type(void)
             tt = t;
             is_arr = s->is_array;
             next_token();
-            while (tok.kind == '[') {
-                skip_balanced_bracket('[', ']');
-                if (is_arr)
-                    is_arr = 0;
-                else
-                    tt = type_decay_ptr(tt);
+            {
+                int nsubs;
+                nsubs = 0;
+                while (tok.kind == '[') {
+                    skip_balanced_bracket('[', ']');
+                    nsubs++;
+
+                    if (is_arr) {
+                        /* A real array subscript consumes one array dimension.
+                         * If dimensions remain, the result is still an array
+                         * expression that decays to a pointer in value context;
+                         * otherwise it is the scalar element type. */
+                        if (s->dim_count > 0 && nsubs < s->dim_count)
+                            tt = type_add_ptr(s->type);
+                        else
+                            tt = s->type;
+                        if (s->dim_count <= 0 || nsubs >= s->dim_count)
+                            is_arr = 0;
+                    } else if (s->dim_count > 0 && type_ptr_depth(s->type) > 0) {
+                        /* Pointer-to-array declarators need one more subscript
+                         * than their stored array-dimension count to reach the
+                         * scalar element.  This lookahead is used by +/-, so a
+                         * misclassified rp[row][0] as a pointer caused integer
+                         * addition to be scaled as pointer arithmetic. */
+                        if (nsubs <= s->dim_count)
+                            tt = type_add_ptr(type_decay_ptr(s->type));
+                        else
+                            tt = type_decay_ptr(s->type);
+                    } else {
+                        tt = type_decay_ptr(tt);
+                    }
+                }
             }
+            t = tt;
             if (tok.kind == '(' && type_ptr_depth(tt) > 0)
                 t = TYPE_INT;
         }
@@ -12249,6 +12755,49 @@ static void emit_load_const_sym_value(struct Sym *s)
 }
 static int parse_global_init_atom(long *val, char *label, int labelsz);
 
+static int try_parse_auto_const_init_value(int type, long *valuep)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    int save_errors;
+    int save_long_suffix;
+    int save_unsigned_suffix;
+    struct Token save_tok;
+    struct ConstVal cv;
+
+    if (tok.kind == TOK_ID || tok.kind == TOK_STR || tok.kind == TOK_WSTR)
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_errors = errors;
+    save_long_suffix = g_tok_long_suffix;
+    save_unsigned_suffix = g_tok_unsigned_suffix;
+    save_tok = tok;
+
+    if (try_parse_const_expr_value(&cv) &&
+        (tok.kind == ',' || tok.kind == '}') &&
+        errors == save_errors) {
+        cf_cast_to_type(&cv, type);
+        valuep[0] = (long)cv.u;
+        return 1;
+    }
+
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    errors = save_errors;
+    g_tok_long_suffix = save_long_suffix;
+    g_tok_unsigned_suffix = save_unsigned_suffix;
+    tok = save_tok;
+    return 0;
+}
+
 static void emit_store_const_to_local_array_elem(struct Sym *s, int elem_type, int index, long v)
 {
     int elem_size;
@@ -12290,6 +12839,39 @@ static void emit_store_const_to_local_offset(struct Sym *s, int off, int type, l
         emit("\tex de,hl\n\tpop hl\n");
         emit_store_de_to_addr_hl(type);
     }
+}
+
+static void emit_store_expr_to_local_offset(struct Sym *s, int off, int type)
+{
+    emit_load_sym_addr(s);
+    emit_add_const_to_hl(off);
+    emit("\tpush hl\n");
+
+    gen_expr_no_comma();
+
+    if (type_is_long(type)) {
+        if (!type_is_long(g_expr_type))
+            emit_extend_to_long_typed(g_expr_type);
+        emit_store_de_to_addr_hl(type);
+    } else if (type_is_float(type)) {
+        if (!type_is_float(g_expr_type))
+            emit_convert_int_to_float(g_expr_type);
+        emit_store_de_to_addr_hl(type);
+    } else {
+        if (type_size(type) > 1 && !type_is_long(g_expr_type))
+            emit_promote_byte_to_int(g_expr_type);
+        emit("\tex de,hl\n\tpop hl\n");
+        emit_store_de_to_addr_hl(type);
+    }
+}
+
+static void emit_store_expr_to_local_array_elem(struct Sym *s, int elem_type, int index)
+{
+    int elem_size;
+
+    elem_size = type_size(elem_type);
+    if (elem_size <= 0) elem_size = 2;
+    emit_store_expr_to_local_offset(s, (long)index * elem_size, elem_type);
 }
 
 static void emit_zero_local_bytes(struct Sym *s, int off, int count)
@@ -12344,14 +12926,12 @@ static void emit_init_auto_struct_scalar(struct Sym *s, int off, int type)
         return;
     }
 
-    k = parse_global_init_atom(&v, label, sizeof(label));
-    if (k == 1) {
+    (void)k;
+    (void)label;
+    if (try_parse_auto_const_init_value(type, &v))
         emit_store_const_to_local_offset(s, off, type, v);
-    } else {
-        error_here("automatic struct initializer must be constant");
-        if (tok.kind != ',' && tok.kind != '}')
-            next_token();
-    }
+    else
+        emit_store_expr_to_local_offset(s, off, type);
 }
 
 static void emit_init_auto_struct_array(struct Sym *s, int baseoff, int elem_type, int count, int elem_size)
@@ -12641,15 +13221,12 @@ static void emit_init_auto_array_scalar(struct Sym *s, int elem_type, int *np)
             return;
         }
     } else {
-        k = parse_global_init_atom(&v, label, sizeof(label));
-        if (k == 1) {
+        (void)k;
+        (void)label;
+        if (try_parse_auto_const_init_value(elem_type, &v))
             emit_store_const_to_local_array_elem(s, elem_type, n, v);
-        } else {
-            error_here("automatic array initializer must be constant");
-            if (tok.kind != ',' && tok.kind != '}')
-                next_token();
-            return;
-        }
+        else
+            emit_store_expr_to_local_array_elem(s, elem_type, n);
     }
 
     np[0] = n + 1;
@@ -12789,8 +13366,16 @@ static void gen_local_decl_after_type(int base)
                 s->elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(type);
                 if (s->elem_size <= 0) s->elem_size = 2;
                 copy_last_array_dims_to_sym(s);
+            } else if (g_ptr_array_dim_count > 0) {
+                int pi;
+                s->elem_size = g_ptr_array_elem_size;
+                s->dim_count = g_ptr_array_dim_count;
+                for (pi = 0; pi < 8; ++pi)
+                    s->dims[pi] = (pi < g_ptr_array_dim_count) ? g_ptr_array_dims[pi] : 0;
             }
         }
+        g_ptr_array_dim_count = 0;
+        g_ptr_array_elem_size = 0;
 
         if (s->is_const_value) {
             if (accept('=')) {
@@ -13456,72 +14041,112 @@ static void gen_return(void)
     emit_jp_label("jp", current_return_label);
 }
 
+static int scan_switch_cases_for_chain(int *case_vals, int *case_labs,
+                                        int *case_countp, int *default_labp);
+
 static void gen_switch_chain(void)
 {
+    long save_posi;
+    long save_tok_start_pos;
+    int save_line_no;
+    int save_tok_line;
+    struct Token save_tok;
+    int case_vals[MAX_SWITCH_CASES];
+    int case_labs[MAX_SWITCH_CASES];
+    int ncase;
+    int default_lab;
     int lend;
-    int lcleanup;
-    int lnext;      /* pending "not-matched" label from previous case (-1 if none) */
-    int lbody;      /* body-entry label for the current case */
-    int lbody_prev; /* body-entry label of the previous case (-1 if none) */
-    long cv;
+    int ci;
+
+    /*
+     * General switch path.  Emit one dispatch sequence before the switch
+     * body, then emit case/default labels in source order while parsing the
+     * body normally.  This preserves C fall-through semantics and, unlike the
+     * old interleaved compare/body generator, handles default: appearing
+     * before later case labels.
+     */
+    ncase = 0;
+    default_lab = -1;
+
+    save_posi = posi;
+    save_tok_start_pos = tok_start_pos;
+    save_line_no = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    next_token();          /* switch */
+    if (tok.kind == '(') {
+        int depth;
+        next_token();
+        depth = 1;
+        while (tok.kind != TOK_EOF && depth > 0) {
+            if (tok.kind == '(') depth++;
+            else if (tok.kind == ')') depth--;
+            next_token();
+        }
+    }
+
+    if (tok.kind != '{' ||
+        !scan_switch_cases_for_chain(case_vals, case_labs, &ncase, &default_lab)) {
+        posi = save_posi;
+        tok_start_pos = save_tok_start_pos;
+        line_no = save_line_no;
+        tok_line = save_tok_line;
+        tok = save_tok;
+        /* Best effort: parse the syntax and fall through to the end. */
+    } else {
+        posi = save_posi;
+        tok_start_pos = save_tok_start_pos;
+        line_no = save_line_no;
+        tok_line = save_tok_line;
+        tok = save_tok;
+    }
 
     expect(TOK_SWITCH);
     expect('(');
     gen_expr();
     expect(')');
 
-    emit("\tpush hl\n");
-
     lend = new_label();
-    lcleanup = new_label();
+
+    /* Keep the switch value in DE while comparing each case value. */
+    emit("\tex de,hl\n");
+    for (ci = 0; ci < ncase; ++ci) {
+        fprintf(outf, "\tld hl,%ld\n", (long)(case_vals[ci] & 0xffff));
+        emit("\tor a\n\tsbc hl,de\n");
+        emit_jp_label("jp z,", case_labs[ci]);
+    }
+    emit_jp_label("jp", default_lab >= 0 ? default_lab : lend);
 
     expect('{');
 
-    break_stack[nflow] = lcleanup;
+    break_stack[nflow] = lend;
     /* continue inside a switch should target the enclosing loop, not the switch */
-    cont_stack[nflow] = (nflow > 0) ? cont_stack[nflow - 1] : lcleanup;
+    cont_stack[nflow] = (nflow > 0) ? cont_stack[nflow - 1] : lend;
     nflow++;
 
-    lnext = -1;
-    lbody_prev = -1;
-
+    ci = 0;
     while (tok.kind != TOK_EOF && tok.kind != '}') {
         if (tok.kind == TOK_CASE) {
+            long cv;
+            int i;
+            int lab;
+
             next_token();
-            if (tok.kind != TOK_NUM && tok.kind != TOK_CHARLIT) {
-                error_here("constant case expected");
-                cv = 0;
-            } else {
-                cv = tok.val;
-                next_token();
-            }
+            cv = parse_const_long_expr();
             expect(':');
 
-            lbody = new_label();
-
-            /*
-             * Fall-through from the previous case body jumps directly to
-             * this case's body, bypassing this case's comparison check.
-             */
-            if (lbody_prev >= 0)
-                emit_jp_label("jp", lbody);
-
-            /*
-             * "Not matched" from the previous case's comparison arrives
-             * here to try this case's comparison.
-             */
-            if (lnext >= 0)
-                emit_label(lnext);
-
-            lnext = new_label();
-            emit("\tpop de\n");
-            emit("\tpush de\n");
-            fprintf(outf, "\tld hl,%ld\n", cv & 0xffffL);
-            emit("\tor a\n\tsbc hl,de\n");
-            emit_jp_label("jp nz,", lnext);
-
-            /* Body starts here — also the fall-through entry from a previous case. */
-            emit_label(lbody);
+            lab = -1;
+            for (i = 0; i < ncase; ++i) {
+                if ((case_vals[i] & 0xffff) == ((int)cv & 0xffff)) {
+                    lab = case_labs[i];
+                    break;
+                }
+            }
+            if (lab < 0 && ci < ncase)
+                lab = case_labs[ci++];
+            if (lab >= 0)
+                emit_label(lab);
 
             while (tok.kind != TOK_EOF &&
                    tok.kind != TOK_CASE &&
@@ -13529,23 +14154,12 @@ static void gen_switch_chain(void)
                    tok.kind != '}') {
                 gen_statement();
             }
-
-            lbody_prev = lbody;
         } else if (tok.kind == TOK_DEFAULT) {
             next_token();
             expect(':');
 
-            lbody = new_label();
-
-            if (lbody_prev >= 0)
-                emit_jp_label("jp", lbody);
-
-            if (lnext >= 0)
-                emit_label(lnext);
-
-            /* default: no comparison — everything that arrives here executes the body */
-            lnext = -1;
-            emit_label(lbody);
+            if (default_lab >= 0)
+                emit_label(default_lab);
 
             while (tok.kind != TOK_EOF &&
                    tok.kind != TOK_CASE &&
@@ -13553,8 +14167,6 @@ static void gen_switch_chain(void)
                    tok.kind != '}') {
                 gen_statement();
             }
-
-            lbody_prev = lbody;
         } else {
             gen_statement();
         }
@@ -13563,13 +14175,6 @@ static void gen_switch_chain(void)
     expect('}');
 
     nflow--;
-
-    /* "Not matched" from the last case falls here, then to cleanup. */
-    if (lnext >= 0)
-        emit_label(lnext);
-
-    emit_label(lcleanup);
-    emit("\tpop de\n");
     emit_label(lend);
 }
 
@@ -13621,11 +14226,7 @@ static int scan_switch_cases_for_table(int *case_vals, int *case_labs,
         } else if (depth == 1 && tok.kind == TOK_CASE) {
             long cv;
             next_token();
-            if (tok.kind != TOK_NUM && tok.kind != TOK_CHARLIT) {
-                ok = 0;
-                break;
-            }
-            cv = tok.val;
+            cv = parse_const_long_expr();
             if (cv < 0 || cv > 32767) {
                 ok = 0;
                 break;
@@ -13647,7 +14248,6 @@ static int scan_switch_cases_for_table(int *case_vals, int *case_labs,
             if (ncase == 0 || (int)cv < minv) minv = (int)cv;
             if (ncase == 0 || (int)cv > maxv) maxv = (int)cv;
             ncase++;
-            next_token();
             if (tok.kind != ':') {
                 ok = 0;
                 break;
@@ -13693,6 +14293,110 @@ static int scan_switch_cases_for_table(int *case_vals, int *case_labs,
     default_labp[0] = have_default ? deflab : -1;
     minp[0] = minv;
     maxp[0] = maxv;
+    return 1;
+}
+
+static int scan_switch_cases_for_chain(int *case_vals, int *case_labs,
+                                        int *case_countp, int *default_labp)
+{
+    long save_posi;
+    long save_tok_start_pos;
+    int save_line_no;
+    int save_tok_line;
+    struct Token save_tok;
+    int depth;
+    int ncase;
+    int have_default;
+    int deflab;
+    int ok;
+    int i;
+
+    if (tok.kind != '{')
+        return 0;
+
+    save_posi = posi;
+    save_tok_start_pos = tok_start_pos;
+    save_line_no = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    ncase = 0;
+    have_default = 0;
+    deflab = -1;
+    ok = 1;
+
+    next_token();
+    depth = 1;
+
+    while (tok.kind != TOK_EOF && depth > 0 && ok) {
+        if (tok.kind == '{') {
+            depth++;
+            next_token();
+        } else if (tok.kind == '}') {
+            depth--;
+            if (depth > 0)
+                next_token();
+        } else if (depth == 1 && tok.kind == TOK_CASE) {
+            long cv;
+            int v16;
+
+            next_token();
+            cv = parse_const_long_expr();
+            v16 = (int)(cv & 0xffffL);
+            if (ncase >= MAX_SWITCH_CASES) {
+                ok = 0;
+                break;
+            }
+            for (i = 0; i < ncase; ++i) {
+                if ((case_vals[i] & 0xffff) == v16) {
+                    error_here("duplicate case value");
+                    ok = 0;
+                    break;
+                }
+            }
+            if (!ok)
+                break;
+            case_vals[ncase] = v16;
+            case_labs[ncase] = new_label();
+            ncase++;
+            if (tok.kind != ':') {
+                ok = 0;
+                break;
+            }
+            next_token();
+        } else if (depth == 1 && tok.kind == TOK_DEFAULT) {
+            if (have_default) {
+                error_here("duplicate default label");
+                ok = 0;
+                break;
+            }
+            have_default = 1;
+            deflab = new_label();
+            next_token();
+            if (tok.kind != ':') {
+                ok = 0;
+                break;
+            }
+            next_token();
+        } else {
+            next_token();
+        }
+    }
+
+    if (depth != 0)
+        ok = 0;
+
+    posi = save_posi;
+    tok_start_pos = save_tok_start_pos;
+    line_no = save_line_no;
+    tok_line = save_tok_line;
+    tok = save_tok;
+
+    if (!ok)
+        return 0;
+
+    case_countp[0] = ncase;
+    default_labp[0] = have_default ? deflab : -1;
     return 1;
 }
 
@@ -13786,10 +14490,7 @@ static void gen_switch_table(void)
     while (tok.kind != TOK_EOF && tok.kind != '}') {
         if (tok.kind == TOK_CASE) {
             next_token();
-            if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)
-                next_token();
-            else
-                error_here("constant case expected");
+            (void)parse_const_long_expr();
             expect(':');
 
             if (ci < ncase)
@@ -14243,6 +14944,9 @@ static void parse_param_list(void)
 
         if (parse_funcptr_declarator(&type, name, sizeof(name))) {
             /* function pointer parameter */
+        } else if (parse_abstract_funcptr_declarator(&type)) {
+            sprintf(name, "__p%d", param_offset);
+            unnamed_id = 1;
         } else if (tok.kind == TOK_ID) {
             strncpy(name, tok.text, sizeof(name) - 1);
             name[sizeof(name) - 1] = 0;
@@ -14273,7 +14977,20 @@ static void parse_param_list(void)
         }
 
         remember_proto_param_type(type);
-        add_param_alloc(name, type);
+        {
+            struct Sym *ps;
+            int pi;
+            add_param_alloc(name, type);
+            ps = find_local(name);
+            if (ps && g_ptr_array_dim_count > 0) {
+                ps->elem_size = g_ptr_array_elem_size;
+                ps->dim_count = g_ptr_array_dim_count;
+                for (pi = 0; pi < 8; ++pi)
+                    ps->dims[pi] = (pi < g_ptr_array_dim_count) ? g_ptr_array_dims[pi] : 0;
+            }
+            g_ptr_array_dim_count = 0;
+            g_ptr_array_elem_size = 0;
+        }
         (void)unnamed_id;
 
         if (!accept(',')) break;
@@ -14509,8 +15226,16 @@ static void scan_local_decl_after_type(int base)
                 s->elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(type);
                 if (s->elem_size <= 0) s->elem_size = 2;
                 copy_last_array_dims_to_sym(s);
+            } else if (g_ptr_array_dim_count > 0) {
+                int pi;
+                s->elem_size = g_ptr_array_elem_size;
+                s->dim_count = g_ptr_array_dim_count;
+                for (pi = 0; pi < 8; ++pi)
+                    s->dims[pi] = (pi < g_ptr_array_dim_count) ? g_ptr_array_dims[pi] : 0;
             }
         }
+        g_ptr_array_dim_count = 0;
+        g_ptr_array_elem_size = 0;
 
         if (s && !s->is_const_value && accept('=')) skip_initializer_or_decl_tail();
 
@@ -14834,12 +15559,39 @@ static int parse_global_init_atom(long *val, char *label, int labelsz)
     }
 
     if (tok.kind == TOK_ID) {
+        /* An enumerator is an integer constant, not an address-bearing
+         * external symbol.  Let the constant-expression parser consume the
+         * whole expression so global initializers such as:
+         *     enum E e = BLUE;
+         *     int a[] = { RED, GREEN + 1 };
+         * emit numeric data instead of dw _BLUE / dw _RED.
+         */
+        if (find_enum_const(tok.text) >= 0) {
+            val[0] = parse_const_long_expr();
+            if (label) label[0] = 0;
+            return 1;
+        }
+
         if (label && labelsz > 0) {
             strncpy(label, tok.text, labelsz - 1);
             label[labelsz - 1] = 0;
         }
         next_token();
         return 2;       /* symbolic address */
+    }
+
+    if (tok.kind == '&') {
+        next_token();
+        if (tok.kind == TOK_ID) {
+            if (label && labelsz > 0) {
+                strncpy(label, tok.text, labelsz - 1);
+                label[labelsz - 1] = 0;
+            }
+            next_token();
+            return 2;   /* symbolic address */
+        }
+        error_here("identifier expected after & in initializer");
+        return 0;
     }
 
     error_here("constant initializer expected");
@@ -15612,7 +16364,15 @@ static void parse_function_or_global(int base_type)
                     s->size = object_array_size(type, total_count);
                 else
                     s->size = 0;
+            } else if (g_ptr_array_dim_count > 0) {
+                int pi;
+                s->elem_size = g_ptr_array_elem_size;
+                s->dim_count = g_ptr_array_dim_count;
+                for (pi = 0; pi < 8; ++pi)
+                    s->dims[pi] = (pi < g_ptr_array_dim_count) ? g_ptr_array_dims[pi] : 0;
             }
+            g_ptr_array_dim_count = 0;
+            g_ptr_array_elem_size = 0;
 
             parse_global_init_list(s);
         }

@@ -7,6 +7,9 @@ typedef unsigned int uint16_t;
 typedef int int16_t;
 typedef long int32_t;
 typedef unsigned long uint32_t;
+#ifndef _WCHAR_T
+#define _WCHAR_T
 typedef unsigned int wchar_t;
+#endif
 
 #endif

@@ -9,9 +9,9 @@
 
 typedef long off_t;
 
-int unlink( const char * pathname );    /* remove a file */
-size_t read( int fd, void *buf, size_t count );
-size_t write( int fd, const void *buf, size_t count );
+int unlink( const char *pathname );    /* remove a file */
+int read( int fd, void *buf, size_t count );
+int write( int fd, const void *buf, size_t count );
 int close( int fd );
 off_t lseek( int fd, off_t offset, int whence );
 int fsync( int fd );

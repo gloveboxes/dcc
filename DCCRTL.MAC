@@ -4750,6 +4750,92 @@ ca_done:
         pop     ix
         ret
 
+
+        public  __real
+__real:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ; realloc(NULL, size) is malloc(size).
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      a,h
+        or      l
+        jr      nz,rl_have_ptr
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        call    __mlh
+        pop     ix
+        ret
+
+rl_have_ptr:
+        ld      (__rl_old),hl
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      (__rl_size),hl
+
+        ; realloc(ptr, 0): free ptr and return NULL.
+        ld      a,h
+        or      l
+        jr      nz,rl_alloc
+        ld      hl,(__rl_old)
+        dec     hl              ; header flags byte
+        ld      (hl),1
+        ld      hl,0
+        pop     ix
+        ret
+
+rl_alloc:
+        ; Read old block user size from header at ptr-HDRSIZE.
+        ld      hl,(__rl_old)
+        ld      de,0-HDRSIZE
+        add     hl,de
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)
+        ld      (__rl_cnt),de
+
+        ; Allocate the new block.  On failure, leave old block unchanged.
+        ld      hl,(__rl_size)
+        call    __mlh
+        ld      (__rl_new),hl
+        ld      a,h
+        or      l
+        jr      nz,rl_copy
+        pop     ix
+        ret
+
+rl_copy:
+        ; Copy min(old_size, new_size) bytes.
+        ld      hl,(__rl_cnt)
+        ld      de,(__rl_size)
+        or      a
+        sbc     hl,de           ; old_size - new_size
+        jr      c,rl_count_ok   ; old < new: keep old_size
+        ld      (__rl_cnt),de   ; new <= old: use new_size
+rl_count_ok:
+        ld      bc,(__rl_cnt)
+        ld      a,b
+        or      c
+        jr      z,rl_free_old
+        ld      hl,(__rl_old)
+        ld      de,(__rl_new)
+        ldir
+
+rl_free_old:
+        ld      hl,(__rl_old)
+        dec     hl              ; header flags byte
+        ld      (hl),1
+        ld      hl,(__rl_new)
+        pop     ix
+        ret
+
+__rl_old:       dw      0
+__rl_new:       dw      0
+__rl_size:      dw      0
+__rl_cnt:       dw      0
+
         public  _free
 _free:
         push    ix
@@ -4981,8 +5067,8 @@ __ldv_sign:     db      0
 ; ---- _toupper(int c) ----
 ; Returns c converted to upper-case if 'a'<=c<='z', else c unchanged.
 ; Arg: c @ IX+4/5.  Return: HL = result.
-        public  _toupper
-_toupper:
+        public  __ctu
+__ctu:
         push    ix
         ld      ix,0
         add     ix,sp
@@ -5003,8 +5089,8 @@ toup_done:
 ; ---- _isspace(int c) ----
 ; Returns HL=1 if c is a whitespace character, HL=0 otherwise.
 ; Recognises: SP HT LF VT FF CR.
-        public  _isspace
-_isspace:
+        public  __csp
+__csp:
         push    ix
         ld      ix,0
         add     ix,sp
@@ -5031,8 +5117,8 @@ issp_yes:
 
 ; ---- _isdigit(int c) ----
 ; Returns HL=1 if '0'<=c<='9', HL=0 otherwise.
-        public  _isdigit
-_isdigit:
+        public  __cdg
+__cdg:
         push    ix
         ld      ix,0
         add     ix,sp
@@ -5046,6 +5132,212 @@ _isdigit:
         ret
 isdig_no:
         ld      hl,0
+        pop     ix
+        ret
+
+; ---- ctype helpers with short external names for M80/L80 ----
+; All take int c at IX+4/5 and return HL=1/0 except __ctl.
+
+        public  __caa
+__caa:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)
+        cp      'A'
+        jr      c,ialp_no
+        cp      'Z'+1
+        jr      c,ialp_yes
+        cp      'a'
+        jr      c,ialp_no
+        cp      'z'+1
+        jr      c,ialp_yes
+ialp_no:
+        ld      hl,0
+        pop     ix
+        ret
+ialp_yes:
+        ld      hl,1
+        pop     ix
+        ret
+
+        public  __can
+__can:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)
+        cp      '0'
+        jr      c,ialn_alpha
+        cp      '9'+1
+        jr      c,ialn_yes
+ialn_alpha:
+        cp      'A'
+        jr      c,ialn_no
+        cp      'Z'+1
+        jr      c,ialn_yes
+        cp      'a'
+        jr      c,ialn_no
+        cp      'z'+1
+        jr      c,ialn_yes
+ialn_no:
+        ld      hl,0
+        pop     ix
+        ret
+ialn_yes:
+        ld      hl,1
+        pop     ix
+        ret
+
+        public  __cup
+__cup:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)
+        cp      'A'
+        jr      c,isup_no
+        cp      'Z'+1
+        jr      nc,isup_no
+        ld      hl,1
+        pop     ix
+        ret
+isup_no:
+        ld      hl,0
+        pop     ix
+        ret
+
+        public  __clo
+__clo:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)
+        cp      'a'
+        jr      c,islo_no
+        cp      'z'+1
+        jr      nc,islo_no
+        ld      hl,1
+        pop     ix
+        ret
+islo_no:
+        ld      hl,0
+        pop     ix
+        ret
+
+        public  __cxd
+__cxd:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)
+        cp      '0'
+        jr      c,ixdg_alpha
+        cp      '9'+1
+        jr      c,ixdg_yes
+ixdg_alpha:
+        cp      'A'
+        jr      c,ixdg_lower
+        cp      'F'+1
+        jr      c,ixdg_yes
+ixdg_lower:
+        cp      'a'
+        jr      c,ixdg_no
+        cp      'f'+1
+        jr      c,ixdg_yes
+ixdg_no:
+        ld      hl,0
+        pop     ix
+        ret
+ixdg_yes:
+        ld      hl,1
+        pop     ix
+        ret
+
+        public  __cpr
+__cpr:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)
+        cp      20h
+        jr      c,iprt_no
+        cp      7fh
+        jr      nc,iprt_no
+        ld      hl,1
+        pop     ix
+        ret
+iprt_no:
+        ld      hl,0
+        pop     ix
+        ret
+
+        public  __cct
+__cct:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)
+        cp      20h
+        jr      c,icnt_yes
+        cp      7fh
+        jr      z,icnt_yes
+        ld      hl,0
+        pop     ix
+        ret
+icnt_yes:
+        ld      hl,1
+        pop     ix
+        ret
+
+        public  __cpu
+__cpu:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)
+        ; printable, not space, and not alnum
+        cp      21h
+        jr      c,ipnc_no
+        cp      7fh
+        jr      nc,ipnc_no
+        cp      '0'
+        jr      c,ipnc_yes
+        cp      '9'+1
+        jr      c,ipnc_no
+        cp      'A'
+        jr      c,ipnc_yes
+        cp      'Z'+1
+        jr      c,ipnc_no
+        cp      'a'
+        jr      c,ipnc_yes
+        cp      'z'+1
+        jr      c,ipnc_no
+ipnc_yes:
+        ld      hl,1
+        pop     ix
+        ret
+ipnc_no:
+        ld      hl,0
+        pop     ix
+        ret
+
+        public  __ctl
+__ctl:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      a,l
+        cp      'A'
+        jr      c,tolo_done
+        cp      'Z'+1
+        jr      nc,tolo_done
+        add     a,20h
+        ld      l,a
+        ld      h,0
+tolo_done:
         pop     ix
         ret
 
@@ -8249,6 +8541,110 @@ FMCRET:
         ld      h,(ix-7)
         ld      e,(ix-6)
         ld      d,(ix-5)
+        ld      sp,ix
+        pop     ix
+        ret
+
+        public  _fmodf
+_fmodf:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      hl,-12
+        add     hl,sp
+        ld      sp,hl
+
+        ; if (y == 0.0f) return quiet NaN (0x7fc00000).
+        ; Treat both +0 and -0 as zero.
+        ld      a,(ix+11)
+        and     7fh
+        ld      b,a
+        ld      a,(ix+10)
+        or      b
+        ld      b,a
+        ld      a,(ix+9)
+        or      b
+        ld      b,a
+        ld      a,(ix+8)
+        or      b
+        jp      nz,FMDNZ
+        ld      hl,0
+        ld      de,7fc0h
+        jp      FMDRET
+
+FMDNZ:
+        ; q = x / y
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      e,(ix+6)
+        ld      d,(ix+7)
+        push    de              ; left operand x
+        push    hl
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      e,(ix+10)
+        ld      d,(ix+11)
+        push    de              ; right operand y
+        push    hl
+        call    __fdiv
+        pop     bc
+        pop     bc
+        pop     bc
+        pop     bc
+
+        ; iq = (long)q, truncating toward zero.
+        call    __ffl
+
+        ; tq = (float)iq
+        call    __flf
+        ld      (ix-4),l
+        ld      (ix-3),h
+        ld      (ix-2),e
+        ld      (ix-1),d
+
+        ; prod = tq * y
+        ld      l,(ix-4)
+        ld      h,(ix-3)
+        ld      e,(ix-2)
+        ld      d,(ix-1)
+        push    de              ; left operand tq
+        push    hl
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      e,(ix+10)
+        ld      d,(ix+11)
+        push    de              ; right operand y
+        push    hl
+        call    __fmul
+        pop     bc
+        pop     bc
+        pop     bc
+        pop     bc
+        ld      (ix-8),l
+        ld      (ix-7),h
+        ld      (ix-6),e
+        ld      (ix-5),d
+
+        ; return x - prod
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      e,(ix+6)
+        ld      d,(ix+7)
+        push    de              ; left operand x
+        push    hl
+        ld      l,(ix-8)
+        ld      h,(ix-7)
+        ld      e,(ix-6)
+        ld      d,(ix-5)
+        push    de              ; right operand prod
+        push    hl
+        call    __fsub
+        pop     bc
+        pop     bc
+        pop     bc
+        pop     bc
+
+FMDRET:
         ld      sp,ix
         pop     ix
         ret

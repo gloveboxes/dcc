@@ -2964,13 +2964,26 @@ static int pass_byte_minmax_board_and_assign(void)
          *   ld l,(ix-S)
          *   ld h,0
          *   ld (ix-D),l
+         *
+         * Only do this when the zero in H is not live after the low-byte
+         * store.  Word stores use the same prefix when assigning an unsigned
+         * byte to a 16-bit object:
+         *   ld l,(ix-S)
+         *   ld h,0
+         *   ld (ix-D),l
+         *   ld (ix-D+1),h
+         * Rewriting that to ld a,(ix-S); ld (ix-D),a would leave the high
+         * byte store using stale H and turn 255 into -1.
          */
         if (peep_parse_ld_l_ix(lines[i], srcoff) &&
             eq(i + 1, "ld h,0") &&
             strncmp(lines[i + 2], "ld (ix", 6) == 0) {
             char tmp[MAX_LINE];
+            char nexttmp[MAX_LINE];
             const char *p;
             int k;
+            int dstv;
+            char *endp;
 
             strip_peep_comment_copy(tmp, lines[i + 2]);
             p = tmp + 6;
@@ -2979,6 +2992,15 @@ static int pass_byte_minmax_board_and_assign(void)
                 dstoff[k++] = *p++;
             dstoff[k] = 0;
             if (*p == ')' && p[1] == ',' && p[2] == 'l' && p[3] == 0) {
+                dstv = (int)strtol(dstoff, &endp, 10);
+                if (*endp == 0 && i + 3 < nlines) {
+                    char expect[64];
+                    peep_format_ix_off(expect, dstv + 1);
+                    sprintf(line, "ld (ix%s),h", expect);
+                    strip_peep_comment_copy(nexttmp, lines[i + 3]);
+                    if (strcmp(nexttmp, line) == 0)
+                        continue;
+                }
                 sprintf(line, "ld a,(ix%s)", srcoff);
                 replace1_tagged(i, line, "byte_assign_ix");
                 sprintf(line, "ld (ix%s),a", dstoff);

@@ -15,7 +15,7 @@ APPLIST="sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong \
          tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 \
          tlongaud tlongreg tppreg tinitreg ttypesr ttype2 tdecinit tmalloch \
          tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 \
-         tunion2 tbitfld tcnstfld"
+         tunion2 tbitfld tcnstfld tpromo"
 
 run_args() {
     case "$1" in

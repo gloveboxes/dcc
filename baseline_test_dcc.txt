@@ -3065,8 +3065,8 @@ argv[ 4 ]: 'DDDD'
 argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
-__DATE__ Jun  6 2026
-__TIME__ 07:12:53
+__DATE__ Jun  7 2026
+__TIME__ 06:28:41
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3783,3 +3783,10 @@ signed-assign -1 14 40 53
 tbitfield completed
 test tcnstfld
 tcnstfld passed with great success
+test tpromo
+assignment conversions
+integer promotions
+usual arithmetic conversions
+demotions after operations
+vararg/function conversion sanity
+tpromo completed with great success

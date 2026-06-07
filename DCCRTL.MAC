@@ -16,6 +16,13 @@
 HDRSIZE          equ     3
 
         cseg
+; Heap state used by start/free/malloc.  Keep this in the always-kept
+; startup block so allocator code itself is not pulled in just because
+; start initializes __brk/__hlimit.
+__hbase:        dw      0
+__brk:          dw      0
+__hlimit:       dw      0
+
 start:
         call    __build_argv
 
@@ -3719,8 +3726,12 @@ __fduse:
         ds      4
 __fdoff:
         ds      16
+
+        public  __fcbs
 __fcbs:
         ds      144
+
+        public  __dma
 __dma:
         ds      128
 
@@ -4698,7 +4709,7 @@ _malloc:
         add     ix,sp
         ld      l,(ix+4)
         ld      h,(ix+5)        ; HL = requested size
-        call    __malloc_hl
+        call    __mlh
         pop     ix
         ret
 
@@ -4712,7 +4723,7 @@ _calloc:
         ld      e,(ix+6)
         ld      d,(ix+7)        ; DE = size
         call    __mulu          ; HL = nmemb * size
-        call    __malloc_hl     ; HL = ptr or 0; __ml_need = total size
+        call    __mlh     ; HL = ptr or 0; __ml_need = total size
         push    hl              ; save ptr for return
         ld      a,h
         or      l
@@ -4755,9 +4766,12 @@ fr_done:
         pop     ix
         ret
 
+        public  __mlh
 ; Internal: HL = requested size (0 treated as 1). Returns HL = ptr or 0.
 ; Corrupts AF, BC, DE, HL. Does not use/save IX.
-__malloc_hl:
+; Separate public block: _malloc/_calloc reference this helper, but _free and
+; programs that only need heap-limit startup state do not pull it in.
+__mlh:
         ld      a,h
         or      l
         jr      nz,mh_sz_ok
@@ -4935,16 +4949,13 @@ mh_oom:
         ld      hl,0
         ret
 
-; Heap state
-__hbase:        dw      0
-__brk:          dw      0
-__hlimit:       dw      0
-
 ; Allocator temporaries
 __ml_need:      dw      0
 __ml_p:         dw      0
 __ml_usiz:      dw      0
 
+        public  __lmd
+__lmd:
 ; ---- scratch data for long arithmetic ----
 __lm_lhs_l:     dw      0
 __lm_lhs_h:     dw      0

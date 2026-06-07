@@ -136,6 +136,8 @@ struct Sym {
     int proto_nargs;
     int proto_variadic;
     int proto_types[MAX_PROTO_PARAMS];
+    int is_const_value;        /* local const scalar folded as immediate */
+    unsigned long const_value; /* raw integer bits or IEEE float bits */
 };
 
 struct Def {
@@ -397,6 +399,7 @@ static int errors;
 static int scan_mode;
 static int decl_is_extern;
 static int decl_is_static;
+static int decl_is_const;      /* current declaration used const qualifier */
 static int decl_is_register;   /* current decl used 'register' keyword */
 static int expr_result_dead;
 static int g_expr_type;
@@ -3036,11 +3039,13 @@ static int parse_base_type(void)
     g_typedef_array_len = 0;
     g_typedef_is_func = 0;
     decl_is_register = 0;
+    decl_is_const = 0;
 
     /* C89 declaration specifiers are order-independent. */
     for (;;) {
         if (tok.kind == TOK_REGISTER) { decl_is_register = 1; next_token(); continue; }
-        if (is_type_qualifier_token(tok.kind) ||
+        if (tok.kind == TOK_CONST) { decl_is_const = 1; next_token(); continue; }
+        if (tok.kind == TOK_VOLATILE ||
             tok.kind == TOK_AUTO || tok.kind == TOK_INLINE) {
             next_token();
             continue;
@@ -6929,6 +6934,7 @@ static void emit_store_bitfield_from_hl(void)
 }
 
 static void emit_load_float_bits(unsigned long bits);
+static void emit_load_const_sym_value(struct Sym *s);
 static void emit_float_compare_call(int op);
 
 
@@ -7469,6 +7475,13 @@ static void gen_primary(void)
             }
             error_here("undefined symbol");
             s = add_global(name, TYPE_INT, SC_GLOBAL);
+        }
+
+        if (s->is_const_value &&
+            tok.kind != '[' && tok.kind != '.' && tok.kind != TOK_ARROW &&
+            tok.kind != TOK_INC && tok.kind != TOK_DEC && tok.kind != '(') {
+            emit_load_const_sym_value(s);
+            return;
         }
 
         if (s->storage == SC_FUNC &&
@@ -12162,6 +12175,78 @@ static int parse_float_init_literal(unsigned long *bits)
     return 0;
 }
 
+
+static int type_is_const_scalar_candidate(int type)
+{
+    if (type_ptr_depth(type) != 0)
+        return 0;
+    if (type & TYPE_STRUCT)
+        return 0;
+    return type_size(type) == 1 || type_size(type) == 2 || type_size(type) == 4;
+}
+
+static int try_parse_local_const_initializer(int type, unsigned long *valuep)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    int save_errors;
+    int save_long_suffix;
+    int save_unsigned_suffix;
+    struct Token save_tok;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_errors = errors;
+    save_long_suffix = g_tok_long_suffix;
+    save_unsigned_suffix = g_tok_unsigned_suffix;
+    save_tok = tok;
+
+    if (type_is_float(type)) {
+        unsigned long bits;
+        if (parse_float_init_literal(&bits)) {
+            valuep[0] = bits;
+            return 1;
+        }
+    } else {
+        struct ConstVal cv;
+        if (try_parse_const_expr_value(&cv) &&
+            (tok.kind == ';' || tok.kind == ',' || tok.kind == '}') &&
+            errors == save_errors) {
+            cf_cast_to_type(&cv, type);
+            valuep[0] = cv.u;
+            return 1;
+        }
+    }
+
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    errors = save_errors;
+    g_tok_long_suffix = save_long_suffix;
+    g_tok_unsigned_suffix = save_unsigned_suffix;
+    tok = save_tok;
+    return 0;
+}
+
+static void emit_load_const_sym_value(struct Sym *s)
+{
+    struct ConstVal cv;
+
+    if (type_is_float(s->type)) {
+        emit_load_float_bits(s->const_value);
+        g_expr_type = TYPE_FLOAT;
+        return;
+    }
+
+    cv.u = s->const_value;
+    cv.type = s->type;
+    emit_const_value(cv);
+}
 static int parse_global_init_atom(long *val, char *label, int labelsz);
 
 static void emit_store_const_to_local_array_elem(struct Sym *s, int elem_type, int index, long v)
@@ -12707,7 +12792,14 @@ static void gen_local_decl_after_type(int base)
             }
         }
 
-        if (accept('=')) {
+        if (s->is_const_value) {
+            if (accept('=')) {
+                unsigned long ignored_const_value;
+                if (!try_parse_local_const_initializer(type, &ignored_const_value)) {
+                    gen_expr_no_comma();
+                }
+            }
+        } else if (accept('=')) {
             if ((type & TYPE_STRUCT) && type_ptr_depth(type) == 0 && tok.kind != '{') {
                 error_here("struct initializer list expected");
                 skip_initializer_or_decl_tail();
@@ -14104,6 +14196,94 @@ static void skip_initializer_or_decl_tail(void)
 }
 
 
+
+static int local_name_address_taken_ahead(const char *name)
+{
+    long p;
+    int depth;
+    int c;
+    int n;
+
+    /* Conservative forward scan of the rest of the current function body.
+     * Local consts optimized as immediates have no stack address.  If the
+     * source later forms &name, keep normal storage instead.  This deliberately
+     * ignores strings/comments and stops at the function's closing brace.
+     */
+    p = posi;
+    depth = 1;
+    n = (int)strlen(name);
+
+    while (p < src_len && depth > 0) {
+        c = (unsigned char)src[p];
+
+        if (c == '"') {
+            p++;
+            while (p < src_len) {
+                c = (unsigned char)src[p++];
+                if (c == '\\' && p < src_len) { p++; continue; }
+                if (c == '"') break;
+            }
+            continue;
+        }
+
+        if (c == '\'') {
+            p++;
+            while (p < src_len) {
+                c = (unsigned char)src[p++];
+                if (c == '\\' && p < src_len) { p++; continue; }
+                if (c == '\'') break;
+            }
+            continue;
+        }
+
+        if (c == '/' && p + 1 < src_len && src[p + 1] == '*') {
+            p += 2;
+            while (p + 1 < src_len && !(src[p] == '*' && src[p + 1] == '/'))
+                p++;
+            if (p + 1 < src_len)
+                p += 2;
+            continue;
+        }
+
+        if (c == '/' && p + 1 < src_len && src[p + 1] == '/') {
+            p += 2;
+            while (p < src_len && src[p] != '\n')
+                p++;
+            continue;
+        }
+
+        if (c == '{') {
+            depth++;
+            p++;
+            continue;
+        }
+        if (c == '}') {
+            depth--;
+            p++;
+            continue;
+        }
+
+        if (c == '&') {
+            long q;
+            q = p + 1;
+            while (q < src_len && (src[q] == ' ' || src[q] == '\t' || src[q] == '\r' || src[q] == '\n'))
+                q++;
+            if (q + n <= src_len && strncmp(src + q, name, (size_t)n) == 0) {
+                int before_ok;
+                int after_ok;
+                before_ok = 1;
+                after_ok = (q + n >= src_len) || !is_ident_char((unsigned char)src[q + n]);
+                if (before_ok && after_ok)
+                    return 1;
+            }
+        }
+
+        p++;
+    }
+
+    return 0;
+}
+
 static void scan_local_decl_after_type(int base)
 {
     int type, bytes, arrlen;
@@ -14168,7 +14348,23 @@ static void scan_local_decl_after_type(int base)
         bytes = type_size(type);
         if (total_elems > 0) bytes *= total_elems;
 
-        if (!find_local(name)) {
+        s = find_local(name);
+        if (!s && decl_is_const && arrlen == 0 && g_last_array_dim_count == 0 &&
+            type_is_const_scalar_candidate(type) && tok.kind == '=' &&
+            !local_name_address_taken_ahead(name)) {
+            unsigned long const_value;
+            next_token();
+            if (try_parse_local_const_initializer(type, &const_value)) {
+                s = add_local_known(name, type, SC_LOCAL, 0, 0);
+                s->is_const_value = 1;
+                s->const_value = const_value;
+            } else {
+                s = add_local_alloc(name, type, bytes);
+                skip_initializer_or_decl_tail();
+            }
+        }
+
+        if (!s) {
             s = add_local_alloc(name, type, bytes);
             if (arrlen > 0 || g_last_array_dim_count > 0) {
                 s->is_array = 1;
@@ -14179,7 +14375,7 @@ static void scan_local_decl_after_type(int base)
             }
         }
 
-        if (accept('=')) skip_initializer_or_decl_tail();
+        if (s && !s->is_const_value && accept('=')) skip_initializer_or_decl_tail();
 
         if (!accept(',')) break;
     }
@@ -14316,6 +14512,7 @@ static void scan_function_body(void)
                 if (starts_type()) {
                     int t;
                     decl_is_extern = 0;
+                    decl_is_const = 0;
                     t = parse_base_type();
                     if (tok.kind != ';')
                         scan_local_decl_after_type(t); /* consumes ';' */
@@ -15335,6 +15532,7 @@ static void parse_translation_unit(void)
             int t;
             decl_is_extern = 0;
             decl_is_static = 0;
+            decl_is_const = 0;
             t = parse_type();
             if (tok.kind == ';') {
                 next_token();

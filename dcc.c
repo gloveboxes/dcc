@@ -10366,6 +10366,10 @@ static void emit_fscale_pow2(int exp_delta)
     g_expr_type = TYPE_FLOAT;
 }
 
+static int int_log2_pow2(int v);
+static void emit_logical_shift_right_hl_const(int count);
+static void emit_and_hl_const(unsigned int mask);
+
 static void gen_mul(void)
 {
     int op;
@@ -10444,6 +10448,26 @@ static void gen_mul(void)
             }
         }
 
+        if (!type_is_long(common_type) && (common_type & TYPE_UNSIGNED) &&
+            (op == '/' || op == '%') &&
+            (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) {
+            unsigned int rhs_val;
+            int shift;
+
+            rhs_val = (unsigned int)(tok.val & 0xffffL);
+            shift = int_log2_pow2((int)rhs_val);
+            if (shift >= 0) {
+                next_token();
+                if (op == '/')
+                    emit_logical_shift_right_hl_const(shift);
+                else
+                    emit_and_hl_const(rhs_val - 1U);
+                lhs_type = common_type;
+                g_expr_type = common_type;
+                continue;
+            }
+        }
+
         if (type_is_long(common_type)) {
             emit_cast_16_to_common(lhs_type, common_type);
             emit("\tpush de\n\tpush hl\n");
@@ -10476,10 +10500,51 @@ static void scale_hl_by_elem_size(int elem)
     }
 }
 
+static int int_log2_pow2(int v)
+{
+    int n;
+
+    if (v <= 0 || (v & (v - 1)) != 0)
+        return -1;
+
+    n = 0;
+    while (v > 1) {
+        v >>= 1;
+        n++;
+    }
+    return n;
+}
+
+static void emit_arith_shift_right_hl_const(int count)
+{
+    while (count-- > 0)
+        emit("\tsra h\n\trr l\n");
+}
+
+static void emit_logical_shift_right_hl_const(int count)
+{
+    while (count-- > 0)
+        emit("\tsrl h\n\trr l\n");
+}
+
+static void emit_and_hl_const(unsigned int mask)
+{
+    fprintf(outf, "\tld de,%u\n", mask & 0xffffU);
+    gen_binop('&');
+}
+
 static void divide_hl_by_elem_size(int elem)
 {
+    int shift;
+
     if (elem <= 1)
         return;
+
+    shift = int_log2_pow2(elem);
+    if (shift >= 0) {
+        emit_arith_shift_right_hl_const(shift);
+        return;
+    }
 
     fprintf(outf, "\tld de,%d\n", elem);
     emit_runtime_call("__divs");

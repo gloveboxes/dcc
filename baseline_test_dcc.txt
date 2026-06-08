@@ -3067,7 +3067,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ Jun  7 2026
-__TIME__ 20:26:06
+__TIME__ 21:17:28
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3815,3 +3815,5 @@ test tdecl
 declaration syntax test passed with great success
 test tctype
 ctype/realloc ok
+test tptrdiff
+tptrdiff completed with great success

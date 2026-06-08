@@ -78,14 +78,10 @@ wchar_t * wcsstr(const wchar_t *haystack, const wchar_t *needle)
 
 size_t wcslen(const wchar_t *str) 
 {
-    size_t len = 0;
-
+    const wchar_t *orig = str;
     while (*str != 0) 
-    {
-        len++;
         str++; 
-    }
-    return len;
+    return ( str - orig );
 }
 
 void test_wide()

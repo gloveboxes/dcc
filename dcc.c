@@ -425,6 +425,8 @@ static int g_tok_unsigned_suffix; /* set for U/u suffix or non-decimal unsigned-
 #define MAX_USER_LABELS 256
 static char ulabel_names[MAX_USER_LABELS][64];
 static int  ulabel_ids[MAX_USER_LABELS];
+static int  ulabel_defined[MAX_USER_LABELS];
+static int  ulabel_referenced[MAX_USER_LABELS];
 static int  nulabels;
 
 /* Enum constants (file-scoped) */
@@ -5706,17 +5708,56 @@ static void emit_incdec_addr(int type, int op);
 
 /* Look up or pre-allocate a user label ID (for goto / label: targets).
  * Labels are function-scoped; nulabels is reset before each function. */
-static int find_or_alloc_user_label(const char *name)
+static int find_or_alloc_user_label_index(const char *name)
 {
     int i;
+
     for (i = 0; i < nulabels; ++i)
         if (!strcmp(ulabel_names[i], name))
-            return ulabel_ids[i];
+            return i;
+
     if (nulabels >= MAX_USER_LABELS) fatal("too many goto labels");
+    memset(&ulabel_names[nulabels], 0, sizeof(ulabel_names[nulabels]));
     strncpy(ulabel_names[nulabels], name, sizeof(ulabel_names[nulabels]) - 1);
-    ulabel_names[nulabels][sizeof(ulabel_names[nulabels]) - 1] = 0;
     ulabel_ids[nulabels] = new_label();
-    return ulabel_ids[nulabels++];
+    ulabel_defined[nulabels] = 0;
+    ulabel_referenced[nulabels] = 0;
+    return nulabels++;
+}
+
+static int mark_user_label_reference(const char *name)
+{
+    int i;
+
+    i = find_or_alloc_user_label_index(name);
+    ulabel_referenced[i] = 1;
+    return ulabel_ids[i];
+}
+
+static int define_user_label(const char *name)
+{
+    int i;
+
+    i = find_or_alloc_user_label_index(name);
+    if (ulabel_defined[i])
+        error_here("duplicate goto label");
+    ulabel_defined[i] = 1;
+    return ulabel_ids[i];
+}
+
+static void check_undefined_user_labels(void)
+{
+    int i;
+
+    for (i = 0; i < nulabels; ++i) {
+        if (ulabel_referenced[i] && !ulabel_defined[i]) {
+            fprintf(stderr, "%s:%d: error: undefined goto label '%s'\n",
+                    tok.file[0] ? tok.file : (input_name ? input_name : "<input>"),
+                    tok_line, ulabel_names[i]);
+            errors++;
+            if (errors > 40) fatal("too many errors");
+        }
+    }
 }
 
 /* Parse an integer constant expression used in enum bodies.
@@ -14643,7 +14684,7 @@ static void gen_statement(void)
             strncpy(lname, tok.text, sizeof(lname) - 1);
             lname[sizeof(lname) - 1] = 0;
             next_token();
-            emit_jp_label("jp", find_or_alloc_user_label(lname));
+            emit_jp_label("jp", mark_user_label_reference(lname));
         }
         expect(';');
     } else if (tok.kind == TOK_ID) {
@@ -14663,7 +14704,7 @@ static void gen_statement(void)
         next_token();
         if (tok.kind == ':') {
             /* This is a labeled statement: emit the label, consume ':', recurse */
-            emit_label(find_or_alloc_user_label(lname));
+            emit_label(define_user_label(lname));
             next_token();
             gen_statement();
         } else {
@@ -16230,6 +16271,7 @@ static void parse_function_or_global(int base_type)
                 current_return_type = type;
                 emit_function_prologue(name, current_local_bytes);
                 gen_compound();
+                check_undefined_user_labels();
                 emit_function_epilogue();
 
                 posi = body_end_pos;

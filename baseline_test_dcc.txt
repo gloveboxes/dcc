@@ -580,7 +580,8 @@ enum test passed with great success
 test tunion
 union test passed with great success
 test tgoto
-goto test passed with great success
+tgoto start
+tgoto passed with great success
 test tarray
 index 0, au8 10, au16 10, au32 10
 index 0, a8 -10, a16 -10, a32 -10
@@ -3066,7 +3067,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ Jun  7 2026
-__TIME__ 13:49:47
+__TIME__ 20:26:06
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1

@@ -123,6 +123,7 @@ int main( int argc, char * argv[] )
     }
 
     printf( "summ is : %f\n", Summ );
+
     Summ = 0.0;
 
     filla();
@@ -139,7 +140,7 @@ int main( int argc, char * argv[] )
     }
 
     printf( "summ is : %f\n", Summ );
-//    printf( "summ is : %lu\n", Summ );
+
     return 0;
 }
 

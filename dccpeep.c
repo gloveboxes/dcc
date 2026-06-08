@@ -726,6 +726,78 @@ static const char *peep_inverse_cond(const char *cond)
     return NULL;
 }
 
+
+/*
+ * Collapse common address formation:
+ *
+ *     ld hl,_base
+ *     push hl
+ *     ld l,(ix+N)
+ *     ld h,(ix+N+1)
+ *     ex de,hl
+ *     pop hl
+ *     add hl,de
+ *
+ * into:
+ *
+ *     ld l,(ix+N)
+ *     ld h,(ix+N+1)
+ *     ld de,_base
+ *     add hl,de
+ *
+ * This is a general DCC expression pattern for base + local/param index,
+ * very common at hot string/memory call sites.  The expression result is HL;
+ * DCC codegen should not depend on DE preserving the index after address
+ * formation, so the shorter sequence is safe for normal expression code.
+ */
+static int peep_parse_ld_l_ix(const char *s, char *off);
+static int peep_parse_ld_h_ix(const char *s, char *off);
+
+static int pass_base_index_addr(void)
+{
+    int i;
+    int changed;
+    char base[128];
+    char loff[32];
+    char hoff[32];
+    char out[256];
+
+    changed = 0;
+
+    for (i = 0; i + 6 < nlines; ++i) {
+        if (!parse_ld_hl_imm(lines[i], base))
+            continue;
+        /* Only rewrite constants/labels that are also legal as ld de,<base>. */
+        if (base[0] == '(')
+            continue;
+        if (!eq(i + 1, "push hl"))
+            continue;
+        if (!peep_parse_ld_l_ix(lines[i + 2], loff))
+            continue;
+        if (!peep_parse_ld_h_ix(lines[i + 3], hoff))
+            continue;
+        if (!eq(i + 4, "ex de,hl"))
+            continue;
+        if (!eq(i + 5, "pop hl"))
+            continue;
+        if (!eq(i + 6, "add hl,de"))
+            continue;
+
+        replace1_tagged(i, lines[i + 2], "base_index_addr");
+        replace1(i + 1, lines[i + 3]);
+        sprintf(out, "ld de,%s", base);
+        replace1(i + 2, out);
+        replace1(i + 3, "add hl,de");
+        delete_n(i + 4, 3);
+        changed = 1;
+        if (i > 0)
+            --i;
+    }
+
+    return changed;
+}
+
+
 static int pass_branch_over_jump(void)
 {
     int i;
@@ -2506,7 +2578,26 @@ static int pass_elim_ix_frame(void)
                     break;
                 }
             }
-            /* Detect an un-removed local allocation: ld hl,-N / add hl,sp / ld sp,hl */
+            /* Detect an un-removed local allocation.  This pass runs
+             * after other peepholes, so local allocation may be in either the
+             * original form:
+             *
+             *     ld hl,-N / add hl,sp / ld sp,hl
+             *
+             * or the compact form:
+             *
+             *     dec sp
+             *     dec sp
+             *
+             * Removing the IX prologue/epilogue while leaving either form
+             * corrupts the return address.  tgoto's gt_block_label exposed
+             * this when local_alloc_2 had already compacted the allocation
+             * before pass_elim_ix_frame saw it.
+             */
+            if (eq(j, "dec sp")) {
+                has_ix_use = 1;
+                break;
+            }
             if (j + 2 < next_func &&
                 strncmp(lines[j], "ld hl,-", 7) == 0 &&
                 eq(j+1, "add hl,sp") &&
@@ -8270,6 +8361,7 @@ int main(int argc, char **argv)
         if (pass_store_l_reload_a()) changed = 1;
         if (pass_reuse_board_addr_for_zero_store()) changed = 1;
         if (pass_array_base_push_to_de()) changed = 1;
+        if (pass_base_index_addr()) changed = 1;
         if (pass_e_signed_le_zero()) changed = 1;
         if (pass_ix_array_word_addr()) changed = 1;
         if (pass_ix_postdec_to_local()) changed = 1;

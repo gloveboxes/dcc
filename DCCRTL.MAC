@@ -382,13 +382,11 @@ _bdos:
         public  __slen
 __slen:
         ; size_t strlen(const char *s)
-        ; Use CPIR to scan for NUL.  This is much faster than a hand loop
-        ; on long strings (21T/byte for CPIR vs ~42T/byte before).
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      l,(ix+4)
-        ld      h,(ix+5)        ; HL = s
+        ; IX-free entry; use CPIR to scan for NUL.
+        pop     bc              ; return address
+        pop     hl              ; HL = s
+        push    hl              ; restore caller argument for caller cleanup
+        push    bc              ; restore return address
         ld      e,l
         ld      d,h             ; DE = original s
         ld      bc,0ffffh
@@ -397,7 +395,21 @@ __slen:
         or      a
         sbc     hl,de           ; bytes scanned including NUL
         dec     hl              ; length excluding NUL
-        pop     ix
+        ret
+
+
+        public  __slf
+__slf:
+        ; fastcall size_t strlen(const char *s)
+        ; Entry: HL = s.  Return: HL = length.
+        ld      e,l
+        ld      d,h             ; DE = original s
+        ld      bc,0ffffh
+        xor     a
+        cpir
+        or      a
+        sbc     hl,de           ; bytes scanned including NUL
+        dec     hl
         ret
 
         public  __scpy
@@ -489,10 +501,49 @@ srch_not_found:
         ret
 
 
+        public  __chf
+__chf:
+        ; char *strchr_fastcall(const char *s, int c)
+        ; Entry: HL = s, A = low byte of c.  Return HL = match or 0.
+        ld      c,a
+schrf_loop:
+        ld      a,(hl)
+        cp      c
+        ret     z
+        inc     hl
+        or      a
+        jr      z,schrf_not_found
+
+        ld      a,(hl)
+        cp      c
+        ret     z
+        inc     hl
+        or      a
+        jr      z,schrf_not_found
+
+        ld      a,(hl)
+        cp      c
+        ret     z
+        inc     hl
+        or      a
+        jr      z,schrf_not_found
+
+        ld      a,(hl)
+        cp      c
+        ret     z
+        inc     hl
+        or      a
+        jr      nz,schrf_loop
+schrf_not_found:
+        ld      hl,0
+        ret
+
         public  __schr
 __schr:
         ; char *strchr(const char *s, int c)
-        ; ret z returns immediately on match (38T/byte vs 47T/byte).
+        ; Unrolled scalar scan.  CPIR is unsafe without first finding NUL,
+        ; and a length-prefetch would scan long misses twice.  This keeps
+        ; strchr(s,'$') long misses to one pass while reducing loop branches.
         pop     de              ; pop return address
         pop     hl              ; HL = s
         pop     bc              ; BC = c (C = char)
@@ -502,64 +553,130 @@ __schr:
 schr_loop:
         ld      a,(hl)
         cp      c
-        ret     z               ; found: HL points to match
+        ret     z
+        inc     hl
+        or      a
+        jr      z,schr_not_found
+
+        ld      a,(hl)
+        cp      c
+        ret     z
+        inc     hl
+        or      a
+        jr      z,schr_not_found
+
+        ld      a,(hl)
+        cp      c
+        ret     z
+        inc     hl
+        or      a
+        jr      z,schr_not_found
+
+        ld      a,(hl)
+        cp      c
+        ret     z
         inc     hl
         or      a
         jr      nz,schr_loop
-        ld      hl,0            ; not found
+schr_not_found:
+        ld      hl,0
         ret
 
         public  __sstr
 __sstr:
         ; char *strstr(const char *haystack, const char *needle)
-        ; cp (hl) outer scan: 43T/byte vs 47T/byte.
-        ; Save/restore needle ptr around candidate comparison so no IX reload needed.
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      e,(ix+4)
-        ld      d,(ix+5)        ; DE = haystack
-        ld      l,(ix+6)
-        ld      h,(ix+7)        ; HL = needle
-        pop     ix              ; done with frame
+        ; Length-bounded CPIR outer scan, with a quick second-character
+        ; precheck before saving full retry state.  This is especially good
+        ; for repeated misses like strstr(s,"gfe") against alphabetic data:
+        ; many candidates match needle[0], almost all fail at needle[1].
+        pop     bc              ; return address
+        pop     de              ; DE = haystack
+        pop     hl              ; HL = needle
+        push    hl              ; restore caller arguments for caller cleanup
+        push    de
+        push    bc              ; restore return address
         ld      a,(hl)
         or      a
-        jr      nz,sstr_scan
+        jr      nz,sstr_ne2
         ex      de,hl           ; empty needle => return haystack
         ret
-sstr_scan:
-        ld      a,(de)          ; 7T: haystack char
-        cp      (hl)            ; 7T: vs needle[0]
-        jr      z,sstr_cand     ; 7T/12T
-        inc     de              ; 6T
-        or      a               ; 4T: haystack NUL?
-        jr      nz,sstr_scan    ; 12T/7T
-        ld      hl,0            ; not found
-        ret
-sstr_cand:
-        push    hl              ; save needle ptr for fail recovery
-        push    de              ; save candidate start (for return on match)
-        inc     de              ; haystack past first matched char
-        inc     hl              ; needle past first char
-sstr_cmp:
-        ld      a,(hl)
-        or      a
-        jr      z,sstr_found
+sstr_ne2:
+        ; Compute remaining haystack span including the terminating NUL.
+        push    hl              ; save needle
+        push    de              ; save haystack/current pointer
+        ex      de,hl           ; HL = haystack
+        ld      bc,0ffffh
+        xor     a
+        cpir                    ; find NUL, BC has one's-complement count left
+        ld      a,c
+        cpl
         ld      c,a
+        ld      a,b
+        cpl
+        ld      b,a
+        inc     bc              ; BC = strlen(haystack) + 1
+        pop     de              ; DE = current haystack search pointer
+        pop     hl              ; HL = needle
+        ld      a,(hl)          ; A = needle[0]
+sstr_cpir_scan:
+        push    hl              ; save original needle pointer
+        ld      h,d
+        ld      l,e             ; HL = current haystack pointer
+        cpir                    ; search A within remaining span
+        jr      nz,sstr_cpir_not_found
+
+        ; Found first char.  HL is one past candidate, BC is remaining after it.
+        ; Fast path: check needle[1] before pushing full retry state.
+        pop     de              ; DE = original needle pointer
+        inc     de              ; DE = needle + 1
         ld      a,(de)
-        cp      c
-        jr      nz,sstr_fail
+        or      a
+        jr      z,sstr_cpir_onechar
+        cp      (hl)            ; compare needle[1] with candidate[1]
+        jr      nz,sstr_cpir_fast_fail
+
+        ; First two characters matched.  Save retry/return state and compare
+        ; the rest of the needle.
+        push    bc              ; save remaining span after candidate first byte
+        push    de              ; save needle+1
+        push    hl              ; save candidate+1
+sstr_cpir_cmp_rest:
         inc     de
         inc     hl
-        jr      sstr_cmp
-sstr_fail:
-        pop     de              ; discard candidate start
-        pop     hl              ; restore needle ptr
-        inc     de              ; try next haystack position
-        jr      sstr_scan
-sstr_found:
-        pop     hl              ; HL = candidate start (the match)
-        pop     bc              ; discard saved needle ptr
+        ld      a,(de)
+        or      a
+        jr      z,sstr_cpir_found
+        cp      (hl)
+        jr      nz,sstr_cpir_fail
+        jr      sstr_cpir_cmp_rest
+
+sstr_cpir_fast_fail:
+        ; DE = needle+1, HL = candidate+1, BC = remaining span.
+        dec     de              ; DE = original needle
+        ex      de,hl           ; HL = original needle, DE = next haystack
+        ld      a,(hl)          ; A = needle[0] for CPIR
+        jr      sstr_cpir_scan
+
+sstr_cpir_fail:
+        pop     hl              ; HL = candidate+1
+        pop     de              ; DE = needle+1
+        pop     bc              ; BC = remaining span after candidate first byte
+        dec     de              ; DE = original needle
+        ex      de,hl           ; HL = original needle, DE = next haystack
+        ld      a,(hl)          ; A = needle[0] for CPIR
+        jr      sstr_cpir_scan
+
+sstr_cpir_found:
+        pop     hl              ; HL = candidate+1
+        pop     de              ; discard saved needle+1
+        pop     bc              ; discard saved remaining span
+sstr_cpir_onechar:
+        dec     hl              ; return candidate start
+        ret
+
+sstr_cpir_not_found:
+        pop     hl              ; discard saved needle pointer
+        ld      hl,0
         ret
 
         public  __ncmp
@@ -894,19 +1011,26 @@ nc1dn:
         public  __mcmp
 __mcmp:
         ; int memcmp(const void *s1, const void *s2, size_t n)
-        ; DJNZ inner loop: 46T/byte vs 66T/byte (~30% faster on large buffers).
-        ; BC = n split as B=n_high (256-byte chunk count), C=n_low (tail byte count).
-        ; Pop IX early after loading args -- frame no longer needed in hot loop.
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      e,(ix+4)
-        ld      d,(ix+5)        ; DE = s1
-        ld      l,(ix+6)
-        ld      h,(ix+7)        ; HL = s2
-        ld      c,(ix+8)
-        ld      b,(ix+9)        ; BC = n
-        pop     ix              ; caller ix restored; done with frame
+        ; IX-free argument setup.  Final hot loop uses DE=s1, HL=s2, BC=n.
+        ld      hl,2
+        add     hl,sp
+        ld      c,(hl)
+        inc     hl
+        ld      b,(hl)          ; BC = s1 temporary
+        inc     hl
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)          ; DE = s2 temporary
+        inc     hl
+        ld      a,(hl)
+        inc     hl
+        ld      h,(hl)
+        ld      l,a             ; HL = n temporary
+        push    bc              ; save s1
+        push    hl              ; save n
+        ex      de,hl           ; HL = s2
+        pop     bc              ; BC = n
+        pop     de              ; DE = s1
         ld      a,b
         or      c
         jr      z,mc2eq         ; n == 0
@@ -915,8 +1039,26 @@ __mcmp:
         jr      z,mc2tail       ; n < 256: no 256-byte chunks
         push    bc              ; save [n_high, n_low] across chunk loop
 mc2chunk:
-        ld      b,0             ; DJNZ with B=0 runs 256 iterations
+        ; Compare one full 256-byte chunk.  The common tstring path is
+        ; equality over long buffers; unroll 4 bytes per DJNZ to reduce
+        ; branch overhead without changing mismatch return semantics.
+        ld      b,64
 mc2clp:
+        ld      a,(de)
+        cp      (hl)
+        jr      nz,mc2dkl
+        inc     de
+        inc     hl
+        ld      a,(de)
+        cp      (hl)
+        jr      nz,mc2dkl
+        inc     de
+        inc     hl
+        ld      a,(de)
+        cp      (hl)
+        jr      nz,mc2dkl
+        inc     de
+        inc     hl
         ld      a,(de)
         cp      (hl)
         jr      nz,mc2dkl
@@ -1069,16 +1211,26 @@ snc_term:
         public  __mcpy
 __mcpy:
         ; void *memcpy(void *dst, const void *src, size_t n)
-        ; Use Z80 block copy.  C memcpy is undefined for overlap, so LDIR is OK.
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      e,(ix+4)
-        ld      d,(ix+5)        ; DE = dst
-        ld      l,(ix+6)
-        ld      h,(ix+7)        ; HL = src
-        ld      c,(ix+8)
-        ld      b,(ix+9)        ; BC = n
+        ; IX-free argument setup.  C memcpy is undefined for overlap, so LDIR is OK.
+        ld      hl,2
+        add     hl,sp
+        ld      c,(hl)
+        inc     hl
+        ld      b,(hl)          ; BC = dst temporary
+        inc     hl
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)          ; DE = src temporary
+        inc     hl
+        ld      a,(hl)
+        inc     hl
+        ld      h,(hl)
+        ld      l,a             ; HL = n temporary
+        push    bc              ; save dst for return/setup
+        push    hl              ; save n
+        ex      de,hl           ; HL = src
+        pop     bc              ; BC = n
+        pop     de              ; DE = dst
         push    de              ; return dst
         ld      a,b
         or      c
@@ -1086,25 +1238,33 @@ __mcpy:
         ldir
 mcpy_done:
         pop     hl
-        pop     ix
         ret
 
         public  __mset
 __mset:
         ; void *memset(void *dest, int c, int count)
-        ; Uses Z80 LDIR block-fill: write first byte, then LDIR propagates it.
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      l,(ix+4)
-        ld      h,(ix+5)        ; HL = dest
-        ld      c,(ix+8)
-        ld      b,(ix+9)        ; BC = count
+        ; IX-free setup plus Z80 LDIR block-fill.
+        ld      hl,2
+        add     hl,sp
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)          ; DE = dest temporary
+        inc     hl
+        ld      a,(hl)          ; A = fill byte
+        push    af              ; save fill while loading count
+        inc     hl              ; skip high byte of int c
+        inc     hl
+        ld      c,(hl)
+        inc     hl
+        ld      b,(hl)          ; BC = count
+        ex      de,hl           ; HL = dest
+        pop     af              ; A = fill byte
         push    hl              ; save dest for return value
+        ld      e,a             ; E = fill byte across zero tests
         ld      a,b
         or      c
         jr      z,ms_done       ; count == 0, nothing to do
-        ld      a,(ix+6)        ; fill byte
+        ld      a,e
         ld      (hl),a          ; write first byte
         dec     bc
         ld      a,b
@@ -1116,11 +1276,10 @@ __mset:
         ldir                    ; copy (HL)->(DE) BC times, each step propagates fill
 ms_done:
         pop     hl              ; HL = dest (return value)
-        ld      sp,ix
-        pop     ix
         ret
 
 
+; Indirect call helper.
 ; Indirect call helper.
 ; Input HL = target address. Returns whatever callee returns in HL.
         public  __call_hl
@@ -1257,7 +1416,7 @@ __modu:
         ld      hl,(__dmc_rhs)
         sbc     hl,de
         jr      nz,dm_both_pop  ; rhs mismatch
-        ; rhs matches â€” check lhs (dividend)
+        ; rhs matches  check lhs (dividend)
         pop     hl              ; restore dividend  [SP: divisor]
         push    hl              ; re-save           [SP: dividend, divisor]
         ld      de,(__dmc_lhs)
@@ -1388,6 +1547,87 @@ __ms_done:
         ret
 
 
+        public  __r1u
+; 16-bit unsigned dividend modulo 8-bit constant divisor.
+; Input:  HL = dividend, E = divisor (1..255)
+; Output: HL = remainder
+; Used for unsigned x % C when C fits in one byte and is not a power of two.
+__r1u:
+        push    bc
+        push    af
+        ld      a,e
+        or      a
+        jr      nz,R1U0
+        ; Undefined in C, but keep a deterministic fallback for divisor 0.
+        pop     af
+        pop     bc
+        ret
+R1U0:
+        ld      bc,0            ; BC = partial remainder, kept < divisor
+        ex      af,af'
+        ld      a,16            ; alternate A = loop counter
+        ex      af,af'
+R1U1:
+        add     hl,hl           ; next dividend bit -> carry
+        rl      c
+        rl      b
+
+        ; if BC >= E, subtract E.  Since E is 8-bit and BC is at most
+        ; 9 bits here, this avoids the full 16-bit divisor compare path.
+        ld      a,b
+        or      a
+        jr      nz,R1US
+        ld      a,c
+        cp      e
+        jr      c,R1UN
+R1US:
+        ld      a,c
+        sub     e
+        ld      c,a
+        ld      a,b
+        sbc     a,0
+        ld      b,a
+R1UN:
+        ex      af,af'
+        dec     a
+        jr      z,R1UD
+        ex      af,af'
+        jr      R1U1
+R1UD:
+        ex      af,af'
+        ld      h,0
+        ld      l,c
+        pop     af
+        pop     bc
+        ret
+
+
+        public  __r1s
+; 16-bit signed dividend modulo positive 8-bit constant divisor.
+; Input:  HL = signed dividend, E = divisor (1..255)
+; Output: HL = signed remainder, same sign convention as __mods/__r2s.
+__r1s:
+        ld      a,h
+        or      a
+        jp      p,__r1u
+        push    bc
+        xor     a
+        sub     l
+        ld      l,a
+        ld      a,0
+        sbc     a,h
+        ld      h,a
+        call    __r1u
+        xor     a
+        sub     l
+        ld      l,a
+        ld      a,0
+        sbc     a,h
+        ld      h,a
+        pop     bc
+        ret
+
+
         public  __q2u
         public  __r2u
         public  __q2s
@@ -1398,6 +1638,9 @@ __ms_done:
 D16U:
         ; Input:  HL = dividend, DE = divisor
         ; Output: HL = quotient, DE = remainder
+        ; Uses alternate AF as the 16-iteration counter.  The old version
+        ; stored the counter in memory every bit, which is costly in hot
+        ; constant-modulo code such as rand() % C.
         push    bc
         push    af
         ld      a,d
@@ -1409,8 +1652,9 @@ D16U:
         jr      D16UD
 D16U0:
         ld      bc,0            ; BC = partial remainder
-        ld      a,16
-        ld      (__dmcnt),a
+        ex      af,af'
+        ld      a,16            ; alternate A = loop counter
+        ex      af,af'
 D16U1:
         add     hl,hl           ; shift next dividend bit into carry;
         rl      c               ; BC = (BC << 1) | carry
@@ -1431,11 +1675,13 @@ D16U1:
         ld      b,a
         inc     l               ; low bit is known clear after add hl,hl
 D16U2:
-        ld      a,(__dmcnt)
+        ex      af,af'          ; decrement alternate counter
         dec     a
-        ld      (__dmcnt),a
-        jr      nz,D16U1
-
+        jr      z,D16U3
+        ex      af,af'
+        jr      D16U1
+D16U3:
+        ex      af,af'          ; restore primary AF before returning
         ld      d,b             ; DE = remainder
         ld      e,c
 D16UD:
@@ -1552,7 +1798,7 @@ R2SDN:
 ; Names are <= 6 characters so they remain distinct in L80's 6-character
 ; symbol-table (L80 truncates longer names for matching purposes).
 ;
-; __en0 — frame setup with no local-variable allocation (8 inline bytes -> 3).
+; __en0  frame setup with no local-variable allocation (8 inline bytes -> 3).
 ;   Caller emits:   call __en0
 ;   Stack on entry: [body_ret, ret_addr, params...]
 ;
@@ -1565,7 +1811,7 @@ __en0:
         ex      de,hl           ; HL = body address (DE = old HL, discarded)
         jp      (hl)
 
-; __entr — frame setup WITH local-variable allocation (13 inline bytes -> 6).
+; __entr  frame setup WITH local-variable allocation (13 inline bytes -> 6).
 ;   Caller emits:   ld hl,-N  /  call __entr
 ;   Stack on entry: [body_ret, ret_addr, params...]  HL = -local_size
 ;
@@ -1580,7 +1826,7 @@ __entr:
         ex      de,hl           ; HL = body address
         jp      (hl)
 
-; __lve — shared epilogue for functions that have locals (5 inline bytes -> 3).
+; __lve  shared epilogue for functions that have locals (5 inline bytes -> 3).
 ;   Caller emits:   jp __lve
 ;
         public  __lve
@@ -1589,7 +1835,7 @@ __lve:
         pop     ix
         ret
 
-; __la1/__la2/__la3 — load first/second/third word parameter into HL.
+; __la1/__la2/__la3  load first/second/third word parameter into HL.
 ;   Replaces 6-byte inline: ld l,(ix+N) / ld h,(ix+N+1)
 ;   Caller emits:  call __la1  (or __la2, __la3)
 ;   Returns: HL = parameter value.  All other registers and flags unchanged.
@@ -1612,7 +1858,7 @@ __la3:
         ld      h,(ix+9)
         ret
 
-; __phix — save HL on the stack, then copy IX into HL (4 inline bytes -> 3).
+; __phix  save HL on the stack, then copy IX into HL (4 inline bytes -> 3).
 ;   Replaces:  push hl / push ix / pop hl
 ;   Caller emits:  call __phix
 ;   Returns: HL = IX (frame pointer); old HL value pushed onto the stack.
@@ -1701,7 +1947,7 @@ __sv6:  ld      (ix-12),l
         ld      (ix-11),h
         ret
 
-; __ldwl — dereference 16-bit pointer in HL (4 inline bytes -> 3).
+; __ldwl  dereference 16-bit pointer in HL (4 inline bytes -> 3).
 ;   Replaces:  ld e,(hl) / inc hl / ld d,(hl) / ex de,hl
 ;   Input: HL = pointer.  Output: HL = *HL, DE trashed.  Flags unchanged.
         public  __ldwl
@@ -1711,7 +1957,7 @@ __ldwl: ld      e,(hl)
         ex      de,hl
         ret
 
-; __wand — HL &= DE, 16-bit AND (6 inline bytes -> 3).
+; __wand  HL &= DE, 16-bit AND (6 inline bytes -> 3).
 ;   Replaces:  ld a,h / and d / ld h,a / ld a,l / and e / ld l,a
 ;   Input: HL, DE.  Output: HL = HL & DE.  Flags set by low-byte AND.
         public  __wand
@@ -1723,7 +1969,7 @@ __wand: ld      a,h
         ld      l,a
         ret
 
-; __icmp — signed 16-bit compare, set flags for signed subtraction (8 inline bytes -> 3).
+; __icmp  signed 16-bit compare, set flags for signed subtraction (8 inline bytes -> 3).
 ;   Replaces: ld a,h/xor 80h/ld h,a/ld a,d/xor 80h/ld d,a/or a/sbc hl,de
 ;   Input: HL, DE = signed 16-bit operands.
 ;   Output: flags set for signed HL-DE, HL and DE trashed.  ret preserves flags.
@@ -1738,7 +1984,7 @@ __icmp: ld      a,h
         sbc     hl,de
         ret
 
-; __sxde — sign-extend HL: produce DE = 0FFFFh if HL negative, 0 otherwise (5 bytes -> 3).
+; __sxde  sign-extend HL: produce DE = 0FFFFh if HL negative, 0 otherwise (5 bytes -> 3).
 ;   Replaces:  ld a,h / rlca / sbc a,a / ld d,a / ld e,a
 ;   Input: HL = signed 16-bit value.  Output: DE = sign-extension word, HL unchanged.
         public  __sxde
@@ -1749,7 +1995,7 @@ __sxde: ld      a,h
         ld      e,a
         ret
 
-; __sxhl — sign-extend L into H: HL = (int16_t)(int8_t)L (4 inline bytes -> 3).
+; __sxhl  sign-extend L into H: HL = (int16_t)(int8_t)L (4 inline bytes -> 3).
 ;   Replaces:  ld a,l / rlca / sbc a,a / ld h,a
 ;   Input: L = signed 8-bit value.  Output: H = sign of L, HL = 16-bit signed value.
         public  __sxhl
@@ -1849,7 +2095,7 @@ pf_pct_left:
         jp      pf_pct_next
 
 pf_pct_dot:
-        ; Parse digits after '.' into pf_prec (e.g. %.4d → prec=4).
+        ; Parse digits after '.' into pf_prec (e.g. %.4d  prec=4).
         ; '.' was already consumed by inc hl in pf_pct_next.
 pf_pct_prec_loop:
         ld      a,(hl)
@@ -2202,7 +2448,7 @@ pf_emit_a:
         ld      hl,(pf_sink)
         ld      a,h
         or      l
-        jr      z,pfe_con       ; pf_sink=0 → console
+        jr      z,pfe_con       ; pf_sink=0  console
 pfe_buf:
         ld      hl,(pf_bufptr)
         ld      (hl),e
@@ -3808,10 +4054,10 @@ _rand:
         ; but recover defensively if memory was clobbered.
         ld      a,h
         or      l
-        jp      nz,__rand_store
+        jp      nz,__rsto
         inc     hl
 
-__rand_store:
+__rsto:
         ld      (__rand_state),hl
         res     7,h
         ret
@@ -4042,7 +4288,7 @@ __lmu:
         ld      hl,0
         ld      (__ldv_rem_l),hl
         ld      (__ldv_rem_h),hl
-        ; Fast path: divisor fits in 16 bits → use compact register-based algorithm.
+        ; Fast path: divisor fits in 16 bits  use compact register-based algorithm.
         ; Keep DE = divisor and HL = 16-bit running remainder throughout.
         ; Process the 32-bit dividend MSB-first, 8 bits per call to lmodu_byte.
         ld      hl,(__ldv_dvs_h)
@@ -4118,7 +4364,7 @@ lmodu_byte:
         ; is the correct new remainder; skip the restore.
         ld      b,8
 lmodu_bit:
-        rlca                            ; rotate A left: MSB → carry (next dividend bit)
+        rlca                            ; rotate A left: MSB  carry (next dividend bit)
         adc     hl,hl                   ; HL = (HL<<1) | bit; carry = 16-bit overflow
         jr      c,lmodu_ovf             ; overflow: true_shifted > 65535 >= DE; always sub
         or      a                       ; clear carry (no overflow)
@@ -4557,10 +4803,10 @@ __lts:
         ; jp pe = jump if parity/overflow set; jp m = jump if sign (negative)
         ld      hl,0
         jp      pe,lts_ov  ; overflow set
-        jp      m,lts_true ; no overflow, negative â†’ LHS < RHS
+        jp      m,lts_true ; no overflow, negative  LHS < RHS
         jr      lts_done
 lts_ov:
-        jp      p,lts_true ; overflow + positive â†’ LHS < RHS
+        jp      p,lts_true ; overflow + positive  LHS < RHS
         jr      lts_done
 lts_true:
         inc     l
@@ -5342,8 +5588,8 @@ tolo_done:
         ret
 
 ; ---- _fgets(char *buf, int size, FILE *fp) ----
-; fp < 3 (stdin/stdout/stderr) → read from console via BDOS fn 1.
-; fp >= 3 (real file) → read char-by-char using _read.
+; fp < 3 (stdin/stdout/stderr)  read from console via BDOS fn 1.
+; fp >= 3 (real file)  read char-by-char using _read.
 ; Returns HL = buf on success, HL = 0 at EOF or if size <= 0.
 ; Args: buf @ IX+4/5,  size @ IX+6/7,  fp @ IX+8/9.
         public  _fgets
@@ -5359,7 +5605,7 @@ _fgets:
         or      l
         jp      z,fgets_null
 
-        ; dispatch on fp: < 3 → console, >= 3 → file
+        ; dispatch on fp: < 3  console, >= 3  file
         ld      a,(ix+8)
         cp      FIRSTFD
         jp      c,fgets_con
@@ -5408,7 +5654,7 @@ fgf_loop:
 
         ld      a,h
         or      l
-        jr      z,fgf_eof               ; read 0 bytes → EOF
+        jr      z,fgf_eof               ; read 0 bytes  EOF
 
         ld      a,(__fgets_ch)
         cp      1ah                     ; Ctrl-Z = CP/M EOF marker
@@ -5422,7 +5668,7 @@ fgf_loop:
         ld      hl,(__fgets_rem)
         dec     hl
         ld      (__fgets_rem),hl
-        cp      0ah                     ; LF → end of line
+        cp      0ah                     ; LF  end of line
         jr      z,fgets_term
         jr      fgf_loop
 
@@ -5435,12 +5681,12 @@ fgf_eof:
         ld      de,__fdeof
         add     hl,de
         ld      (hl),1
-        ; if no chars were stored → return NULL
+        ; if no chars were stored  return NULL
         ld      hl,(__fgets_ptr)
         ld      de,(__fgets_start)
         or      a
         sbc     hl,de
-        jp      z,fgets_null            ; ptr == start → nothing read
+        jp      z,fgets_null            ; ptr == start  nothing read
         ; else: NUL-terminate and return buf
         jr      fgets_term
 
@@ -5462,12 +5708,12 @@ fgets_loop:
         jr      z,fgets_term
 
         ld      c,1
-        call    5                       ; BDOS fn 1: console input → A
+        call    5                       ; BDOS fn 1: console input  A
 
-        cp      1ah                     ; Ctrl-Z → EOF
+        cp      1ah                     ; Ctrl-Z  EOF
         jr      z,fgets_term
 
-        cp      0dh                     ; CR → translate to LF, end line
+        cp      0dh                     ; CR  translate to LF, end line
         jr      nz,fgets_store
         ld      e,0ah
         ld      c,2
@@ -5607,7 +5853,7 @@ fpcn:
         ret
 
 ; ============================================================
-; _puts(str)  –  write str + '\n' to stdout.
+; _puts(str)    write str + '\n' to stdout.
 ; ============================================================
         public  _puts
 _puts:
@@ -5715,7 +5961,7 @@ _fclose:
 
 ; ============================================================
 ; __fps(str, fp)
-; fp < 3 → console output;  fp >= 3 → _write to file.
+; fp < 3  console output;  fp >= 3  _write to file.
 ; ============================================================
         public  __fps
 __fps:
@@ -5801,7 +6047,7 @@ _fread:
         add     hl,sp
         ld      sp,hl
         ex      de,hl                   ; HL = bytes_read
-        ; if bytes_read < nbytes → set EOF
+        ; if bytes_read < nbytes  set EOF
         push    hl
         ld      de,(__frw_nb)
         or      a
@@ -5864,7 +6110,7 @@ _fwrite:
         ret
 
 ; ============================================================
-; _fseek(fp, offset, whence)  →  delegates to _lseek; clears EOF.
+; _fseek(fp, offset, whence)    delegates to _lseek; clears EOF.
 ; ============================================================
         public  _fseek
 _fseek:
@@ -5941,7 +6187,7 @@ fseek_bad:
 
 
 ; ============================================================
-; _ftell(fp)  →  returns current file position (low 16 bits).
+; _ftell(fp)    returns current file position (low 16 bits).
 ; ============================================================
         public  _ftell
 _ftell:
@@ -5954,7 +6200,7 @@ _ftell:
         cp      NFILES
         jr      nc,ftell_bad
         ld      (__slot),a
-        call    __offp                  ; HL → 32-bit offset table entry
+        call    __offp                  ; HL  32-bit offset table entry
         ld      e,(hl)
         inc     hl
         ld      d,(hl)                  ; DE = low 16 bits of file position
@@ -5973,7 +6219,7 @@ ftell_bad:
         ret
 
 ; ============================================================
-; _rewind(fp)  →  seek to 0, clear EOF.
+; _rewind(fp)    seek to 0, clear EOF.
 ; ============================================================
         public  _rewind
 _rewind:
@@ -6006,7 +6252,7 @@ rewind_ret:
         ret
 
 ; ============================================================
-; _feof(fp)  →  returns HL=1 if EOF, HL=0 otherwise.
+; _feof(fp)    returns HL=1 if EOF, HL=0 otherwise.
 ; ============================================================
         public  _feof
 _feof:
@@ -6033,7 +6279,7 @@ feof_no:
         ret
 
 ; ============================================================
-; _ferror(fp)  →  returns HL=1 if error, HL=0 otherwise.
+; _ferror(fp)    returns HL=1 if error, HL=0 otherwise.
 ; ============================================================
         public  _ferror
 _ferror:
@@ -6060,7 +6306,7 @@ ferr_no:
         ret
 
 ; ============================================================
-; _scanf, _sscanf, _fscanf  –  stubs (return 0).
+; _scanf, _sscanf, _fscanf    stubs (return 0).
 ; ============================================================
         public  _scanf
         public  _sscanf
@@ -6192,7 +6438,7 @@ lj_nonzero:
         ; Load return value into HL
         ld      hl,(lj_val)
 
-        ; Jump to setjmp call site — HL is the return value
+        ; Jump to setjmp call site  HL is the return value
         ret
 
 lj_val:         dw      0

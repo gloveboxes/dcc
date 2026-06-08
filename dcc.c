@@ -408,6 +408,8 @@ static int current_return_type;
 static int parse_function_return_type;
 static int current_local_bytes;
 static int max_function_local_bytes;
+static int current_omit_ix_frame;
+static int current_function_has_call;
 
 static int break_stack[MAX_FLOW];
 static int cont_stack[MAX_FLOW];
@@ -4050,24 +4052,43 @@ static void emit_runtime_call(const char *name)
         fprintf(outf, "\tcall %s\n", name);
 }
 
-static void emit_load_sym_addr(struct Sym *s)
+
+static int frame_sp_offset_for_sym(struct Sym *s)
+{
+    /* With normal frame, first parameter is ix+4.  With no IX frame,
+     * SP still points at the return address, so the same parameter is sp+2. */
+    return s->offset - 2;
+}
+
+static void emit_load_frame_addr_hl(struct Sym *s)
 {
     int n;
-
-    if (s->storage == SC_LOCAL || s->storage == SC_PARAM) {
+    if (current_omit_ix_frame && s->storage == SC_PARAM) {
+        n = frame_sp_offset_for_sym(s);
+        if (n == 0) {
+            emit("\tpush sp\n\tpop hl\n");
+        } else {
+            fprintf(outf, "\tld hl,%d\n", n);
+            emit("\tadd hl,sp\n");
+        }
+    } else {
         emit("\tpush ix\n");
         emit("\tpop hl\n");
-
         if (s->offset > 0 && s->offset <= 3) {
-            for (n = 0; n < s->offset; ++n)
-                emit("\tinc hl\n");
+            for (n = 0; n < s->offset; ++n) emit("\tinc hl\n");
         } else if (s->offset < 0 && s->offset >= -3) {
-            for (n = 0; n < -s->offset; ++n)
-                emit("\tdec hl\n");
+            for (n = 0; n < -s->offset; ++n) emit("\tdec hl\n");
         } else if (s->offset != 0) {
             fprintf(outf, "\tld de,%d\n", s->offset);
             emit("\tadd hl,de\n");
         }
+    }
+}
+
+static void emit_load_sym_addr(struct Sym *s)
+{
+    if (s->storage == SC_LOCAL || s->storage == SC_PARAM) {
+        emit_load_frame_addr_hl(s);
     } else {
         emit_extrn_if_needed(s);
         fprintf(outf, "\tld hl,%s\n", asm_name_for(s->name));
@@ -4116,6 +4137,26 @@ static void emit_load_sym_value_direct(struct Sym *s)
         emit_load_global_word_direct(s);
         return;
     }
+    if (current_omit_ix_frame && s->storage == SC_PARAM) {
+        if (type_size(s->type) == 1) {
+            emit_load_frame_addr_hl(s);
+            emit("\tld l,(hl)\n");
+            if (s->type & TYPE_UNSIGNED)
+                emit("\tld h,0\n");
+            else
+                emit("\tld a,l\n\trlca\n\tsbc a,a\n\tld h,a\n");
+        } else if (type_size(s->type) == 4) {
+            emit_load_frame_addr_hl(s);
+            emit("\tld a,(hl)\n\tld l,a\n\tinc hl\n\tld a,(hl)\n\tld h,a\n");
+            emit("\tpush hl\n");
+            emit_load_frame_addr_hl(s);
+            emit("\tinc hl\n\tinc hl\n\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n\tpop hl\n");
+        } else {
+            emit_load_frame_addr_hl(s);
+            emit("\tld a,(hl)\n\tinc hl\n\tld h,(hl)\n\tld l,a\n");
+        }
+        return;
+    }
     if (type_size(s->type) == 1) {
         fprintf(outf, "\tld l,(ix%+d)\n", s->offset);
         if (s->type & TYPE_UNSIGNED)
@@ -4135,6 +4176,20 @@ static void emit_load_sym_value_direct(struct Sym *s)
 
 static void emit_load_sym_de_direct(struct Sym *s)
 {
+    if (current_omit_ix_frame && s->storage == SC_PARAM) {
+        if (type_size(s->type) == 1) {
+            emit_load_frame_addr_hl(s);
+            emit("\tld e,(hl)\n");
+            if (s->type & TYPE_UNSIGNED)
+                emit("\tld d,0\n");
+            else
+                emit("\tld a,e\n\trlca\n\tsbc a,a\n\tld d,a\n");
+        } else {
+            emit_load_frame_addr_hl(s);
+            emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n");
+        }
+        return;
+    }
     if (type_size(s->type) == 1) {
         fprintf(outf, "\tld e,(ix%+d)\n", s->offset);
         if (s->type & TYPE_UNSIGNED)
@@ -4153,10 +4208,25 @@ static void emit_store_hl_to_sym_direct(struct Sym *s)
         emit_store_global_word_direct(s);
         return;
     }
+    if (current_omit_ix_frame && s->storage == SC_PARAM) {
+        if (type_size(s->type) == 1) {
+            emit("\tld e,l\n");
+            emit_load_frame_addr_hl(s);
+            emit("\tld (hl),e\n");
+        } else if (type_size(s->type) == 4) {
+            emit("\tpush de\n\tex de,hl\n");
+            emit_load_frame_addr_hl(s);
+            emit("\tld (hl),e\n\tinc hl\n\tld (hl),d\n\tinc hl\n\tpop de\n\tld (hl),e\n\tinc hl\n\tld (hl),d\n");
+        } else {
+            emit("\tex de,hl\n");
+            emit_load_frame_addr_hl(s);
+            emit("\tld (hl),e\n\tinc hl\n\tld (hl),d\n");
+        }
+        return;
+    }
     if (type_size(s->type) == 1) {
         fprintf(outf, "\tld (ix%+d),l\n", s->offset);
     } else if (type_size(s->type) == 4) {
-        /* DE:HL -> sym (DE=high, HL=low) */
         fprintf(outf, "\tld (ix%+d),l\n", s->offset);
         fprintf(outf, "\tld (ix%+d),h\n", s->offset + 1);
         fprintf(outf, "\tld (ix%+d),e\n", s->offset + 2);
@@ -7347,6 +7417,54 @@ static void emit_load_const_sym_value(struct Sym *s);
 static void emit_float_compare_call(int op);
 
 
+
+static int try_emit_string_fastcall(const char *name,
+                                    long arg_start[MAX_SNAPSHOT],
+                                    long arg_end[MAX_SNAPSHOT],
+                                    int argc)
+{
+    char *arg_code;
+    int old_dead;
+
+    if (!strcmp(name, "strlen") && argc == 1) {
+        old_dead = expr_result_dead;
+        expr_result_dead = 0;
+        arg_code = copy_range(arg_start[0], arg_end[0]);
+        gen_snippet_expr(arg_code);
+        free(arg_code);
+        expr_result_dead = old_dead;
+
+        emit_runtime_call("__slf");
+        g_expr_type = TYPE_UNSIGNED | TYPE_INT;
+        return 1;
+    }
+
+    if (!strcmp(name, "strchr") && argc == 2) {
+        old_dead = expr_result_dead;
+        expr_result_dead = 0;
+
+        /* HL = string argument.  Save it across evaluation of the character
+         * expression, then pass the low byte of that expression in A. */
+        arg_code = copy_range(arg_start[0], arg_end[0]);
+        gen_snippet_expr(arg_code);
+        free(arg_code);
+        emit("\tpush hl\n");
+
+        arg_code = copy_range(arg_start[1], arg_end[1]);
+        gen_snippet_expr(arg_code);
+        free(arg_code);
+        emit("\tld a,l\n");
+        emit("\tpop hl\n");
+
+        expr_result_dead = old_dead;
+        emit_runtime_call("__chf");
+        g_expr_type = TYPE_PTR | TYPE_CHAR;
+        return 1;
+    }
+
+    return 0;
+}
+
 static int try_inline_cb_is_zero_call(const char *name,
                                       long arg_start[MAX_SNAPSHOT],
                                       long arg_end[MAX_SNAPSHOT],
@@ -7828,6 +7946,9 @@ static void gen_primary(void)
                 return;
 
             if (try_inline_cb_is_zero_call(name, arg_start, arg_end, argc))
+                return;
+
+            if (try_emit_string_fastcall(name, arg_start, arg_end, argc))
                 return;
 
             /*
@@ -10439,6 +10560,41 @@ static void gen_mul(void)
                 g_expr_type = common_type;
                 continue;
             }
+
+            /*
+             * x % C with unsigned 16-bit x and an 8-bit non-power-of-two
+             * constant C can use a smaller remainder-only helper.  The full
+             * fixed divider maintains a quotient and compares/subtracts a
+             * 16-bit divisor; __r1u keeps only an 8-bit divisor/remainder.
+             */
+            if (op == '%' && rhs_val > 1U && rhs_val <= 255U) {
+                next_token();
+                fprintf(outf, "\tld e,%u\n", rhs_val);
+                emit_runtime_call("__r1u");
+                lhs_type = common_type;
+                g_expr_type = common_type;
+                continue;
+            }
+        }
+
+        /*
+         * Signed x % C, where C is a small positive int constant, is also
+         * common in simple loop setup code such as i % 26.  Use a 16/8
+         * signed remainder helper instead of the full 16/16 fixed divider.
+         * This preserves C's usual remainder sign convention as implemented
+         * by the existing signed modulo helpers.
+         */
+        if (!type_is_long(common_type) && !(common_type & TYPE_UNSIGNED) &&
+            op == '%' && (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) &&
+            tok.val > 1 && tok.val <= 255) {
+            long rhs_sval;
+            rhs_sval = tok.val;
+            next_token();
+            fprintf(outf, "\tld e,%ld\n", rhs_sval);
+            emit_runtime_call("__r1s");
+            lhs_type = common_type;
+            g_expr_type = common_type;
+            continue;
         }
 
         if (type_is_long(common_type)) {
@@ -13583,9 +13739,476 @@ static void gen_if(void)
     emit_label(lend);
 }
 
+
+static void emit_load_sym_word_to_bc(struct Sym *s)
+{
+    if (sym_can_ix_direct(s)) {
+        if (current_omit_ix_frame && s->storage == SC_PARAM) {
+            emit_load_frame_addr_hl(s);
+            emit("\tld c,(hl)\n\tinc hl\n\tld b,(hl)\n");
+        } else {
+            fprintf(outf, "\tld c,(ix%+d)\n", s->offset);
+            fprintf(outf, "\tld b,(ix%+d)\n", s->offset + 1);
+        }
+    } else if (is_global_word_sym(s)) {
+        emit_extrn_if_needed(s);
+        fprintf(outf, "\tld bc,(%s)\n", asm_name_for(s->name));
+    }
+}
+
+static void emit_store_de_to_sym_word(struct Sym *s)
+{
+    if (sym_can_ix_direct(s)) {
+        if (current_omit_ix_frame && s->storage == SC_PARAM) {
+            emit_load_frame_addr_hl(s);
+            emit("\tld (hl),e\n\tinc hl\n\tld (hl),d\n");
+        } else {
+            fprintf(outf, "\tld (ix%+d),e\n", s->offset);
+            fprintf(outf, "\tld (ix%+d),d\n", s->offset + 1);
+        }
+    } else if (is_global_word_sym(s)) {
+        emit_extrn_if_needed(s);
+        fprintf(outf, "\tld (%s),de\n", asm_name_for(s->name));
+    }
+}
+
+static void emit_store_bc_to_sym_word(struct Sym *s)
+{
+    if (sym_can_ix_direct(s)) {
+        if (current_omit_ix_frame && s->storage == SC_PARAM) {
+            emit_load_frame_addr_hl(s);
+            emit("\tld (hl),c\n\tinc hl\n\tld (hl),b\n");
+        } else {
+            fprintf(outf, "\tld (ix%+d),c\n", s->offset);
+            fprintf(outf, "\tld (ix%+d),b\n", s->offset + 1);
+        }
+    } else if (is_global_word_sym(s)) {
+        emit_extrn_if_needed(s);
+        fprintf(outf, "\tld (%s),bc\n", asm_name_for(s->name));
+    }
+}
+
+static void emit_bc_add_const_small(int n)
+{
+    int i;
+    for (i = 0; i < n; ++i)
+        emit("\tinc bc\n");
+}
+
+
+static int parse_while_deref_nonzero_id(char *name, int namesz, struct Sym **sp, int *elemp)
+{
+    if (!accept(TOK_WHILE))
+        return 0;
+    if (!accept('('))
+        return 0;
+    if (!accept('*'))
+        return 0;
+    if (tok.kind != TOK_ID)
+        return 0;
+    strncpy(name, tok.text, (size_t)namesz - 1);
+    name[namesz - 1] = 0;
+    sp[0] = find_sym(name);
+    if (!sp[0] || !(sym_can_ix_direct(sp[0]) || is_global_word_sym(sp[0])) ||
+        type_ptr_depth(sp[0]->type) <= 0 || type_size(sp[0]->type) != 2)
+        return 0;
+    elemp[0] = type_index_elem_size(sp[0]->type);
+    if (elemp[0] != 1 && elemp[0] != 2)
+        return 0;
+    next_token();
+    if (tok.kind == TOK_NE) {
+        next_token();
+        if (!(tok.kind == TOK_NUM && tok.val == 0))
+            return 0;
+        next_token();
+    }
+    if (!accept(')'))
+        return 0;
+    return 1;
+}
+
+static void emit_load_bc_pointee_to_hl_or_a(int elem)
+{
+    if (elem == 1) {
+        emit("\tld a,(bc)\n");
+    } else {
+        emit("\tld h,b\n\tld l,c\n");
+        emit("\tld a,(hl)\n");
+        emit("\tinc hl\n");
+        emit("\tld h,(hl)\n");
+        emit("\tld l,a\n");
+    }
+}
+
+static void emit_test_loaded_pointee_zero(int elem)
+{
+    if (elem == 1)
+        emit("\tor a\n");
+    else
+        emit("\tld a,h\n\tor l\n");
+}
+
+static void emit_compare_loaded_pointee_to_sym(int elem, struct Sym *csym)
+{
+    if (elem == 1) {
+        if (sym_can_ix_direct(csym)) {
+            if (current_omit_ix_frame && csym->storage == SC_PARAM) {
+                emit("\tld e,a\n");
+                emit_load_frame_addr_hl(csym);
+                emit("\tld d,(hl)\n\tld a,e\n\tcp d\n");
+            } else {
+                fprintf(outf, "\tcp (ix%+d)\n", csym->offset);
+            }
+        } else {
+            emit("\tpush hl\n");
+            emit_load_sym_addr(csym);
+            emit("\tcp (hl)\n");
+            emit("\tpop hl\n");
+        }
+    } else {
+        if (sym_can_ix_direct(csym)) {
+            if (current_omit_ix_frame && csym->storage == SC_PARAM) {
+                emit("\tex de,hl\n");
+                emit_load_frame_addr_hl(csym);
+                emit("\tld a,(hl)\n\tinc hl\n\tld h,(hl)\n\tld l,a\n\tex de,hl\n");
+            } else {
+                fprintf(outf, "\tld e,(ix%+d)\n", csym->offset);
+                fprintf(outf, "\tld d,(ix%+d)\n", csym->offset + 1);
+            }
+        } else {
+            emit_load_sym_addr(csym);
+            emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n");
+        }
+        emit("\tor a\n\tsbc hl,de\n");
+    }
+}
+
+static int try_gen_bc_pointer_copy_while(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    char srcname[64], dstname[64];
+    struct Sym *srcsym, *dstsym;
+    int selem, delem;
+    int ltop, lend;
+    int body_brace;
+
+    if (tok.kind != TOK_WHILE)
+        return 0;
+    save_pos = posi; save_tok_start = tok_start_pos; save_line = line_no;
+    save_tok_line = tok_line; save_tok = tok;
+
+    if (!parse_while_deref_nonzero_id(srcname, sizeof(srcname), &srcsym, &selem))
+        goto no;
+    body_brace = 0;
+    if (accept('{')) body_brace = 1;
+
+    if (!accept('*')) goto no;
+    if (tok.kind != TOK_ID) goto no;
+    strncpy(dstname, tok.text, sizeof(dstname) - 1); dstname[sizeof(dstname)-1] = 0;
+    dstsym = find_sym(dstname);
+    if (!dstsym || !(sym_can_ix_direct(dstsym) || is_global_word_sym(dstsym)) ||
+        type_ptr_depth(dstsym->type) <= 0 || type_size(dstsym->type) != 2)
+        goto no;
+    delem = type_index_elem_size(dstsym->type);
+    if (delem != selem) goto no;
+    next_token();
+    if (!accept(TOK_INC)) goto no;
+    if (!accept('=')) goto no;
+    if (!accept('*')) goto no;
+    if (tok.kind != TOK_ID || strcmp(tok.text, srcname) != 0) goto no;
+    next_token();
+    if (!accept(TOK_INC)) goto no;
+    expect(';');
+    if (body_brace) expect('}');
+
+    ltop = new_label(); lend = new_label();
+    emit_load_sym_word_to_bc(srcsym);       /* BC = source */
+    if (sym_can_ix_direct(dstsym)) {
+        fprintf(outf, "\tld e,(ix%+d)\n", dstsym->offset);
+        fprintf(outf, "\tld d,(ix%+d)\n", dstsym->offset + 1);
+    } else {
+        emit_extrn_if_needed(dstsym);
+        fprintf(outf, "\tld de,(%s)\n", asm_name_for(dstsym->name));
+    }
+    emit_label(ltop);
+    if (selem == 1) {
+        emit("\tld a,(bc)\n\tor a\n");
+        emit_jp_label("jp z,", lend);
+        emit("\tld (de),a\n");
+        emit("\tinc bc\n\tinc de\n");
+    } else {
+        emit("\tld h,b\n\tld l,c\n");
+        emit("\tld a,(hl)\n\tinc hl\n\tld h,(hl)\n\tld l,a\n");
+        emit("\tld a,h\n\tor l\n");
+        emit_jp_label("jp z,", lend);
+        emit("\tld a,l\n\tld (de),a\n\tinc de\n");
+        emit("\tld a,h\n\tld (de),a\n\tinc de\n");
+        emit("\tinc bc\n\tinc bc\n");
+    }
+    emit_jp_label("jp", ltop);
+    emit_label(lend);
+    emit_store_bc_to_sym_word(srcsym);
+    emit_store_de_to_sym_word(dstsym);
+    return 1;
+no:
+    posi = save_pos; tok_start_pos = save_tok_start; line_no = save_line;
+    tok_line = save_tok_line; tok = save_tok; return 0;
+}
+
+static int try_gen_bc_pointer_find_while(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    char pname[64], cname[64];
+    struct Sym *pvar, *csym;
+    int elem;
+    int ltop, lend, lnomatch;
+    int body_brace;
+
+    if (tok.kind != TOK_WHILE) return 0;
+    save_pos = posi; save_tok_start = tok_start_pos; save_line = line_no;
+    save_tok_line = tok_line; save_tok = tok;
+    if (!parse_while_deref_nonzero_id(pname, sizeof(pname), &pvar, &elem)) goto no;
+    body_brace = 0; if (accept('{')) body_brace = 1;
+
+    if (!accept(TOK_IF)) goto no;
+    if (!accept('(')) goto no;
+    if (!accept('*')) goto no;
+    if (tok.kind != TOK_ID || strcmp(tok.text, pname) != 0) goto no;
+    next_token();
+    if (!accept(TOK_EQ)) goto no;
+    if (tok.kind != TOK_ID) goto no;
+    strncpy(cname, tok.text, sizeof(cname) - 1); cname[sizeof(cname)-1] = 0;
+    csym = find_sym(cname);
+    if (!csym || !(sym_can_ix_direct(csym) || is_global_word_sym(csym))) goto no;
+    next_token();
+    if (!accept(')')) goto no;
+    if (!accept(TOK_RETURN)) goto no;
+    if (accept('(')) {
+        while (tok.kind != ')' && tok.kind != TOK_EOF) next_token();
+        expect(')');
+    }
+    if (tok.kind != TOK_ID || strcmp(tok.text, pname) != 0) goto no;
+    next_token();
+    expect(';');
+    if (tok.kind != TOK_ID || strcmp(tok.text, pname) != 0) goto no;
+    next_token();
+    if (!accept(TOK_INC)) goto no;
+    expect(';');
+    if (body_brace) expect('}');
+
+    ltop = new_label(); lend = new_label(); lnomatch = new_label();
+    emit_load_sym_word_to_bc(pvar);
+    emit_label(ltop);
+    emit_load_bc_pointee_to_hl_or_a(elem);
+    emit_test_loaded_pointee_zero(elem);
+    emit_jp_label("jp z,", lend);
+    if (elem == 1)
+        emit_compare_loaded_pointee_to_sym(elem, csym);
+    else {
+        emit_load_bc_pointee_to_hl_or_a(elem);
+        emit_compare_loaded_pointee_to_sym(elem, csym);
+    }
+    emit_jp_label("jp nz,", lnomatch);
+    emit("\tld h,b\n\tld l,c\n");
+    emit_jp_label("jp", current_return_label);
+    emit_label(lnomatch);
+    emit_bc_add_const_small(elem);
+    emit_jp_label("jp", ltop);
+    emit_label(lend);
+    emit("\tld hl,0\n");
+    emit_jp_label("jp", current_return_label);
+    return 1;
+no:
+    posi = save_pos; tok_start_pos = save_tok_start; line_no = save_line;
+    tok_line = save_tok_line; tok = save_tok; return 0;
+}
+
+
+static int try_gen_bc_pointer_rfind_while(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    char pname[64], cname[64], lname[64];
+    struct Sym *pvar, *csym, *lastsym;
+    int elem;
+    int ltop, lend, lnomatch;
+    int body_brace;
+
+    if (tok.kind != TOK_WHILE) return 0;
+    save_pos = posi; save_tok_start = tok_start_pos; save_line = line_no;
+    save_tok_line = tok_line; save_tok = tok;
+    if (!parse_while_deref_nonzero_id(pname, sizeof(pname), &pvar, &elem)) goto no;
+    body_brace = 0; if (accept('{')) body_brace = 1;
+
+    if (!accept(TOK_IF)) goto no;
+    if (!accept('(')) goto no;
+    if (!accept('*')) goto no;
+    if (tok.kind != TOK_ID || strcmp(tok.text, pname) != 0) goto no;
+    next_token();
+    if (!accept(TOK_EQ)) goto no;
+    if (tok.kind != TOK_ID) goto no;
+    strncpy(cname, tok.text, sizeof(cname) - 1); cname[sizeof(cname)-1] = 0;
+    csym = find_sym(cname);
+    if (!csym || !(sym_can_ix_direct(csym) || is_global_word_sym(csym))) goto no;
+    next_token();
+    if (!accept(')')) goto no;
+    if (tok.kind != TOK_ID) goto no;
+    strncpy(lname, tok.text, sizeof(lname) - 1); lname[sizeof(lname)-1] = 0;
+    lastsym = find_sym(lname);
+    if (!lastsym || !(sym_can_ix_direct(lastsym) || is_global_word_sym(lastsym)) ||
+        type_ptr_depth(lastsym->type) <= 0 || type_size(lastsym->type) != 2)
+        goto no;
+    next_token();
+    if (!accept('=')) goto no;
+    if (tok.kind != TOK_ID || strcmp(tok.text, pname) != 0) goto no;
+    next_token();
+    expect(';');
+    if (tok.kind != TOK_ID || strcmp(tok.text, pname) != 0) goto no;
+    next_token();
+    if (!accept(TOK_INC)) goto no;
+    expect(';');
+    if (body_brace) expect('}');
+
+    ltop = new_label(); lend = new_label(); lnomatch = new_label();
+    emit_load_sym_word_to_bc(pvar);
+    emit_label(ltop);
+    emit_load_bc_pointee_to_hl_or_a(elem);
+    emit_test_loaded_pointee_zero(elem);
+    emit_jp_label("jp z,", lend);
+    if (elem == 1)
+        emit_compare_loaded_pointee_to_sym(elem, csym);
+    else {
+        emit_load_bc_pointee_to_hl_or_a(elem);
+        emit_compare_loaded_pointee_to_sym(elem, csym);
+    }
+    emit_jp_label("jp nz,", lnomatch);
+    emit_store_bc_to_sym_word(lastsym);
+    emit_label(lnomatch);
+    emit_bc_add_const_small(elem);
+    emit_jp_label("jp", ltop);
+    emit_label(lend);
+    emit_store_bc_to_sym_word(pvar);
+    return 1;
+no:
+    posi = save_pos; tok_start_pos = save_tok_start; line_no = save_line;
+    tok_line = save_tok_line; tok = save_tok; return 0;
+}
+
+static int try_gen_bc_pointer_scan_while(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    char pname[64];
+    struct Sym *pvar;
+    int elem;
+    int ltop;
+    int lend;
+    int body_brace;
+
+    if (tok.kind != TOK_WHILE)
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    next_token();
+    if (!accept('('))
+        goto no;
+    if (!accept('*'))
+        goto no;
+    if (tok.kind != TOK_ID)
+        goto no;
+    strncpy(pname, tok.text, sizeof(pname) - 1);
+    pname[sizeof(pname) - 1] = 0;
+    pvar = find_sym(pname);
+    if (!pvar || !(sym_can_ix_direct(pvar) || is_global_word_sym(pvar)) ||
+        type_ptr_depth(pvar->type) <= 0 || type_size(pvar->type) != 2)
+        goto no;
+    elem = type_index_elem_size(pvar->type);
+    if (elem <= 0 || elem > 16)
+        goto no;
+    next_token();
+
+    if (tok.kind == TOK_NE) {
+        next_token();
+        if (!(tok.kind == TOK_NUM && tok.val == 0))
+            goto no;
+        next_token();
+    }
+    if (!accept(')'))
+        goto no;
+
+    body_brace = 0;
+    if (accept('{'))
+        body_brace = 1;
+
+    if (tok.kind != TOK_ID || strcmp(tok.text, pname) != 0)
+        goto no;
+    next_token();
+    if (!accept(TOK_INC))
+        goto no;
+    expect(';');
+    if (body_brace)
+        expect('}');
+
+    ltop = new_label();
+    lend = new_label();
+    emit_load_sym_word_to_bc(pvar);
+    emit_label(ltop);
+    if (elem == 1) {
+        emit("\tld a,(bc)\n");
+        emit("\tor a\n");
+    } else {
+        emit("\tld h,b\n\tld l,c\n");
+        emit("\tld a,(hl)\n");
+        emit("\tinc hl\n");
+        emit("\tor (hl)\n");
+    }
+    emit_jp_label("jp z,", lend);
+    emit_bc_add_const_small(elem);
+    emit_jp_label("jp", ltop);
+    emit_label(lend);
+    emit_store_bc_to_sym_word(pvar);
+    return 1;
+
+no:
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return 0;
+}
+
 static void gen_while(void)
 {
     int ltop, lend;
+
+    if (try_gen_bc_pointer_copy_while())
+        return;
+    if (try_gen_bc_pointer_find_while())
+        return;
+    if (try_gen_bc_pointer_rfind_while())
+        return;
+    if (try_gen_bc_pointer_scan_while())
+        return;
 
     ltop = new_label();
     lend = new_label();
@@ -13892,6 +14515,162 @@ restore:
     return result;
 }
 
+
+/*
+ * Very conservative counted byte-array cycle fill.
+ *
+ * Recognises the common C idiom:
+ *     for (i = 0; i < N; i++)
+ *         byte_array[i] = BASE + (i % MOD);
+ *
+ * and emits a register loop using BC as the induction variable, DE as the
+ * destination pointer, and A as the cycling byte.  There are no calls in the
+ * emitted loop, so BC cannot be accidentally clobbered by helper/RTL calls.
+ * At loop exit the source induction variable is written back with N, preserving
+ * the visible C value after the loop.
+ */
+static int try_gen_bc_byte_array_cycle_for(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    char iname[64];
+    char aname[64];
+    struct Sym *isym;
+    struct Sym *asym;
+    long bound;
+    long base;
+    long mod;
+    int had_outer;
+    int had_inner;
+    int ltop;
+    int lnowrap;
+
+    if (tok.kind != TOK_FOR)
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    next_token();
+    if (!accept('(')) goto no;
+
+    if (tok.kind != TOK_ID) goto no;
+    strncpy(iname, tok.text, sizeof(iname) - 1);
+    iname[sizeof(iname) - 1] = 0;
+    isym = find_sym(iname);
+    if (!sym_can_ix_direct(isym) || type_size(isym->type) != 2 || type_ptr_depth(isym->type) != 0)
+        goto no;
+    next_token();
+    if (!accept('=')) goto no;
+    if (!(tok.kind == TOK_NUM && tok.val == 0)) goto no;
+    next_token();
+    if (!accept(';')) goto no;
+
+    if (tok.kind != TOK_ID || strcmp(tok.text, iname) != 0) goto no;
+    next_token();
+    if (!accept('<')) goto no;
+
+    bound = -1;
+    if (tok.kind == TOK_NUM) {
+        bound = tok.val;
+        next_token();
+    } else if (tok.kind == TOK_SIZEOF) {
+        next_token();
+        if (!accept('(')) goto no;
+        if (tok.kind != TOK_ID) goto no;
+        asym = find_sym(tok.text);
+        if (!asym || !asym->is_array || type_size(asym->type) != 1) goto no;
+        bound = asym->size;
+        next_token();
+        if (!accept(')')) goto no;
+    } else {
+        goto no;
+    }
+    if (bound <= 0 || bound > 65535) goto no;
+    if (!accept(';')) goto no;
+
+    if (tok.kind != TOK_ID || strcmp(tok.text, iname) != 0) goto no;
+    next_token();
+    if (!accept(TOK_INC)) goto no;
+    if (!accept(')')) goto no;
+
+    if (tok.kind != TOK_ID) goto no;
+    strncpy(aname, tok.text, sizeof(aname) - 1);
+    aname[sizeof(aname) - 1] = 0;
+    asym = find_sym(aname);
+    if (!asym || asym->storage != SC_GLOBAL || !asym->is_array || type_size(asym->type) != 1)
+        goto no;
+    if (asym->size < bound) goto no;
+    next_token();
+    if (!accept('[')) goto no;
+    if (tok.kind != TOK_ID || strcmp(tok.text, iname) != 0) goto no;
+    next_token();
+    if (!accept(']')) goto no;
+    if (!accept('=')) goto no;
+
+    had_outer = 0;
+    if (accept('(')) had_outer = 1;
+
+    if (!(tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) goto no;
+    base = tok.val;
+    next_token();
+    if (!accept('+')) goto no;
+
+    had_inner = 0;
+    if (accept('(')) had_inner = 1;
+    if (tok.kind != TOK_ID || strcmp(tok.text, iname) != 0) goto no;
+    next_token();
+    if (!accept('%')) goto no;
+    if (!(tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) goto no;
+    mod = tok.val;
+    next_token();
+    if (had_inner && !accept(')')) goto no;
+    if (had_outer && !accept(')')) goto no;
+    if (!accept(';')) goto no;
+
+    if (base < 0 || base > 255 || mod <= 0 || mod > 255 || base + mod > 256)
+        goto no;
+
+    ltop = new_label();
+    lnowrap = new_label();
+
+    emit("\tld bc,0\n");
+    fprintf(outf, "\tld de,%s\n", asm_name_for(asym->name));
+    fprintf(outf, "\tld h,%ld\n", base & 255L);
+    emit_label(ltop);
+    emit("\tld a,h\n");
+    emit("\tld (de),a\n");
+    emit("\tinc de\n");
+    emit("\tinc h\n");
+    emit("\tld a,h\n");
+    fprintf(outf, "\tcp %ld\n", (base + mod) & 255L);
+    emit_jp_label("jp nz,", lnowrap);
+    fprintf(outf, "\tld h,%ld\n", base & 255L);
+    emit_label(lnowrap);
+    emit("\tinc bc\n");
+    fprintf(outf, "\tld a,b\n\tcp %ld\n", (bound >> 8) & 255L);
+    emit_jp_label("jp nz,", ltop);
+    fprintf(outf, "\tld a,c\n\tcp %ld\n", bound & 255L);
+    emit_jp_label("jp nz,", ltop);
+    fprintf(outf, "\tld (ix%+d),c\n", isym->offset);
+    fprintf(outf, "\tld (ix%+d),b\n", isym->offset + 1);
+    return 1;
+
+no:
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return 0;
+}
+
 static void gen_for(void)
 {
     int ltop, linc, lend;
@@ -13900,6 +14679,9 @@ static void gen_for(void)
     char *inc_code;
     char *cond_code;
     int do_while;
+
+    if (try_gen_bc_byte_array_cycle_for())
+        return;
 
     ltop = new_label();
     linc = new_label();
@@ -15059,7 +15841,47 @@ static void parse_param_list(void)
     }
 }
 
-static void emit_function_prologue(const char *name, int local_bytes)
+
+static int current_function_param_count(void)
+{
+    int i;
+    int n;
+
+    n = 0;
+    for (i = 0; i < nlocals; ++i)
+        if (locals[i].storage == SC_PARAM)
+            n++;
+    return n;
+}
+
+static int current_function_safe_to_omit_ix(int return_type, int local_bytes)
+{
+    (void)return_type;
+    (void)local_bytes;
+    (void)current_function_param_count();
+
+    /*
+     * Disabled for now.
+     *
+     * The first no-IX implementation accessed parameters through fixed SP
+     * offsets.  That is only correct if the generated function never changes
+     * SP after entry.  Even very small leaf functions such as:
+     *
+     *     return p[0] + p[1] + p[2] + p[3];
+     *
+     * use push/pop temporaries during expression evaluation, so later
+     * parameter reloads from sp+N read those temporaries instead of the
+     * original argument.  This corrupted tests with struct string
+     * initializers through helper functions like sum4().
+     *
+     * Keep the leaf BC/DE loop optimizations, but do not omit IX until the
+     * compiler has either stable SP-depth tracking for parameter references
+     * or a dedicated no-stack codegen path for recognized functions.
+     */
+    return 0;
+}
+
+static void emit_function_prologue(const char *name, int local_bytes, int omit_ix_frame)
 {
     struct Sym *s;
     const char *aname;
@@ -15077,9 +15899,12 @@ static void emit_function_prologue(const char *name, int local_bytes)
     }
 
     fprintf(outf, "%s:\n", aname);
-    emit("\tpush ix\n");
-    emit("\tld ix,0\n");
-    emit("\tadd ix,sp\n");
+    current_omit_ix_frame = omit_ix_frame;
+    if (!omit_ix_frame) {
+        emit("\tpush ix\n");
+        emit("\tld ix,0\n");
+        emit("\tadd ix,sp\n");
+    }
 
     if (local_bytes > 0) {
         fprintf(outf, "\tld hl,-%d\n", local_bytes);
@@ -15095,9 +15920,12 @@ static void emit_function_epilogue(void)
      * value does not corrupt the stack when a return fires inside a case body.
      * pass_elim_ix_frame and pass_shared_frame_stubs clean up the extra
      * instruction for functions that never actually need the stack restore. */
-    emit("\tld sp,ix\n");
-    emit("\tpop ix\n");
+    if (!current_omit_ix_frame) {
+        emit("\tld sp,ix\n");
+        emit("\tpop ix\n");
+    }
     emit("\tret\n");
+    current_omit_ix_frame = 0;
 }
 
 static void skip_initializer_or_decl_tail(void)
@@ -15501,7 +16329,13 @@ static void scan_function_body(void)
         } else {
             int k;
             k = tok.kind;
-            next_token();
+            if (k == TOK_ID) {
+                next_token();
+                if (tok.kind == '(')
+                    current_function_has_call = 1;
+            } else {
+                next_token();
+            }
 
             if (k == ';' || k == ':')
                 can_decl = 1;
@@ -16264,6 +17098,7 @@ static void parse_function_or_global(int base_type)
                 saved_local_size = local_size;
                 saved_param_offset = param_offset;
 
+                current_function_has_call = 0;
                 scan_function_body();
                 body_end_pos = posi;
                 body_end_tok_start = tok_start_pos;
@@ -16297,7 +17132,7 @@ static void parse_function_or_global(int base_type)
                 nulabels = 0;
                 current_return_label = new_label();
                 current_return_type = type;
-                emit_function_prologue(name, current_local_bytes);
+                emit_function_prologue(name, current_local_bytes, current_function_safe_to_omit_ix(type, current_local_bytes));
                 gen_compound();
                 check_undefined_user_labels();
                 emit_function_epilogue();

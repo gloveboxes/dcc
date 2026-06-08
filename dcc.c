@@ -15041,14 +15041,21 @@ static void parse_param_list(void)
 static void emit_function_prologue(const char *name, int local_bytes)
 {
     struct Sym *s;
+    const char *aname;
 
     s = find_global(name);
-    if (!s || !s->is_static)
-        fprintf(outf, "\n\tpublic %s\n", asm_name_for(name));
-    else
-        fprintf(outf, "\n");
+    aname = asm_name_for(name);
 
-    fprintf(outf, "%s:\n", asm_name_for(name));
+    if (!s || !s->is_static) {
+        fprintf(outf, "\n\tpublic %s\n", aname);
+    } else {
+        /* File-scope static functions are mangled to avoid M80/L80 short-name
+         * collisions.  Emit the original C spelling beside the generated label
+         * so .mac listings remain readable during debugging. */
+        fprintf(outf, "\n; static function %s\n", name);
+    }
+
+    fprintf(outf, "%s:\n", aname);
     emit("\tpush ix\n");
     emit("\tld ix,0\n");
     emit("\tadd ix,sp\n");

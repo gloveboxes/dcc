@@ -162,6 +162,8 @@ static void emit_cast_16_to_common(int from_type, int common_type);
 static void gen_cmp32(int op, int lhs_type);
 static int snippet_needs_long_compare(const char *lhs, const char *rhs, int *commonp);
 static void emit_branch_on_bool_hl(int label, int branch_when_true);
+static int int_log2_pow2(int v);
+static void scale_hl_by_elem_size(int elem);
 
 struct AsmName {
     char cname[64];
@@ -6358,12 +6360,7 @@ static void gen_lvalue_addr(int *ptype)
                     elem_size = sym_pointer_array_index_elem_size(s, cur_type, addr_array_index_count);
                 addr_array_index_count++;
 
-                if (elem_size == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
-                else if (elem_size == 2) emit("\tadd hl,hl\n");
-                else if (elem_size > 4) {
-                    fprintf(outf, "\tld de,%d\n", elem_size);
-                    emit_runtime_call("__mulu");
-                }
+                scale_hl_by_elem_size(elem_size);
                 emit("\tex de,hl\n");
                 emit("\tpop hl\n");
                 emit("\tadd hl,de\n");
@@ -6419,12 +6416,7 @@ static void gen_lvalue_addr(int *ptype)
                 else
                     elem_size = sym_pointer_array_index_elem_size(s, cur_type, addr_array_index_count);
 
-                if (elem_size == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
-                else if (elem_size == 2) emit("\tadd hl,hl\n");
-                else if (elem_size > 4) {
-                    fprintf(outf, "\tld de,%d\n", elem_size);
-                    emit_runtime_call("__mulu");
-                }
+                scale_hl_by_elem_size(elem_size);
                 emit("\tex de,hl\n");
                 emit("\tpop hl\n");
                 emit("\tadd hl,de\n");
@@ -7628,12 +7620,7 @@ static int try_gen_parenthesized_deref_array_value(void)
             emit("\tpush hl\n");
             gen_expr();
             expect(']');
-            if (elem_size == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
-            else if (elem_size == 2) emit("\tadd hl,hl\n");
-            else if (elem_size > 4) {
-                fprintf(outf, "\tld de,%d\n", elem_size);
-                emit_runtime_call("__mulu");
-            }
+            scale_hl_by_elem_size(elem_size);
             emit("\tex de,hl\n");
             emit("\tpop hl\n");
             emit("\tadd hl,de\n");
@@ -8085,12 +8072,7 @@ static void gen_primary(void)
                 else
                     elem_size = sym_pointer_array_index_elem_size(s, cur_type, val_array_index_count);
 
-                if (elem_size == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
-                else if (elem_size == 2) emit("\tadd hl,hl\n");
-                else if (elem_size > 4) {
-                    fprintf(outf, "\tld de,%d\n", elem_size);
-                    emit_runtime_call("__mulu");
-                }
+                scale_hl_by_elem_size(elem_size);
                 emit("\tex de,hl\n");
                 emit("\tpop hl\n");
                 emit("\tadd hl,de\n");
@@ -10073,33 +10055,29 @@ static void gen_binop32_typed(int op, int lhs_type)
 static void emit_mul_hl_const(long v)
 {
     /*
-     * HL = HL * small positive constant.
-     * Used for strength-reducing common benchmark cases like 10*x.
+     * HL = HL * small/power-of-two constant.
+     * Power-of-two constants become repeated left shifts.
      */
     if (v == 0) {
         emit("\tld hl,0\n");
     } else if (v == 1) {
         /* no-op */
-    } else if (v == 2) {
-        emit("\tadd hl,hl\n");
+    } else if (int_log2_pow2((int)(v & 0xffffL)) >= 0) {
+        int n;
+        n = int_log2_pow2((int)(v & 0xffffL));
+        while (n-- > 0)
+            emit("\tadd hl,hl\n");
     } else if (v == 3) {
         emit("\tpush hl\n");
         emit("\tadd hl,hl\n");
         emit("\tpop de\n");
         emit("\tadd hl,de\n");
-    } else if (v == 4) {
-        emit("\tadd hl,hl\n");
-        emit("\tadd hl,hl\n");
     } else if (v == 5) {
         emit("\tpush hl\n");
         emit("\tadd hl,hl\n");
         emit("\tadd hl,hl\n");
         emit("\tpop de\n");
         emit("\tadd hl,de\n");
-    } else if (v == 8) {
-        emit("\tadd hl,hl\n");
-        emit("\tadd hl,hl\n");
-        emit("\tadd hl,hl\n");
     } else if (v == 10) {
         emit("\tpush hl\n");     /* save x */
         emit("\tadd hl,hl\n");   /* 2x */
@@ -10108,11 +10086,6 @@ static void emit_mul_hl_const(long v)
         emit("\tpop de\n");      /* x */
         emit("\tadd hl,de\n");   /* 9x */
         emit("\tadd hl,de\n");   /* 10x */
-    } else if (v == 16) {
-        emit("\tadd hl,hl\n");
-        emit("\tadd hl,hl\n");
-        emit("\tadd hl,hl\n");
-        emit("\tadd hl,hl\n");
     } else {
         emit_ld_de_const(v);
         emit_runtime_call("__mulu");
@@ -10132,8 +10105,8 @@ static int try_gen_const_times(void)
         return 0;
 
     v = tok.val & 0xffffL;
-    if (!(v == 0 || v == 1 || v == 2 || v == 3 || v == 4 ||
-          v == 5 || v == 8 || v == 10 || v == 16))
+    if (!(v == 0 || v == 1 || v == 3 || v == 5 || v == 10 ||
+          int_log2_pow2((int)v) >= 0))
         return 0;
 
     save_pos = posi;
@@ -10437,9 +10410,9 @@ static void gen_mul(void)
         if (!type_is_long(common_type) && op == '*' &&
             (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) {
             long rhs_val = tok.val & 0xffffL;
-            if (rhs_val == 0 || rhs_val == 1 || rhs_val == 2 ||
-                rhs_val == 3 || rhs_val == 4 || rhs_val == 5 ||
-                rhs_val == 8 || rhs_val == 10 || rhs_val == 16) {
+            if (rhs_val == 0 || rhs_val == 1 || rhs_val == 3 ||
+                rhs_val == 5 || rhs_val == 10 ||
+                int_log2_pow2((int)rhs_val) >= 0) {
                 next_token();
                 emit_mul_hl_const(rhs_val);
                 lhs_type = common_type;
@@ -10487,17 +10460,20 @@ static void gen_mul(void)
 
 static void scale_hl_by_elem_size(int elem)
 {
-    if (elem == 1) {
+    int shift;
+
+    if (elem <= 1)
         return;
-    } else if (elem == 2) {
-        emit("\tadd hl,hl\n");
-    } else if (elem == 4) {
-        emit("\tadd hl,hl\n");
-        emit("\tadd hl,hl\n");
-    } else if (elem > 1) {
-        fprintf(outf, "\tld de,%d\n", elem);
-        emit_runtime_call("__mulu");
+
+    shift = int_log2_pow2(elem);
+    if (shift >= 0) {
+        while (shift-- > 0)
+            emit("\tadd hl,hl\n");
+        return;
     }
+
+    fprintf(outf, "\tld de,%d\n", elem);
+    emit_runtime_call("__mulu");
 }
 
 static int int_log2_pow2(int v)
@@ -11488,15 +11464,10 @@ static void gen_assign(void)
                     emit_load_sym_de_direct(rhs_sym);
                     if (direct_sym->type & (TYPE_PTR | TYPE_PTR2)) {
                         int elem = type_index_elem_size(direct_sym->type);
-                        if (elem == 2) {
-                            emit("\tex de,hl\n\tadd hl,hl\n\tex de,hl\n");
-                        } else if (elem == 4) {
-                            emit("\tex de,hl\n\tadd hl,hl\n\tadd hl,hl\n\tex de,hl\n");
-                        } else if (elem > 2) {
+                        if (elem > 1) {
                             emit("\tpush hl\n");     /* save pointer */
                             emit("\tex de,hl\n");    /* HL = step */
-                            fprintf(outf, "\tld de,%d\n", elem);
-                            emit_runtime_call("__mulu"); /* HL = step * elem */
+                            scale_hl_by_elem_size(elem);
                             emit("\tex de,hl\n");    /* DE = scaled step */
                             emit("\tpop hl\n");      /* HL = pointer */
                         }
@@ -11705,12 +11676,7 @@ static void gen_assign(void)
         } else {
             if ((direct_sym->type & (TYPE_PTR | TYPE_PTR2)) && (op == TOK_ADDEQ || op == TOK_SUBEQ)) {
                 int elem = type_index_elem_size(direct_sym->type);
-                if (elem == 2) emit("\tadd hl,hl\n");
-                else if (elem == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
-                else if (elem > 2) {
-                    fprintf(outf, "\tld de,%d\n", elem);
-                    emit_runtime_call("__mulu");
-                }
+                scale_hl_by_elem_size(elem);
             }
             emit("\tex de,hl\n\tpop hl\n");
             common_type = common_arith_type(direct_sym->type, g_expr_type);
@@ -11927,12 +11893,7 @@ normal_assign:
         } else {
             if ((t & (TYPE_PTR | TYPE_PTR2)) && (op == TOK_ADDEQ || op == TOK_SUBEQ)) {
                 int elem = type_index_elem_size(t);
-                if (elem == 2) emit("\tadd hl,hl\n");
-                else if (elem == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
-                else if (elem > 2) {
-                    fprintf(outf, "\tld de,%d\n", elem);
-                    emit_runtime_call("__mulu");
-                }
+                scale_hl_by_elem_size(elem);
             }
             emit("\tex de,hl\n\tpop hl\n");
             common_type = common_arith_type(t, g_expr_type);
@@ -12191,15 +12152,10 @@ static int try_fast_local_self_add_statement(void)
         if ((rhs1->type & (TYPE_PTR | TYPE_PTR2)) &&
             !(rhs2->type & (TYPE_PTR | TYPE_PTR2))) {
             int elem = type_index_elem_size(rhs1->type);
-            if (elem == 2) {
-                emit("\tex de,hl\n\tadd hl,hl\n\tex de,hl\n");
-            } else if (elem == 4) {
-                emit("\tex de,hl\n\tadd hl,hl\n\tadd hl,hl\n\tex de,hl\n");
-            } else if (elem > 1) {
+            if (elem > 1) {
                 emit("\tpush hl\n");
                 emit("\tex de,hl\n");
-                fprintf(outf, "\tld de,%d\n", elem);
-                emit_runtime_call("__mulu");
+                scale_hl_by_elem_size(elem);
                 emit("\tex de,hl\n");
                 emit("\tpop hl\n");
             }

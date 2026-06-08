@@ -3067,7 +3067,7 @@ argv[ 5 ]: 'EEEEE'
 targs complted with great success
 test tstdc
 __DATE__ Jun  7 2026
-__TIME__ 21:17:28
+__TIME__ 21:28:31
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3817,3 +3817,5 @@ test tctype
 ctype/realloc ok
 test tptrdiff
 tptrdiff completed with great success
+test tmulpow2
+tmul_index_pow2 ok

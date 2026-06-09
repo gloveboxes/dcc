@@ -80,7 +80,7 @@ Generally, dcc compares very well with all other compilers that target CP/M, esp
 
 Benchmark times are in milliseconds on a 4Mhz Z80. CP/M file sizes are rounded up to the next multiple of 128 bytes due to how the file system works.
 
-<img width="3359" height="1027" alt="table" src="https://github.com/user-attachments/assets/08c953b1-1109-4fbc-9242-d03816f762d7" />
+<img alt="table" src="images/table.jpg" />
 
 ## Notes
 

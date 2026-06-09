@@ -3981,6 +3981,7 @@ __fcbs:
 __dma:
         ds      128
 
+
 ; _srand/_rand placed here so their blocks do not enclose the file I/O and
 ; divu/modu shared data above; those would force _rand into every build that
 ; uses file I/O or integer division.
@@ -4046,6 +4047,7 @@ _rand:
 
 __rand_state:
         dw      1
+
 
 ; ============================================================
 ; 32-bit long arithmetic runtime routines
@@ -9075,13 +9077,14 @@ __fscale_pow2:
         ; Input:  DE:HL = IEEE single raw bits, B = signed exponent delta.
         ; Output: DE:HL = scaled float.
         ;
-        ; Fast/correct for normalized finite results.  Preserves NaN/Inf and
-        ; signed zero.  Overflow becomes signed infinity.  Underflow currently
-        ; becomes signed zero, matching the rest of this compact RTL's
-        ; tendency to treat subnormal arithmetic as zero outside nextafterf.
+        ; Fast/correct for normalized finite values.  Preserves NaN/Inf and
+        ; signed zero.  Overflow becomes signed infinity.  Underflow becomes
+        ; signed zero, matching the compact RTL's existing subnormal policy.
         ;
-        ; This is intended for compiler-generated x*2^k and x/2^k paths such
-        ; as num /= 16.0f and f = 16.0f * f.
+        ; Important: the original D/E bytes contain sign, exponent, and the
+        ; high mantissa bits.  Do not use D/E as scratch until after they have
+        ; been saved; otherwise scaling 2.0f by 2 could preserve the scratch
+        ; byte as a mantissa bit and produce 4.03125 instead of 4.0.
 
         ; exp = ((D & 7f) << 1) | (E >> 7)
         ld      a,d
@@ -9100,6 +9103,10 @@ __fscale_pow2:
         ; NaN/Inf: preserve input.
         cp      255
         jp      z,FSCL_RET
+
+        ; Preserve original float bits before using DE/HL as integer scratch.
+        push    de
+        push    hl
 
         ; A = exponent, B = signed delta.  Compute signed 16-bit A+B in HL.
         ld      l,a
@@ -9130,8 +9137,11 @@ FSCL_ADD:
         cp      255
         jp      nc,FSCL_INF
 
-        ; Install new biased exponent A into D/E, preserving sign and mantissa.
+        ; Install new biased exponent A into original D/E, preserving sign and
+        ; mantissa.  Restore original raw bits first.
         ld      c,a            ; C = new exponent
+        pop     hl
+        pop     de
         srl     a              ; A = exp >> 1
         ld      b,a
         ld      a,d
@@ -9149,6 +9159,8 @@ FSCL_ADD:
         ret
 
 FSCL_ZERO:
+        pop     hl
+        pop     de
         ld      a,d
         and     80h
         ld      d,a
@@ -9158,6 +9170,8 @@ FSCL_ZERO:
         ret
 
 FSCL_INF:
+        pop     hl
+        pop     de
         ld      a,d
         and     80h
         or      7fh

@@ -10539,7 +10539,8 @@ static void emit_fscale_pow2(int exp_delta)
         return;
     }
 
-    fprintf(outf, "\tld b,%d\n", exp_delta);
+    if (!scan_mode)
+        fprintf(outf, "\tld b,%d\n", exp_delta);
     emit_runtime_call("__fscale_pow2");
     g_expr_type = TYPE_FLOAT;
 }
@@ -13220,11 +13221,8 @@ static void emit_init_auto_struct_scalar(struct Sym *s, int off, int type)
         unsigned long bits;
         if (parse_float_init_literal(&bits))
             emit_store_const_to_local_offset(s, off, type, (long)bits);
-        else {
-            error_here("automatic struct float initializer must be constant");
-            if (tok.kind != ',' && tok.kind != '}')
-                next_token();
-        }
+        else
+            emit_store_expr_to_local_offset(s, off, type);
         return;
     }
 
@@ -13516,12 +13514,8 @@ static void emit_init_auto_array_scalar(struct Sym *s, int elem_type, int *np)
         unsigned long bits;
         if (parse_float_init_literal(&bits))
             emit_store_const_to_local_array_elem(s, elem_type, n, (long)bits);
-        else {
-            error_here("automatic float array initializer must be constant");
-            if (tok.kind != ',' && tok.kind != '}')
-                next_token();
-            return;
-        }
+        else
+            emit_store_expr_to_local_array_elem(s, elem_type, n);
     } else {
         (void)k;
         (void)label;

@@ -3985,7 +3985,7 @@ __dma:
 ; divu/modu shared data above; those would force _rand into every build that
 ; uses file I/O or integer division.
 ; the assembly implementations match this C code:
-;    static unsigned int s_rnd = 1; /* Must never be initialized to 0 */
+;    static unsigned int s_rnd = 1;
 ;
 ;    void srand(unsigned int seed)
 ;    {

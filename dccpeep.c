@@ -3437,6 +3437,79 @@ static int pass_zeroext_byte_cmp_const(void)
     return changed;
 }
 
+/*
+ * General signed 16-bit compare against a constant: fold the constant's half
+ * of the sign bias at compile time.
+ *
+ * DCC implements a signed compare by flipping bit 15 (xor 8000h) of BOTH
+ * operands so a plain unsigned SBC produces the correct signed carry:
+ *
+ *     ld de,CONST          ld de,(CONST XOR 8000h)
+ *     ld a,h               ld a,h
+ *     xor 80h              xor 80h
+ *     ld h,a          ==>  ld h,a
+ *     ld a,d               or a
+ *     xor 80h              sbc hl,de
+ *     ld d,a
+ *     or a
+ *     sbc hl,de
+ *
+ * When the right operand is a compile-time constant held in DE, its bias is a
+ * constant too: biasing DE at run time (ld a,d / xor 80h / ld d,a) is identical
+ * to loading the already-biased immediate.  The XOR only affects D (the high
+ * byte = bit 15), so E is unchanged, matching ld de,(CONST XOR 8000h).
+ *
+ * The H bias stays because the left operand is not known here.  This is the
+ * general fallback for signed const compares the more specific passes above do
+ * not cover (loop-back non-negative counters, low-byte-zero constants,
+ * zero-extended bytes).  Those collapse to smaller code and run first; this
+ * only fires on what remains.  Saves 3 instructions (4 bytes, ~12 T-states)
+ * per site.  Requiring the trailing "or a / sbc hl,de" guarantees the DE value
+ * is consumed only by this comparison.
+ */
+static int pass_signed_cmp_const_bias_fold(void)
+{
+    int i;
+    int changed;
+    int imm;
+    unsigned int biased;
+    char line[128];
+
+    changed = 0;
+
+    for (i = 0; i + 8 < nlines; ++i) {
+        if (!peep_parse_ld_de_signed(lines[i], &imm))
+            continue;
+        if (!eq(i + 1, "ld a,h"))
+            continue;
+        if (!eq(i + 2, "xor 80h"))
+            continue;
+        if (!eq(i + 3, "ld h,a"))
+            continue;
+        if (!eq(i + 4, "ld a,d"))
+            continue;
+        if (!eq(i + 5, "xor 80h"))
+            continue;
+        if (!eq(i + 6, "ld d,a"))
+            continue;
+        if (!eq(i + 7, "or a"))
+            continue;
+        if (!eq(i + 8, "sbc hl,de"))
+            continue;
+
+        biased = ((unsigned int)imm ^ 0x8000u) & 0xffffu;
+        sprintf(line, "ld de,%u", biased);
+        replace1_tagged(i, line, "signed_cmp_const_bias_fold");
+        /* Keep the H bias at i+1..i+3; delete the D bias triple at i+4..i+6. */
+        delete_n(i + 4, 3);
+        changed = 1;
+        if (i > 0)
+            --i;
+    }
+
+    return changed;
+}
+
 static int pass_inline_simple_call_hl_from_loaded_pointer(void)
 {
     int i;
@@ -8403,6 +8476,24 @@ int main(int argc, char **argv)
         if (pass_labels()) changed = 1;
         passes++;
     } while (changed && passes < 30);
+
+    /* General signed-compare constant-bias fold runs once after the main loop
+     * converges.  It rewrites a signed 16-bit compare against a constant
+     * (ld de,CONST + a 6-instruction xor-80h bias) into the already-biased
+     * immediate plus a 3-instruction bias, deleting the constant's runtime
+     * bias.  It MUST run after convergence: structural passes such as
+     * pass_ldir_memset and pass_stride_loop_to_ptr recognise loops by their
+     * canonical biased-compare shape, so folding earlier would hide those
+     * loops and block far larger wins.  The fold is purely local (no control
+     * flow change), so a single pass suffices; pass_labels tidies up.
+     *
+     * Time-mode only: under -Os the opt_size stub passes below factor the
+     * whole 6-line bias sequence into a shared "call" stub, which is smaller
+     * than this inline fold.  Folding here would defeat that, so restrict the
+     * fold to -Ot where trading shared code size for fewer inline instructions
+     * is the goal. */
+    if (!opt_size && pass_signed_cmp_const_bias_fold())
+        pass_labels();
 
     /* Run frame elimination after all other passes have converged, then
      * clean up any newly unreferenced labels created by the removal.

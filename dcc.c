@@ -156,6 +156,7 @@ static void emit_deferred_extrns(void);
 static int starts_type(void);      /* forward: used in parse_const_int_expr */
 static int parse_enum_const_value(void); /* forward: used in parse_base_type */
 static int parse_base_type(void);  /* forward: used in parse_const_int_expr */
+static int parse_offsetof_value(void); /* forward: __offsetof(type, member) */
 static int type_add_ptr(int t);    /* forward */
 static int common_arith_type(int a, int b);
 static void emit_cast_16_to_common(int from_type, int common_type);
@@ -3521,6 +3522,11 @@ static long parse_const_long_primary(void)
         next_token();
     }
 
+    if (tok.kind == TOK_ID && strcmp(tok.text, "__offsetof") == 0) {
+        v = parse_offsetof_value();
+        return sign * v;
+    }
+
     if (tok.kind == TOK_SIZEOF) {
         next_token();
         if (accept('(')) {
@@ -4427,6 +4433,75 @@ static void skip_balanced_bracket(int open_ch, int close_ch)
 
         next_token();
     }
+}
+
+static int parse_offsetof_value(void)
+{
+    int t;
+    int sz;
+    int sid;
+    int off;
+    struct FieldDef *fd;
+
+    if (tok.kind != TOK_ID || strcmp(tok.text, "__offsetof") != 0) {
+        error_here("__offsetof expected");
+        return 0;
+    }
+    next_token();
+    expect('(');
+    parse_type_name_decl(&t, &sz);
+    (void)sz;
+    expect(',');
+
+    sid = base_struct_id_from_type(t);
+    if (sid <= 0) {
+        error_here("offsetof needs struct/union type");
+        sid = 0;
+    }
+
+    off = 0;
+    for (;;) {
+        if (tok.kind != TOK_ID) {
+            error_here("field name expected in offsetof");
+            break;
+        }
+
+        fd = find_field_def(sid, tok.text);
+        if (!fd) {
+            error_here("unknown field in offsetof");
+            next_token();
+            break;
+        }
+        next_token();
+
+        off += fd->offset;
+        t = fd->is_array ? fd->elem_type : fd->type;
+
+        while (tok.kind == '[') {
+            int idx;
+            int elem;
+            next_token();
+            idx = parse_const_int_expr();
+            expect(']');
+            elem = fd->is_array ? fd->elem_size : type_size(t);
+            if (elem <= 0)
+                elem = 1;
+            off += idx * elem;
+            t = fd->elem_type ? fd->elem_type : t;
+        }
+
+        if (tok.kind != '.')
+            break;
+        next_token();
+        sid = base_struct_id_from_type(t);
+        if (sid <= 0) {
+            error_here("nested offsetof field is not struct/union");
+            break;
+        }
+    }
+
+    expect(')');
+    return off;
 }
 
 static int parse_sizeof_expr_operand(void);
@@ -7786,6 +7861,15 @@ static void gen_primary(void)
     int arrow;
     int field_is_array;
     int di;
+
+    if (tok.kind == TOK_ID && strcmp(tok.text, "__offsetof") == 0) {
+        int ov;
+        ov = parse_offsetof_value();
+        if (!scan_mode)
+            fprintf(outf, "\tld hl,%d\n", ov & 0xffff);
+        g_expr_type = TYPE_INT | TYPE_UNSIGNED;
+        return;
+    }
 
     if (tok.kind == TOK_FLOATLIT) {
         unsigned long bits;

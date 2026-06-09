@@ -3064,10 +3064,10 @@ argv[ 2 ]: 'BB'
 argv[ 3 ]: 'CCC'
 argv[ 4 ]: 'DDDD'
 argv[ 5 ]: 'EEEEE'
-targs complted with great success
+targs completed with great success
 test tstdc
-__DATE__ Jun  7 2026
-__TIME__ 21:28:31
+__DATE__ Jun  8 2026
+__TIME__ 21:10:37
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3819,3 +3819,5 @@ test tptrdiff
 tptrdiff completed with great success
 test tmulpow2
 tmul_index_pow2 ok
+test toffset
+toffset completed with great success

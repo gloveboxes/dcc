@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-void memswap( char *a, char *b, size_t s )
+static void memswap( char *a, char *b, size_t s )
 {
     for ( size_t i = 0; i < s; i++ )
     {

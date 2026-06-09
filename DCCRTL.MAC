@@ -4005,13 +4005,11 @@ __dma:
 
         public  _srand
 _srand:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      l,(ix+4)
-        ld      h,(ix+5)
+        pop     de          ; return address
+        pop     hl          ; seed
+        push    hl          ; preserve caller cleanup convention
+        push    de
         ld      (__rand_state),hl
-        pop     ix
         ret
 
         public  _rand

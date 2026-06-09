@@ -21,6 +21,7 @@
 #define MAX_LOCALS     1024
 #define MAX_STRINGS    2048
 #define MAX_DEFINES    512
+#define MAX_MACRO_TEXT 2048
 #define MAX_FLOW       128
 #define MAX_SNAPSHOT   256
 #define MAX_PROTO_PARAMS 16
@@ -142,7 +143,7 @@ struct Sym {
 
 struct Def {
     char name[64];
-    char value[256];
+    char value[MAX_MACRO_TEXT];
     int is_func;
     int nargs;
     char params[8][32];
@@ -159,6 +160,7 @@ static int parse_base_type(void);  /* forward: used in parse_const_int_expr */
 static int parse_offsetof_value(void); /* forward: __offsetof(type, member) */
 static int type_add_ptr(int t);    /* forward */
 static int common_arith_type(int a, int b);
+static int promote_int_type(int t);
 static void emit_cast_16_to_common(int from_type, int common_type);
 static void gen_cmp32(int op, int lhs_type);
 static int snippet_needs_long_compare(const char *lhs, const char *rhs, int *commonp);
@@ -1166,7 +1168,7 @@ static void parse_preprocessor_line(void)
 {
     char word[32];
     char name[64];
-    char val[512];
+    char val[MAX_MACRO_TEXT];
     int i, c;
     int parent;
     int cond;
@@ -2033,8 +2035,8 @@ static void macro_expand_argument_text(const char *in, char *out, int outsz, int
 
                     after_ident = p;
                     if (read_macro_call_args_text(&after_ident, args, &nargs)) {
-                        char tmp[512];
-                        char tmp2[512];
+                        char tmp[MAX_MACRO_TEXT];
+                        char tmp2[MAX_MACRO_TEXT];
                         if (nargs != defs[di].nargs)
                             fatal("wrong number of macro arguments");
                         expand_function_macro(di, args, tmp, sizeof(tmp));
@@ -2045,7 +2047,7 @@ static void macro_expand_argument_text(const char *in, char *out, int outsz, int
                         continue;
                     }
                 } else {
-                    char tmp[512];
+                    char tmp[MAX_MACRO_TEXT];
                     macro_expand_argument_text(defs[di].value, tmp, sizeof(tmp), depth + 1);
                     for (ii = 0; tmp[ii] && oi < outsz - 1; ++ii)
                         out[oi++] = tmp[ii];
@@ -2064,7 +2066,7 @@ static void macro_expand_argument_text(const char *in, char *out, int outsz, int
 
 static void paste_tokens_in_text(char *s)
 {
-    char tmp[512];
+    char tmp[MAX_MACRO_TEXT];
     int i;
     int o;
 
@@ -2123,7 +2125,7 @@ static void expand_function_macro(int di, char args[8][128], char *out, int outs
     int j;
     char ident[64];
     int matched;
-    char expanded_args[8][256];
+    char expanded_args[8][MAX_MACRO_TEXT];
 
     for (i = 0; i < 8; ++i)
         expanded_args[i][0] = 0;
@@ -8620,6 +8622,11 @@ static void gen_unary(void)
 
     if (accept('+')) {
         gen_unary();
+        /* C89 integer promotions apply to unary +.  This matters for casts
+         * of the result: +(unsigned char) must have type int, not unsigned
+         * char, because later widening to long depends on g_expr_type. */
+        if (!type_is_float(g_expr_type) && !type_is_long(g_expr_type))
+            g_expr_type = promote_int_type(g_expr_type);
         return;
     }
 
@@ -8644,6 +8651,8 @@ static void gen_unary(void)
             emit_label(lneg_skip);
         } else {
             emit("\txor a\n\tsub l\n\tld l,a\n\tld a,0\n\tsbc a,h\n\tld h,a\n");
+            /* C89 integer promotions apply to unary -. */
+            g_expr_type = promote_int_type(g_expr_type);
         }
         return;
     }
@@ -8677,6 +8686,10 @@ static void gen_unary(void)
             emit("\tld a,d\n\tcpl\n\tld d,a\n\tld a,e\n\tcpl\n\tld e,a\n");
         } else {
             emit("\tld a,h\n\tcpl\n\tld h,a\n\tld a,l\n\tcpl\n\tld l,a\n");
+            /* C89 integer promotions apply before unary ~.  Without this,
+             * ~uint8_t left g_expr_type as unsigned char; a following cast
+             * to long zero-extended only L and turned 0xff37 into 55. */
+            g_expr_type = promote_int_type(g_expr_type);
         }
         return;
     }
@@ -10533,6 +10546,11 @@ static int float_literal_pow2_exp(const char *s, int *exp_out)
 
 static void emit_fscale_pow2(int exp_delta)
 {
+    if (exp_delta == 0) {
+        g_expr_type = TYPE_FLOAT;
+        return;
+    }
+
     if (exp_delta < -128 || exp_delta > 127) {
         /* Out of helper range; this should not happen for normal literals. */
         emit_runtime_call(exp_delta < 0 ? "__fdiv" : "__fmul");
@@ -10543,6 +10561,67 @@ static void emit_fscale_pow2(int exp_delta)
         fprintf(outf, "\tld b,%d\n", exp_delta);
     emit_runtime_call("__fscale_pow2");
     g_expr_type = TYPE_FLOAT;
+}
+
+static int try_consume_float_pow2_compound_scale(int op)
+{
+    int pow2_exp;
+
+    if ((op != TOK_MULEQ && op != TOK_DIVEQ) || tok.kind != TOK_FLOATLIT)
+        return 0;
+
+    if (!float_literal_pow2_exp(tok.text, &pow2_exp))
+        return 0;
+
+    next_token();
+    if (op == TOK_DIVEQ)
+        pow2_exp = -pow2_exp;
+    emit_fscale_pow2(pow2_exp);
+    return 1;
+}
+
+static int try_gen_float_pow2_times(void)
+{
+    int pow2_exp;
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    int save_long_suffix;
+    int save_unsigned_suffix;
+    struct Token save_tok;
+
+    if (tok.kind != TOK_FLOATLIT)
+        return 0;
+    if (!float_literal_pow2_exp(tok.text, &pow2_exp))
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_long_suffix = g_tok_long_suffix;
+    save_unsigned_suffix = g_tok_unsigned_suffix;
+    save_tok = tok;
+
+    next_token();
+    if (!accept('*')) {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        g_tok_long_suffix = save_long_suffix;
+        g_tok_unsigned_suffix = save_unsigned_suffix;
+        tok = save_tok;
+        return 0;
+    }
+
+    gen_unary();
+    if (!type_is_float(g_expr_type))
+        emit_convert_int_to_float(g_expr_type);
+    emit_fscale_pow2(pow2_exp);
+    g_expr_type = TYPE_FLOAT;
+    return 1;
 }
 
 static int int_log2_pow2(int v);
@@ -10556,7 +10635,7 @@ static void gen_mul(void)
     int rhs_type;
     int common_type;
 
-    if (!try_gen_const_times())
+    if (!try_gen_float_pow2_times() && !try_gen_const_times())
         gen_unary();
     lhs_type = promote_int_type(g_expr_type);
 
@@ -10940,7 +11019,13 @@ static void gen_shift(void)
     int lhs_type;
 
     gen_add();
-    lhs_type = g_expr_type;
+    /*
+     * C89: the left operand of a shift undergoes integer promotion, but
+     * the right operand does not participate in the usual arithmetic
+     * conversions.  This matters for uint8_t: b << 1 is an int expression
+     * on DCC's 16-bit-int target, so 200 << 1 is 400, not 8-bit 144.
+     */
+    lhs_type = promote_int_type(g_expr_type);
 
     while (tok.kind == TOK_SHL || tok.kind == TOK_SHR) {
         op = tok.kind;
@@ -11304,6 +11389,20 @@ static void gen_conditional(void)
                 g_expr_type = TYPE_LONG | TYPE_UNSIGNED;
             else
                 g_expr_type = TYPE_LONG;
+        } else {
+            /*
+             * C89 conditional operator balancing still matters when both
+             * result arms are 16-bit or narrower.  Without this, the type of
+             * the whole expression accidentally remained the false arm type.
+             *
+             * Example:
+             *     (long)(1 ? (uint16_t)50000 : (int8_t)-10)
+             *
+             * If the expression type is left as int8_t, the later cast to
+             * long widens only the low byte (0x50 -> 80).  The balanced type
+             * is unsigned int, so the cast must widen the full 16-bit HL value.
+             */
+            g_expr_type = common_arith_type(true_type, false_type);
         }
     }
 }
@@ -11873,6 +11972,14 @@ static void gen_assign(void)
             return;
         }
 
+        if (type_is_float(direct_sym->type) &&
+            (op == TOK_MULEQ || op == TOK_DIVEQ) &&
+            try_consume_float_pow2_compound_scale(op)) {
+            emit_store_hl_to_sym_direct(direct_sym);
+            g_expr_type = direct_sym->type;
+            return;
+        }
+
         if (type_is_long(direct_sym->type) || type_is_float(direct_sym->type))
             emit("\tpush de\n\tpush hl\n");
         else
@@ -12071,6 +12178,15 @@ normal_assign:
         }
 
         emit_load_from_hl(t);
+
+        if (type_is_float(t) &&
+            (op == TOK_MULEQ || op == TOK_DIVEQ) &&
+            try_consume_float_pow2_compound_scale(op)) {
+            emit_store_de_to_addr_hl(t); /* pops saved lvalue address */
+            g_expr_type = t;
+            return;
+        }
+
         if (type_is_long(t) || type_is_float(t))
             emit("\tpush de\n\tpush hl\n");
         else
@@ -18191,7 +18307,7 @@ static char *filter_active_preprocessor_source(long *lenp)
 
         if (!strcmp(word, "define")) {
             char name[64];
-            char val[256];
+            char val[MAX_MACRO_TEXT];
             int ni;
             int vi;
 
@@ -18283,7 +18399,7 @@ static int is_macro_name_text(const char *s, int n)
 static void add_cmdline_define(const char *arg)
 {
     char name[64];
-    char value[256];
+    char value[MAX_MACRO_TEXT];
     const char *eqp;
     int namelen;
 
@@ -18389,14 +18505,20 @@ int main(int argc, char **argv)
         char *filtered_src;
         long filtered_len;
         int saved_ndefs;
-        struct Def saved_defs[MAX_DEFINES];
+        struct Def *saved_defs;
 
         /* filter_active_preprocessor_source() uses the define table to
          * evaluate #if/#ifdef while reducing inactive source.  Do not let
          * definitions discovered later in the file leak into the real parse
          * before their source-order #define is reached; otherwise a later
          * '#define n 20' can rewrite 'int n' in an earlier included header.
+         *
+         * Keep this snapshot off the C host stack.  struct Def can be large
+         * when macro replacement buffers are widened, and putting
+         * MAX_DEFINES copies on the stack can overflow MSVC's default stack
+         * before main() really starts.
          */
+        saved_defs = (struct Def *)xmalloc(sizeof(defs));
         saved_ndefs = ndefs;
         memcpy(saved_defs, defs, sizeof(defs));
 
@@ -18404,6 +18526,7 @@ int main(int argc, char **argv)
 
         ndefs = saved_ndefs;
         memcpy(defs, saved_defs, sizeof(defs));
+        free(saved_defs);
 
         free(src);
         src = filtered_src;

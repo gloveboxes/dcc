@@ -1231,13 +1231,89 @@ static int pass_elim_dead_ix_stores(void)
  * This fires heavily in 32-bit (long) expression code where the compiler
  * spills an intermediate to a local and then immediately reloads it.
  */
+static int peep_is_harmless_between_store_reload(const char *s)
+{
+    char tmp[MAX_LINE];
+
+    strip_peep_comment_copy(tmp, s);
+
+    if (tmp[0] == 0 || tmp[0] == ';')
+        return 1;
+
+    /*
+     * These stack-cleanup / assembler-directive lines do not alter DEHL and
+     * do not read or write the stored local slots.  Keep this whitelist tiny:
+     * the optimization is only intended to bridge the common "store; pop bc;
+     * reload" shape after helper-call cleanup.
+     */
+    if (strcmp(tmp, "pop bc") == 0)
+        return 1;
+    if (strcmp(tmp, "push bc") == 0)
+        return 1;
+    if (strcmp(tmp, "inc sp") == 0)
+        return 1;
+    if (strncmp(tmp, "extrn ", 6) == 0)
+        return 1;
+
+    return 0;
+}
+
+static int peep_match_long_reload_at(int i,
+                                     const char *off0,
+                                     const char *off1,
+                                     const char *off2,
+                                     const char *off3)
+{
+    char expect[MAX_LINE];
+
+    if (i + 3 >= nlines)
+        return 0;
+
+    sprintf(expect, "ld l,(ix%s)", off0);
+    if (!eq(i, expect)) return 0;
+    sprintf(expect, "ld h,(ix%s)", off1);
+    if (!eq(i + 1, expect)) return 0;
+    sprintf(expect, "ld e,(ix%s)", off2);
+    if (!eq(i + 2, expect)) return 0;
+    sprintf(expect, "ld d,(ix%s)", off3);
+    if (!eq(i + 3, expect)) return 0;
+
+    return 1;
+}
+
+/*
+ * Eliminate: store 32-bit DEHL to (ix+N)..(ix+N+3) followed shortly by
+ * reload of the same four bytes back into l/h/e/d.  Since stores to memory do
+ * not change the source registers, DEHL still holds the correct value after
+ * the stores and the reload is redundant.
+ *
+ * Original adjacent form:
+ *
+ *   ld (ix+N),l
+ *   ld (ix+N+1),h
+ *   ld (ix+N+2),e
+ *   ld (ix+N+3),d
+ *   ld l,(ix+N)       ; deleted
+ *   ld h,(ix+N+1)     ; deleted
+ *   ld e,(ix+N+2)     ; deleted
+ *   ld d,(ix+N+3)     ; deleted
+ *
+ * Extended safe form allows only a tiny whitelist between the store and reload,
+ * e.g. caller cleanup:
+ *
+ *   pop bc
+ *
+ * Anything else could clobber DEHL, change control flow, or touch the local
+ * slots, so the pass refuses to fire.
+ */
 static int pass_elim_long_store_reload(void)
 {
-    int i, changed, ival, k;
+    int i, j, changed, ival, k;
     char tmp[MAX_LINE];
     char off0[32], off1[32], off2[32], off3[32];
     char expect[MAX_LINE];
     const char *p;
+    int max_j;
 
     changed = 0;
 
@@ -1268,20 +1344,26 @@ static int pass_elim_long_store_reload(void)
         sprintf(expect, "ld (ix%s),d", off3);
         if (!eq(i + 3, expect)) continue;
 
-        /* Check 4 reloads of the same bytes */
-        sprintf(expect, "ld l,(ix%s)", off0);
-        if (!eq(i + 4, expect)) continue;
-        sprintf(expect, "ld h,(ix%s)", off1);
-        if (!eq(i + 5, expect)) continue;
-        sprintf(expect, "ld e,(ix%s)", off2);
-        if (!eq(i + 6, expect)) continue;
-        sprintf(expect, "ld d,(ix%s)", off3);
-        if (!eq(i + 7, expect)) continue;
+        /*
+         * Look for the reload either immediately or after a few harmless lines.
+         * Keep the search window deliberately small; if the compiler starts
+         * emitting more complex code between store/reload, that should be
+         * handled by a separate data-flow pass, not this peephole.
+         */
+        max_j = i + 10;
+        if (max_j + 3 >= nlines)
+            max_j = nlines - 4;
 
-        /* Delete the 4 reload lines; stores stay in case the value is accessed
-         * later via ix addressing. */
-        delete_n(i + 4, 4);
-        changed = 1;
+        for (j = i + 4; j <= max_j; j++) {
+            if (peep_match_long_reload_at(j, off0, off1, off2, off3)) {
+                delete_n(j, 4);
+                changed = 1;
+                break;
+            }
+
+            if (!peep_is_harmless_between_store_reload(lines[j]))
+                break;
+        }
     }
 
     return changed;
@@ -4721,15 +4803,56 @@ static int pass_once(void)
                 (strncmp(lines[i + 8], "jp z,", 5) == 0 ||
                  strncmp(lines[i + 8], "jp nz,", 6) == 0)) {
 
+                /*
+                 * For nonzero 16-bit constants the high byte must also be
+                 * tested against zero.  The old peephole used only:
+                 *
+                 *     ld a,(ix+lo)
+                 *     cp N
+                 *
+                 * which is only valid for byte objects.  It broke uint16_t
+                 * comparisons such as "m == 1" when m was 257, 513, ...
+                 *
+                 * Keep the zero case compact; for nonzero constants emit
+                 * a correct low-byte/high-byte test.
+                 */
                 sprintf(newline, "ld a,(ix%s)", loff);
                 replace1_tagged(i, newline, "small_const_eq");
-                if (imm == 0)
+
+                if (imm == 0) {
                     sprintf(newline, "or (ix%s)", hoff);
-                else
+                    replace1(i + 1, newline);
+                    replace1(i + 2, lines[i + 8]);
+                    delete_n(i + 3, 6);
+                } else if (strncmp(lines[i + 8], "jp nz,", 6) == 0) {
+                    /* x != imm: branch if low differs or high is nonzero. */
                     sprintf(newline, "cp %d", imm);
-                replace1(i + 1, newline);
-                replace1(i + 2, lines[i + 8]);
-                delete_n(i + 3, 6);
+                    replace1(i + 1, newline);
+                    replace1(i + 2, lines[i + 8]);
+                    sprintf(newline, "ld a,(ix%s)", hoff);
+                    replace1(i + 3, newline);
+                    replace1(i + 4, "or a");
+                    replace1(i + 5, lines[i + 8]);
+                    delete_n(i + 6, 3);
+                } else {
+                    /* x == imm: branch only if low matches and high is zero. */
+                    char skip[64];
+                    char jnzskip[96];
+
+                    sprintf(skip, "Lpeep_sceq_%d", i);
+                    sprintf(newline, "cp %d", imm);
+                    replace1(i + 1, newline);
+                    sprintf(jnzskip, "jp nz, %s", skip);
+                    replace1(i + 2, jnzskip);
+                    sprintf(newline, "ld a,(ix%s)", hoff);
+                    replace1(i + 3, newline);
+                    replace1(i + 4, "or a");
+                    replace1(i + 5, lines[i + 8]);
+                    sprintf(newline, "%s:", skip);
+                    replace1(i + 6, newline);
+                    delete_n(i + 7, 2);
+                }
+
                 changed = 1;
                 if (i > 0) i--;
                 continue;

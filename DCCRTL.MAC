@@ -3984,81 +3984,63 @@ __dma:
 ; _srand/_rand placed here so their blocks do not enclose the file I/O and
 ; divu/modu shared data above; those would force _rand into every build that
 ; uses file I/O or integer division.
+; the assembly implementations match this C code:
+;    static unsigned int s_rnd = 1; /* Must never be initialized to 0 */
+;
+;    void srand(unsigned int seed)
+;    {
+;        s_rnd = seed;
+;    }
+;
+;    int rand(void)
+;    {
+;        /* 16-bit Xorshift (Parameters: 7, 9, 8) */
+;        s_rnd ^= s_rnd << 7;
+;        s_rnd ^= s_rnd >> 9;
+;        s_rnd ^= s_rnd << 8;
+;    
+;        return (int)(s_rnd & 0x7FFF);
+;    }
+
         public  _srand
 _srand:
         push    ix
         ld      ix,0
         add     ix,sp
-
         ld      l,(ix+4)
         ld      h,(ix+5)
         ld      (__rand_state),hl
-
         pop     ix
         ret
 
         public  _rand
 _rand:
-        ; Deterministic 16-bit xorshift generator.
-        ; Avoids the very weak low bits of the old state = state * 5 + 1 LCG.
-        ; Return value is in the usual C rand() range 0..32767.
-        ;
-        ; x ^= x << 7
-        ; x ^= x >> 9
-        ; x ^= x << 8
-        ld      hl,(__rand_state)
+        ld      hl,(__rand_state)   ; Load the current 16-bit state
 
-        ; de = x, hl = x << 7
-        push    hl
-        add     hl,hl
-        add     hl,hl
-        add     hl,hl
-        add     hl,hl
-        add     hl,hl
-        add     hl,hl
-        add     hl,hl
-        pop     de
-        ld      a,l
-        xor     e
-        ld      l,a
+        ; --- Step 1: next ^= next << 7 ---
         ld      a,h
-        xor     d
+        rra
+        ld      a,l
+        rra
+        xor     h
         ld      h,a
 
-        ; de = x, hl = x >> 9
-        push    hl
-        ld      l,h
-        ld      h,0
-        srl     l
-        pop     de
+        ; --- Step 2: next ^= next >> 9 ---
         ld      a,l
-        xor     e
-        ld      l,a
+        rra
         ld      a,h
-        xor     d
+        rra
+        xor     l
+        ld      l,a
+
+        ; --- Step 3: next ^= next << 8 ---
+        xor     h
         ld      h,a
 
-        ; de = x, hl = x << 8
-        push    hl
-        ld      h,l
-        ld      l,0
-        pop     de
-        ld      a,l
-        xor     e
-        ld      l,a
-        ld      a,h
-        xor     d
-        ld      h,a
-
-        ; xorshift has a zero lock-up state.  The default seed is non-zero,
-        ; but recover defensively if memory was clobbered.
-        ld      a,h
-        or      l
-        jp      nz,__rsto
-        inc     hl
-
-__rsto:
+        ; Save the updated full 16-bit state back to memory
         ld      (__rand_state),hl
+
+        ; Clear bit 15 to stay compliant with standard C89 RAND_MAX (0-32767)
         res     7,h
         ret
 

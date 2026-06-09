@@ -3066,8 +3066,8 @@ argv[ 4 ]: 'DDDD'
 argv[ 5 ]: 'EEEEE'
 targs completed with great success
 test tstdc
-__DATE__ Jun  8 2026
-__TIME__ 21:10:37
+__DATE__ Jun  9 2026
+__TIME__ 07:51:04
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3465,9 +3465,9 @@ first implementation...
   at          100 iterations: 1.202002
   at         1000 iterations: 1.202034
 second implementation...
-  at           10 iterations: 1.428571
-  at          100 iterations: 1.234568
-  at         1000 iterations: 1.201923
+  at           10 iterations: 1.666667
+  at          100 iterations: 1.190476
+  at         1000 iterations: 1.206273
 done
 test cpmenumd
 finding COM files

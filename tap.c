@@ -20,18 +20,9 @@ uint32_t gcd( uint32_t m, uint32_t n )
     return b;
 }
 
-uint16_t ui16rand()
-{
-    int r = rand();
-    r |= rand() << 8;
-    return r;
-}
-
 uint32_t rand_ui32()
 {
-    uint32_t ul = (uint32_t) ui16rand();
-    ul |= ( (uint32_t) ui16rand() << 16 );
-    return ul;
+    return rand() | ( ( (uint32_t) rand() ) << 16 );
 } 
 
 /* https://en.wikipedia.org/wiki/Ap%C3%A9ry%27s_theorem */

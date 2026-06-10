@@ -15,6 +15,14 @@
 
 HDRSIZE          equ     3
 
+; errno values used by the CP/M file layer.  Keep these in sync with errno.h.
+ENOENT   equ     2
+EIO      equ     5
+EBADF    equ     9
+EINVAL   equ     22
+EMFILE   equ     24
+ENOSPC   equ     28
+
         cseg
 ; Heap state used by start/free/malloc.  Keep this in the always-kept
 ; startup block so allocator code itself is not pulled in just because
@@ -278,12 +286,72 @@ _setbuf:
         public  _strerror
 _strerror:
         ; char *strerror(int errnum)
-        ; Minimal fallback for programs that only need a printable message.
-        ld      hl,__strerror_msg
+        ; Small errno message table for the errors this RTL commonly sets.
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)
+        cp      ENOENT
+        jr      z,__se02
+        cp      EIO
+        jr      z,__se05
+        cp      EBADF
+        jr      z,__se09
+        cp      EINVAL
+        jr      z,__se22
+        cp      EMFILE
+        jr      z,__se24
+        cp      ENOSPC
+        jr      z,__se28
+        cp      33              ; EDOM
+        jr      z,__se33
+        cp      34              ; ERANGE
+        jr      z,__se34
+        ld      hl,__seuk
+        pop     ix
+        ret
+__se02:
+        ld      hl,__sem02
+        pop     ix
+        ret
+__se05:
+        ld      hl,__sem05
+        pop     ix
+        ret
+__se09:
+        ld      hl,__sem09
+        pop     ix
+        ret
+__se22:
+        ld      hl,__sem22
+        pop     ix
+        ret
+__se24:
+        ld      hl,__sem24
+        pop     ix
+        ret
+__se28:
+        ld      hl,__sem28
+        pop     ix
+        ret
+__se33:
+        ld      hl,__sem33
+        pop     ix
+        ret
+__se34:
+        ld      hl,__sem34
+        pop     ix
         ret
 
-__strerror_msg:
-        db      'Error',0
+__seuk:         db      'Error',0
+__sem02:        db      'No such file',0
+__sem05:        db      'I/O error',0
+__sem09:        db      'Bad file descriptor',0
+__sem22:        db      'Invalid argument',0
+__sem24:        db      'Too many open files',0
+__sem28:        db      'No space left on device',0
+__sem33:        db      'Domain error',0
+__sem34:        db      'Range error',0
 
 
         public  __putc
@@ -3263,6 +3331,7 @@ NFILES   equ     4
 MAXFD    equ     7
 FCBSIZE  equ     36
 
+
 ; ------------------------------------------------------------
 ; Minimal CP/M byte-stream file I/O.
 ;
@@ -3289,7 +3358,7 @@ opfind:
         ld      a,e
         inc     a
         djnz    opfind
-        call    __ioerr
+        call    __emfil
         ld      hl,0ffffh
         pop     ix
         ret
@@ -3342,7 +3411,7 @@ opclr:
         ld      c,15            ; open existing
         call    5
         cp      0ffh
-        jr      z,opfail
+        jr      z,opfail_noent
         jr      opok
 
 opmake:
@@ -3353,7 +3422,7 @@ opmake:
         ld      c,22            ; make new
         call    5
         cp      0ffh
-        jr      z,opfail
+        jr      z,opfail_nospc
 
 opok:
         ld      a,(__slot)
@@ -3363,11 +3432,15 @@ opok:
         pop     ix
         ret
 
-opfail:
+opfail_noent:
+        call    __enoent
+        jr      opfail_common
+opfail_nospc:
+        call    __nospc
+opfail_common:
         ld      a,(__slot)
         call    __usep
         ld      (hl),0
-        call    __ioerr
         ld      hl,0ffffh
         pop     ix
         ret
@@ -3387,14 +3460,23 @@ _close:
         ex      de,hl
         ld      c,16            ; close file
         call    5
+        push    af
         ld      a,(__slot)
         call    __usep
         ld      (hl),0
+        pop     af
+        cp      0ffh
+        jr      z,clio
 clok:
         ld      hl,0
         pop     ix
         ret
 clbad:
+        call    __ebadf
+        ld      hl,0ffffh
+        pop     ix
+        ret
+clio:
         call    __ioerr
         ld      hl,0ffffh
         pop     ix
@@ -3435,7 +3517,7 @@ ulclr:
         pop     ix
         ret
 ul_fail:
-        call    __ioerr
+        call    __enoent
         ld      hl,0ffffh
         pop     ix
         ret
@@ -3515,7 +3597,7 @@ rddone:
         pop     ix
         ret
 rdbad:
-        call    __ioerr
+        call    __ebadf
         ld      hl,0ffffh
         pop     ix
         ret
@@ -3531,7 +3613,7 @@ _write:
         cp      2
         jp      z,wrcon
         call    __chkfd
-        jp      c,wrbad
+        jp      c,wrbadfd
         ld      l,(ix+6)
         ld      h,(ix+7)
         ld      (__rwbuf),hl
@@ -3595,7 +3677,7 @@ wrcopy:
         ld      c,34            ; random write
         call    5
         or      a
-        jr      nz,wrbad
+        jr      nz,wrnospc
         call    __advio
         jr      wrloop
 
@@ -3635,8 +3717,13 @@ wcloop:
         ld      (__rwrem),hl
         jr      wcloop
 
-wrbad:
-        call    __ioerr
+wrbadfd:
+        call    __ebadf
+        ld      hl,0ffffh
+        pop     ix
+        ret
+wrnospc:
+        call    __nospc
         ld      hl,0ffffh
         pop     ix
         ret
@@ -3646,7 +3733,7 @@ _lseek:
         ld      ix,0
         add     ix,sp
         call    __chkfd
-        jp      c,lsbad
+        jp      c,lsbadfd
 
         ; long lseek(int fd, long offset, int whence)
         ; ix+4/5   fd
@@ -3659,7 +3746,7 @@ _lseek:
         jr      z,lscur
         cp      2
         jr      z,lsend
-        jp      lsbad
+        jp      lsinval
 
 lsset:
         ; Set current offset from full 32-bit argument.
@@ -3779,8 +3866,12 @@ lsend:
         ld      (hl),c
         jr      lsret
 
-lsbad:
-        call    __ioerr
+lsbadfd:
+        call    __ebadf
+        jr      lsbadret
+lsinval:
+        call    __einval
+lsbadret:
         ld      hl,0ffffh
         ld      de,0ffffh
         pop     ix
@@ -4054,10 +4145,27 @@ __upa:
         sub     20h
         ret
 
-__ioerr:
-        ld      hl,22
+__seter:
         ld      (_errno),hl
         ret
+__enoent:
+        ld      hl,ENOENT
+        jr      __seter
+__ioerr:
+        ld      hl,EIO
+        jr      __seter
+__ebadf:
+        ld      hl,EBADF
+        jr      __seter
+__einval:
+        ld      hl,EINVAL
+        jr      __seter
+__emfil:
+        ld      hl,EMFILE
+        jr      __seter
+__nospc:
+        ld      hl,ENOSPC
+        jr      __seter
 
 
 _errno:
@@ -7475,7 +7583,10 @@ __prcol:
         ld      e,' '
         call    __conout
 __prmsg:
-        ld      hl,__prtxt
+        ld      hl,(_errno)
+        push    hl
+        call    _strerror
+        pop     de
 __prlp2:
         ld      a,(hl)
         or      a
@@ -7485,11 +7596,12 @@ __prlp2:
         inc     hl
         jr      __prlp2
 __prend:
+        ld      e,0ah
+        call    __conout
         ld      hl,0
         pop     ix
         ret
 
-__prtxt:        db      'error',0ah,0
 
 ; Opaque DIR object, FCB, DMA buffer, and one static dirent.  This API is
 ; deliberately non-reentrant, matching the tiny CP/M runtime style.

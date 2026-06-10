@@ -3067,7 +3067,7 @@ argv[ 5 ]: 'EEEEE'
 targs completed with great success
 test tstdc
 __DATE__ Jun 10 2026
-__TIME__ 10:09:07
+__TIME__ 13:48:40
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3684,6 +3684,10 @@ moves evaluated: 6493
 iterations: 1
 test tswitch
 -1 -1 945
+test tppifcom
+123
+test tpostidx
+2 10 2 20
 test tpostut
 tpostut all tests passed
 test tbug2
@@ -3853,6 +3857,8 @@ test tdecl
 declaration syntax test passed with great success
 test tctype
 ctype/realloc ok
+test tifcom
+123
 test tptrdiff
 tptrdiff completed with great success
 test tmulpow2

@@ -6,12 +6,12 @@
 #include <string.h>
 #include <ctype.h>
 
-#define MAXSRC 12000L
+#define MAXSRC 50000L
 #define MAXTOK 64
 #define MAXNAME 16
-#define MAXSYM 64
-#define MAXPROC 8
-#define MAXCODE 800
+#define MAXSYM 128
+#define MAXPROC 16
+#define MAXCODE_MAX 2000
 #define MAXMEM 8200
 #define MAXSTACK 64
 #define MAXFRAME 16
@@ -105,6 +105,8 @@ static int *st;
 static char **strs;
 
 static int cp;
+static int code_limit;
+static int opt_verbose;
 static int nsym;
 static int nproc;
 static char *src;
@@ -143,7 +145,7 @@ static char *xstrdup(const char *s)
 
 static int emit(int op, int a, int b)
 {
-    if (cp >= MAXCODE)
+    if (cp >= code_limit)
         die("code full");
     code[cp].op = op;
     code[cp].a = a;
@@ -1091,7 +1093,7 @@ static void program(void)
         next();
 }
 
-#if 1 // 10% faster overall for most apps
+#if 1 /* 10% faster overall for most apps */
 
     #define popv() (st[--sp])
     #define pushv(v) do { st[sp++] = (v); } while(0)
@@ -1326,15 +1328,32 @@ static void *xcalloc(size_t n, size_t sz)
     return p;
 }
 
-static void init_storage(void)
+static int calc_code_limit(void)
 {
-    code = (struct Ins *)xcalloc(MAXCODE, sizeof(struct Ins));
+    long n;
+
+    n = slen / 8 + 128;
+    if (n < 128)
+        n = 128;
+    if (n > MAXCODE_MAX)
+        n = MAXCODE_MAX;
+    return (int)n;
+}
+
+static void init_compile_storage(void)
+{
+    code_limit = calc_code_limit();
+    code = (struct Ins *)xcalloc(code_limit, sizeof(struct Ins));
     sym = (struct Sym *)xcalloc(MAXSYM, sizeof(struct Sym));
     proc = (struct Proc *)xcalloc(MAXPROC, sizeof(struct Proc));
+    strs = (char **)xcalloc(MAXSTR, sizeof(char *));
+}
+
+static void init_run_storage(void)
+{
     fr = (struct Frame *)xcalloc(MAXFRAME, sizeof(struct Frame));
     gmem = (int *)xcalloc(MAXMEM, sizeof(int));
     st = (int *)xcalloc(MAXSTACK, sizeof(int));
-    strs = (char **)xcalloc(MAXSTR, sizeof(char *));
 }
 
 static void free_compile_storage(void)
@@ -1345,28 +1364,65 @@ static void free_compile_storage(void)
     sym = 0;
 }
 
+static void print_stats(void)
+{
+    if (!opt_verbose)
+        return;
+
+    fprintf(stderr, "\nPINT usage summary\n");
+    fprintf(stderr, "  Source bytes:             %ld / %ld\n", slen, MAXSRC);
+    fprintf(stderr, "  Bytecode instructions:    %d / %d\n", cp, code_limit);
+    fprintf(stderr, "  Symbols:                  %d / %d\n", nsym, MAXSYM);
+    fprintf(stderr, "  Procedures/functions:     %d / %d\n", nproc, MAXPROC);
+    fprintf(stderr, "  Pascal strings:           %d / %d\n", nstr, MAXSTR);
+    fprintf(stderr, "  Global memory cells used: %d / %d\n", gtop, MAXMEM);
+    fprintf(stderr, "  VM stack cells limit:     %d\n", MAXSTACK);
+    fprintf(stderr, "  VM call frames limit:     %d\n", MAXFRAME);
+    fprintf(stderr, "  VM locals per frame:      %d\n", MAXLOC);
+}
+
 static int load_file(const char *name)
 {
     FILE *f;
     long n;
+    long got;
 
     f = fopen(name, "rb");
     if (!f) {
         perror(name);
         return 0;
     }
-    src = (char *)malloc(MAXSRC + 1);
-    if (!src)
+
+    if (fseek(f, 0L, SEEK_END) != 0) {
+        fclose(f);
+        perror(name);
         return 0;
-    n = fread(src, 1, MAXSRC, f);
-    if (!feof(f)) {
+    }
+    n = ftell(f);
+    if (n < 0 || n > MAXSRC) {
         fclose(f);
         fprintf(stderr, "%s: source too large\n", name);
+        return 0;
+    }
+    if (fseek(f, 0L, SEEK_SET) != 0) {
+        fclose(f);
+        perror(name);
+        return 0;
+    }
+
+    src = (char *)malloc((size_t)n + 1);
+    if (!src) {
+        perror("out of ram");
+        return 1;
+    }
+    got = (long)fread(src, 1, (size_t)n, f);
+    fclose(f);
+    if (got != n) {
+        fprintf(stderr, "%s: read error\n", name);
         free(src);
         src = 0;
         return 0;
     }
-    fclose(f);
     src[n] = 0;
     slen = n;
     return 1;
@@ -1374,18 +1430,27 @@ static int load_file(const char *name)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) {
-        fprintf(stderr, "usage: pint file.pas\n");
+    int argi;
+
+    argi = 1;
+    if (argi < argc && strcmp(argv[argi], "-V") == 0) {
+        opt_verbose = 1;
+        argi++;
+    }
+    if (argi >= argc) {
+        fprintf(stderr, "usage: pint [-v] file.pas\n");
         return 1;
     }
-    init_storage();
-    if (!load_file(argv[1]))
+    if (!load_file(argv[argi]))
         return 1;
+    init_compile_storage();
     next();
     program();
     free_compile_storage();
     if (errcnt)
         return 1;
+    init_run_storage();
     run();
+    print_stats();
     return 0;
 }

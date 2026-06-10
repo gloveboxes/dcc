@@ -1196,6 +1196,7 @@ static void parse_preprocessor_line(void)
         while ((c = peekc()) != 0 && c != '\n' && i < (int)sizeof(val) - 1)
             val[i++] = (char)getc_src();
         val[i] = 0;
+        strip_macro_replacement_comments(val);
 
         if (if_sp >= MAX_IFSTACK) fatal("too many nested #if");
 
@@ -1240,6 +1241,7 @@ static void parse_preprocessor_line(void)
                 while ((c = peekc()) != 0 && c != '\n' && i < (int)sizeof(val) - 1)
                     val[i++] = (char)getc_src();
                 val[i] = 0;
+                strip_macro_replacement_comments(val);
                 cond = pp_eval_simple_expr(val);
                 i = if_sp - 1;
                 if (!if_branch_taken[i] && cond) {
@@ -4254,6 +4256,44 @@ static void emit_store_hl_to_sym_direct(struct Sym *s)
         fprintf(outf, "\tld (ix%+d),l\n", s->offset);
         fprintf(outf, "\tld (ix%+d),h\n", s->offset + 1);
     }
+}
+
+
+static int try_emit_post_update_sym_direct(struct Sym *s, int op)
+{
+    int elem;
+
+    if (!s || s->is_array)
+        return 0;
+    if (type_is_long(s->type) || type_is_float(s->type))
+        return 0;
+    if (type_size(s->type) > 2)
+        return 0;
+    if (!sym_can_ix_direct(s) && !is_global_word_sym(s))
+        return 0;
+
+    emit_load_sym_value_direct(s);     /* HL = old value, expression result */
+    emit("\tpush hl\n");              /* save old value for result */
+
+    if (type_ptr_depth(s->type) > 0) {
+        elem = type_index_elem_size(s->type);
+        if (op == TOK_INC) {
+            emit_add_const_to_hl(elem);
+        } else {
+            emit_ld_de_const(elem);
+            emit("\tor a\n\tsbc hl,de\n");
+        }
+    } else {
+        if (op == TOK_INC)
+            emit("\tinc hl\n");
+        else
+            emit("\tdec hl\n");
+    }
+
+    emit_store_hl_to_sym_direct(s);    /* store new value */
+    emit("\tpop hl\n");               /* return old value */
+    g_expr_type = s->type;
+    return 1;
 }
 
 static void emit_incdec_sym_direct(struct Sym *s, int op)
@@ -8212,6 +8252,12 @@ static void gen_primary(void)
             tok.kind != TOK_INC && tok.kind != TOK_DEC) {
             fprintf(outf, "\tld hl,%s\n", asm_name_for(name));
             g_expr_type = type_add_ptr(s->type);
+            return;
+        }
+
+        if ((tok.kind == TOK_INC || tok.kind == TOK_DEC) &&
+            try_emit_post_update_sym_direct(s, tok.kind)) {
+            next_token();
             return;
         }
 
@@ -18309,6 +18355,7 @@ static char *filter_active_preprocessor_source(long *lenp)
             while (s < e && ei < (int)sizeof(expr) - 1)
                 expr[ei++] = *s++;
             expr[ei] = 0;
+            strip_macro_replacement_comments(expr);
             cond = pp_eval_simple_expr(expr);
             if (sp >= MAX_IFSTACK)
                 fatal("too many nested #if");
@@ -18338,6 +18385,7 @@ static char *filter_active_preprocessor_source(long *lenp)
                     while (s < e && ei < (int)sizeof(expr) - 1)
                         expr[ei++] = *s++;
                     expr[ei] = 0;
+                    strip_macro_replacement_comments(expr);
                     cond = pp_eval_simple_expr(expr);
                     active = parent && cond;
                     if (active)

@@ -166,7 +166,7 @@ begin
     value := scoreInvalid;
     if depth >= 4 then
     begin
-        { p := lookForWinner; }  { this is much slower }
+        { p := lookForWinner; } { this is much slower }
         p := winner2( move );
         if p <> pieceBlank then
         begin

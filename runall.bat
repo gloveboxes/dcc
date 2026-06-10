@@ -16,9 +16,9 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              ttrig tlog tphi tap cpmenumd tbits tfo pihex tstrify tlcont primes ^
              tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 ^
              tlongaud tlongreg tppreg tinitreg ttypesr ttype2 tdecinit tmalloch ^
-             tallocx tstdlib trw2 terrno tpostfld pint tswitch ^
+             tallocx tstdlib trw2 terrno tpostfld pint tswitch tppifcom tpostidx ^
              tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 ^
-             tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype ^
+             tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom ^
              tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp
 
 echo --- optimized (ma peep) ---

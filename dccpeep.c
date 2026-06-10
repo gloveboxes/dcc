@@ -2394,6 +2394,48 @@ static void pass_fix_divmod_extrns(void)
     }
 }
 
+
+static int peep_line_is_mulu_extrn(const char *line)
+{
+    return peep_is_exact_extrn_for(line, "__mulu");
+}
+
+/*
+ * pass_fix_mulu_extrn:
+ *
+ * pass_mulu_const may consume the one EXTRN __mulu line when it inlines or
+ * folds the first constant multiply in a module.  If later variable or
+ * unsupported-constant unsigned multiplies remain, M80 then reports those
+ * call __mulu sites as undefined.
+ *
+ * Normalize __mulu exactly like the div/mod helper family: remove stale
+ * EXTRNs, scan the final code, and insert one EXTRN if any call remains.
+ */
+static void pass_fix_mulu_extrn(void)
+{
+    int i;
+    int used;
+
+    used = 0;
+
+    for (i = 0; i < nlines; ++i) {
+        if (peep_line_is_mulu_extrn(lines[i])) {
+            delete_n(i, 1);
+            --i;
+        }
+    }
+
+    for (i = 0; i < nlines; ++i) {
+        if (peep_is_exact_call_for(lines[i], "__mulu")) {
+            used = 1;
+            break;
+        }
+    }
+
+    if (used)
+        insert_line(0, "extrn __mulu");
+}
+
 static int pass_mulu_const(void)
 {
     int i, changed = 0;
@@ -2440,13 +2482,14 @@ static int pass_mulu_const(void)
         /* Inline expansion for specific multiplier constants.
          * Strategy: save HL in DE (ld d,h; ld e,l), compute 4x, add original
          * to get 5x, then shift left to reach the target.
+         * 5   = 5 * 1    :  ×1→DE, ×2, ×4, +DE(=5)
          * 10  = 5 * 2    :  ×1→DE, ×2, ×4, +DE(=5), ×2
          * 20  = 5 * 4    :  ×1→DE, ×2, ×4, +DE(=5), ×2, ×2
          * 40  = 5 * 8    :  ×1→DE, ×2, ×4, +DE(=5), ×2, ×2, ×2
          * 80  = 5 * 16   :  ×1→DE, ×2, ×4, +DE(=5), ×2, ×2, ×2, ×2
          * 160 = 5 * 32   :  ×1→DE, ×2, ×4, +DE(=5), ×2, ×2, ×2, ×2, ×2  */
-        if (de_val != 10 && de_val != 20 && de_val != 40 &&
-            de_val != 80 && de_val != 160)
+        if (de_val != 5 && de_val != 10 && de_val != 20 &&
+            de_val != 40 && de_val != 80 && de_val != 160)
             continue;
 
         delete_n(i, n_delete);
@@ -7010,6 +7053,63 @@ static int pass_ix_frame_ptr_load(void)
  * Safe for z/nz conditions: sbc hl,de with HL=(0,A) and DE=(0,L) sets Z
  * iff A==L, which is exactly what "cp l" tests.
  */
+
+/*
+ * pass_ix_frame_ptr_load_deadd:
+ *
+ * Collapse the generic IX+constant local load form used for wider negative
+ * frame offsets into direct indexed byte loads:
+ *
+ *   push ix
+ *   pop hl
+ *   ld de,-12
+ *   add hl,de
+ *   ld e,(hl)
+ *   inc hl
+ *   ld d,(hl)
+ *   ex de,hl
+ *
+ * to:
+ *
+ *   ld l,(ix-12)
+ *   ld h,(ix-11)
+ */
+static int pass_ix_frame_ptr_load_deadd(void)
+{
+    int i;
+    int changed;
+
+    changed = 0;
+    for (i = 0; i + 7 < nlines; i++) {
+        int off;
+        char ld_l[64];
+        char ld_h[64];
+
+        if (!eq(i,     "push ix")) continue;
+        if (!eq(i + 1, "pop hl")) continue;
+        if (!peep_parse_ld_de_signed(lines[i + 2], &off)) continue;
+        if (!eq(i + 3, "add hl,de")) continue;
+        if (!eq(i + 4, "ld e,(hl)")) continue;
+        if (!eq(i + 5, "inc hl")) continue;
+        if (!eq(i + 6, "ld d,(hl)")) continue;
+        if (!eq(i + 7, "ex de,hl")) continue;
+
+        if (off < -128 || off + 1 > 127)
+            continue;
+
+        sprintf(ld_l, "ld l,(ix%+d)", off);
+        sprintf(ld_h, "ld h,(ix%+d)", off + 1);
+        delete_n(i, 8);
+        insert_line_tagged(i, ld_l, "ix_frame_ptr_deadd");
+        insert_line(i + 1, ld_h);
+        changed = 1;
+        if (i > 0)
+            i--;
+    }
+
+    return changed;
+}
+
 static int pass_deref_byte_cmp(void)
 {
     int i;
@@ -8581,6 +8681,7 @@ int main(int argc, char **argv)
         if (pass_stride_k_setup_to_direct()) changed = 1;
         if (pass_recover_index_from_sbc()) changed = 1;
         if (pass_ix_frame_ptr_load()) changed = 1;
+        if (pass_ix_frame_ptr_load_deadd()) changed = 1;
         if (pass_deref_byte_cmp()) changed = 1;
         if (pass_cpir()) changed = 1;
         if (pass_reg_bc_deref_byte_cmp()) changed = 1;
@@ -8692,6 +8793,7 @@ int main(int argc, char **argv)
     }
 
     pass_fix_divmod_extrns();
+    pass_fix_mulu_extrn();
 
     write_file(outfile);
     return 0;

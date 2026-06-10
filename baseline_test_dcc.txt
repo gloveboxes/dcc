@@ -3076,6 +3076,8 @@ test tvariad
 variadic test passed with great success
 test tsprintf
 sprintf tests complted with great success
+test tscanf
+tscanf: all tests passed
 test tdowhile
 All C89 do-while core, break, and continue tests passed with great success
 test tmuldiv
@@ -3646,6 +3648,10 @@ test tdecinit
 tdeclinit: all tests passed
 test tmalloch
 tmalloch: all tests passed
+test tallocx
+tallocx: all tests passed
+test tstdlib
+tstdlib: all tests passed
 test tpostut
 tpostut all tests passed
 test tbug2

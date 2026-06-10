@@ -13,7 +13,18 @@
  * Target:  Z80 assembly for Microsoft M80 / LINK-80 style tools.
  *
  * Usage:
- *   dcc file.c -o file.mac
+ *   dcc [options] input.c -o output.mac
+ *
+ * Options:
+ *   -o <file>        write M80 assembly to <file> ('-' for stdout)
+ *   -c, -module      emit a linkable helper module (not a final program)
+ *   -f, -ffloatio    enable floating-point printf/scanf support
+ *   -s, -stack <n>   reserve <n> bytes for the C stack (default 512)
+ *   -I<dir>          add <dir> to the include search path
+ *   -D<name>[=val]   define a preprocessor macro
+ *   -U<name>         undefine a preprocessor macro
+ *   -v, --version    print version and exit
+ *   -h, --help       print help and exit
  */
 
 #define MAX_TOK_TEXT   128
@@ -17887,6 +17898,31 @@ static char *read_file(const char *name, long *lenp)
 
 #define MAX_INCLUDE_DEPTH 8
 
+#define MAX_INCLUDE_DIRS 32
+static const char *include_dirs[MAX_INCLUDE_DIRS];
+static int num_include_dirs;
+
+static void add_include_dir(const char *dir)
+{
+    if (dir == NULL || dir[0] == 0)
+        return;
+    if (num_include_dirs >= MAX_INCLUDE_DIRS)
+        fatal("too many -I include directories");
+    include_dirs[num_include_dirs++] = dir;
+}
+
+static int file_exists(const char *path)
+{
+    FILE *f;
+
+    f = fopen(path, "rb");
+    if (f) {
+        fclose(f);
+        return 1;
+    }
+    return 0;
+}
+
 static void append_mem(char **outp, long *lenp, long *capp,
                        const char *s, long n)
 {
@@ -17913,7 +17949,39 @@ static void append_mem(char **outp, long *lenp, long *capp,
 static void make_include_path(const char *base, const char *inc,
                               char *out, int outsz)
 {
+    int i;
+
     (void)base;
+
+    /* First try the name as given (current directory or absolute path). */
+    strncpy(out, inc, (size_t)outsz - 1);
+    out[outsz - 1] = 0;
+    if (file_exists(out))
+        return;
+
+    /* Then search each -I directory in command-line order; use the first
+     * that contains the header.  Absolute include names are left untouched. */
+    if (inc[0] != '/') {
+        for (i = 0; i < num_include_dirs; ++i) {
+            const char *dir = include_dirs[i];
+            int len = (int)strlen(dir);
+            int need_slash = (len > 0 && dir[len - 1] != '/');
+
+            if (len + (need_slash ? 1 : 0) + (int)strlen(inc) >= outsz)
+                continue;
+
+            strcpy(out, dir);
+            if (need_slash)
+                strcat(out, "/");
+            strcat(out, inc);
+
+            if (file_exists(out))
+                return;
+        }
+    }
+
+    /* Not found anywhere: fall back to the bare name so the caller's
+     * existing handling (silent drop for <system>, fatal for "user") runs. */
     strncpy(out, inc, (size_t)outsz - 1);
     out[outsz - 1] = 0;
 }
@@ -18432,10 +18500,35 @@ static void add_cmdline_define(const char *arg)
     add_define(name, value);
 }
 
+#define DCC_VERSION "dcc (DCC C89->Z80 compiler) 1.0"
+
+static void print_version(void)
+{
+    printf("%s\n", DCC_VERSION);
+}
+
 static void usage(void)
 {
-    fprintf(stderr, "usage: dcc [-c|-module] [-ffloatio] [-stack bytes] [-Dname[=value]] input.c -o output.mac\n");
+    fprintf(stderr, "usage: dcc [-c|-module] [-f|-ffloatio] [-v] [-s|-stack bytes] [-Idir] [-Dname[=value]] [-Uname] input.c -o output.mac\n");
     exit(1);
+}
+
+static void print_help(void)
+{
+    printf("%s\n", DCC_VERSION);
+    printf("usage: dcc [options] input.c -o output.mac\n");
+    printf("\n");
+    printf("options:\n");
+    printf("  -o <file>        write M80 assembly to <file> ('-' for stdout)\n");
+    printf("  -c, -module      emit a linkable helper module (not a final program)\n");
+    printf("  -f, -ffloatio    enable floating-point printf/scanf support\n");
+    printf("  -s, -stack <bytes>   reserve <bytes> for the C stack (default 512)\n");
+    printf("  -I<dir>          add <dir> to the include search path\n");
+    printf("  -D<name>[=val]   define a preprocessor macro\n");
+    printf("  -U<name>         undefine a preprocessor macro\n");
+    printf("  -v, --version    print version and exit\n");
+    printf("  -h, --help       print this help and exit\n");
+    exit(0);
 }
 
 int main(int argc, char **argv)
@@ -18451,11 +18544,16 @@ int main(int argc, char **argv)
     add_define("_DCC_", "1");
 
     for (i = 1; i < argc; ++i) {
-        if (!strcmp(argv[i], "-ffloatio")) {
+        if (!strcmp(argv[i], "-ffloatio") || !strcmp(argv[i], "-f")) {
             opt_floatio = 1;
+        } else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--version")) {
+            print_version();
+            return 0;
+        } else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
+            print_help();
         } else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "-module")) {
             opt_module = 1;
-        } else if (!strcmp(argv[i], "-stack") || !strcmp(argv[i], "--stack")) {
+        } else if (!strcmp(argv[i], "-stack") || !strcmp(argv[i], "--stack") || !strcmp(argv[i], "-s")) {
             char *endp;
             long v;
             if (++i >= argc) usage();
@@ -18477,11 +18575,28 @@ int main(int argc, char **argv)
             if (*endp != 0 || v < 0 || v > 32767)
                 usage();
             opt_stack_size = (int)v;
+        } else if (!strncmp(argv[i], "-s=", 3)) {
+            char *endp;
+            long v;
+            v = strtol(argv[i] + 3, &endp, 0);
+            if (*endp != 0 || v < 0 || v > 32767)
+                usage();
+            opt_stack_size = (int)v;
         } else if (!strcmp(argv[i], "-D")) {
             if (++i >= argc) usage();
             add_cmdline_define(argv[i]);
         } else if (!strncmp(argv[i], "-D", 2)) {
             add_cmdline_define(argv[i] + 2);
+        } else if (!strcmp(argv[i], "-U")) {
+            if (++i >= argc) usage();
+            remove_define(argv[i]);
+        } else if (!strncmp(argv[i], "-U", 2)) {
+            remove_define(argv[i] + 2);
+        } else if (!strcmp(argv[i], "-I")) {
+            if (++i >= argc) usage();
+            add_include_dir(argv[i]);
+        } else if (!strncmp(argv[i], "-I", 2)) {
+            add_include_dir(argv[i] + 2);
         } else if (!strcmp(argv[i], "-o")) {
             if (++i >= argc) usage();
             output_name = argv[i];
@@ -18541,8 +18656,12 @@ int main(int argc, char **argv)
     line_no = 1;
     tok_line = 1;
 
-    outf = fopen(output_name, "w");
-    if (!outf) fatal("cannot open output");
+    if (!strcmp(output_name, "-")) {
+        outf = stdout;
+    } else {
+        outf = fopen(output_name, "w");
+        if (!outf) fatal("cannot open output");
+    }
 
     add_typedef_name("FILE", TYPE_INT, 0);
 
@@ -18561,7 +18680,8 @@ int main(int argc, char **argv)
     emit_data();
     emit("\n\tend\n");
 
-    fclose(outf);
+    if (outf != stdout)
+        fclose(outf);
 
     if (errors) {
         fprintf(stderr, "dcc: %d error(s)\n", errors);

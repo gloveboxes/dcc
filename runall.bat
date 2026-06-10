@@ -8,7 +8,7 @@ if "%_emulator%"=="" set "_emulator=ntvcm"
 
 set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              tpi mm tm tfio wumpus triangle fileops nqueens fact tsetjmp ^
-             tenum tunion tgoto tarray tchess targs tstdc tvariad tsprintf ^
+             tenum tunion tgoto tarray tchess targs tstdc tvariad tsprintf tscanf ^
              tdowhile tmuldiv tbdos tdirent tc89core tc89uac tc89init tc89fp ^
              tc89ptr tc89size tc89decl tc89qual tc89comp tc89swjt tc89bit ^
              tc89pp tc89fnty tc89flt tc89fltc tc89flta tc89fptr tc89fs tc89fcmp ^
@@ -16,6 +16,7 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              ttrig tlog tphi tap cpmenumd tbits tfo pihex tstrify tlcont primes ^
              tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 ^
              tlongaud tlongreg tppreg tinitreg ttypesr ttype2 tdecinit tmalloch ^
+             tallocx tstdlib ^
              tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 ^
              tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype ^
              tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp

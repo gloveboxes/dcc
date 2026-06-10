@@ -786,14 +786,14 @@ __scol:
         public  __scsp
 __scsp:
         ; size_t strcspn(const char *s, const char *reject)
+        ; Result is the length of the initial reject-free run, which equals
+        ; (current s - initial s); no running counter is needed.
         push    ix
         ld      ix,0
         add     ix,sp
 
         ld      l,(ix+4)
         ld      h,(ix+5)        ; HL = s
-        ld      de,0
-        ld      (__spn_count),de
 
 scsp_outer:
         ld      a,(hl)
@@ -817,17 +817,15 @@ scsp_inner:
 scsp_no_match:
         pop     hl
         inc     hl
-        ld      de,(__spn_count)
-        inc     de
-        ld      (__spn_count),de
         jr      scsp_outer
 
 scsp_match:
         pop     hl
-        jr      scsp_ret_count
-
 scsp_ret_count:
-        ld      hl,(__spn_count)
+        ld      e,(ix+4)
+        ld      d,(ix+5)        ; DE = initial s
+        or      a
+        sbc     hl,de           ; HL = current s - initial s = count
         pop     ix
         ret
 
@@ -878,14 +876,14 @@ spbr_none:
         public  __sspn
 __sspn:
         ; size_t strspn(const char *s, const char *accept)
+        ; Result is the length of the initial accept-only run, which equals
+        ; (current s - initial s); no running counter is needed.
         push    ix
         ld      ix,0
         add     ix,sp
 
         ld      l,(ix+4)
         ld      h,(ix+5)        ; HL = s
-        ld      de,0
-        ld      (__spn_count),de
 
 sspn_outer:
         ld      a,(hl)
@@ -909,22 +907,17 @@ sspn_inner:
 sspn_match:
         pop     hl
         inc     hl
-        ld      de,(__spn_count)
-        inc     de
-        ld      (__spn_count),de
         jr      sspn_outer
 
 sspn_no_match:
         pop     hl
-        jr      sspn_ret_count
-
 sspn_ret_count:
-        ld      hl,(__spn_count)
+        ld      e,(ix+4)
+        ld      d,(ix+5)        ; DE = initial s
+        or      a
+        sbc     hl,de           ; HL = current s - initial s = count
         pop     ix
         ret
-
-__spn_count:
-        dw      0
 
 
         public  __sdup
@@ -1139,16 +1132,10 @@ mmv_cmp:
         ex      de,hl           ; HL = dst, DE = src+n
         add     hl,bc           ; HL = dst+n
         ex      de,hl           ; HL = src+n, DE = dst+n
-mmv_back_loop:
-        ld      a,b
-        or      c
-        jr      z,mmv_ret_dst
-        dec     hl
-        dec     de
-        ld      a,(hl)
-        ld      (de),a
-        dec     bc
-        jr      mmv_back_loop
+        dec     hl              ; HL = last source byte (src+n-1)
+        dec     de              ; DE = last dest byte (dst+n-1)
+        lddr                    ; copy n bytes high->low (n != 0 guaranteed)
+        jr      mmv_ret_dst
 
 mmv_do_forward:
         ; Forward copy: HL = src, DE = dst, BC = n.
@@ -1290,6 +1277,35 @@ __call_hl:
 __mulu:
         push    bc
         push    af
+        ; HL = multiplier, DE = multiplicand, product returned in HL.
+        ; Multiplication is commutative and the result is taken mod 2^16, so
+        ; pick an operand with a zero high byte as the multiplier and run only
+        ; 8 iterations.  The multiplicand is shifted with sla e/rl d, which is
+        ; cheaper than ex de,hl/add hl,hl/ex de,hl.
+        ld      a,h
+        or      a
+        jr      z,mul8          ; HL fits in 8 bits -> use it as multiplier
+        ld      a,d
+        or      a
+        jr      nz,mul16        ; neither operand fits in 8 bits -> full 16
+        ex      de,hl           ; DE fits in 8 bits -> swap it into HL
+mul8:
+        ld      c,l             ; C = 8-bit multiplier
+        ld      hl,0            ; HL = product
+        ld      b,8
+mul8l:
+        srl     c
+        jr      nc,mul8s
+        add     hl,de
+mul8s:
+        sla     e
+        rl      d
+        djnz    mul8l
+        pop     af
+        pop     bc
+        ret
+
+mul16:
         ld      b,16
         ld      c,l
         ld      a,h
@@ -1300,9 +1316,8 @@ mu1:
         jr      nc,mu2
         add     hl,de
 mu2:
-        ex      de,hl
-        add     hl,hl
-        ex      de,hl
+        sla     e
+        rl      d
         djnz    mu1
         pop     af
         pop     bc
@@ -1313,13 +1328,16 @@ mu2:
         public  __divs
         public  __mods
 DRSU:
-        ; Unsigned 16-bit divide by repeated subtraction.
+        ; Unsigned 16-bit divide, hybrid bounded.
         ; Input:  HL = dividend, DE = divisor
         ; Output: HL = quotient, DE = remainder
         ;
-        ; This is intentionally the default helper again: workloads such as
-        ; e.c divide by variable n with small quotients, where repeated
-        ; subtraction beats a fixed 16-step divider.
+        ; Small quotients (the common case, e.g. e.c divides a variable n with
+        ; a small carry) use repeated subtraction, which beats the fixed
+        ; 16-step divider.  A djnz down-counter caps the loop: once the
+        ; quotient reaches the cap the partially divided value is discarded
+        ; and the bounded D16U divider finishes the job, so a large quotient
+        ; can no longer cause an unbounded (up to 65535 iteration) stall.
         push    bc
         push    af
         ld      a,d
@@ -1331,20 +1349,28 @@ DRSU:
         jr      dms_rs_done
 
 dms_rs0:
-        ld      bc,0            ; BC = quotient, HL = running remainder
+        push    hl              ; save dividend for the fallback path
+        ld      b,40            ; B = remaining attempts (quotient cap)
 
 dms_rs1:
         or      a
         sbc     hl,de
-        jr      c,dms_rs2
-        inc     bc
-        jr      dms_rs1
+        jr      c,dms_rs2       ; underflow -> quotient = 40 - B
+        djnz    dms_rs1         ; cap not reached -> keep subtracting
+
+        ; cap reached: quotient >= 40, finish with the bounded divider.
+        pop     hl              ; restore dividend (DE still = divisor)
+        call    D16U            ; HL = quotient, DE = remainder
+        jr      dms_rs_done
 
 dms_rs2:
         add     hl,de           ; undo failed subtract; HL = remainder
         ex      de,hl           ; DE = remainder
-        ld      h,b             ; HL = quotient
-        ld      l,c
+        ld      a,40
+        sub     b               ; A = quotient (cap - remaining)
+        ld      h,0
+        ld      l,a             ; HL = quotient
+        pop     bc              ; discard saved dividend
 
 dms_rs_done:
         pop     af
@@ -1546,6 +1572,177 @@ __ms_done:
         pop     bc
         ret
 
+        public  _abs
+_abs:
+        ; int abs(int j)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        bit     7,h
+        jr      z,abs_done
+        xor     a
+        sub     l
+        ld      l,a
+        ld      a,0
+        sbc     a,h
+        ld      h,a
+abs_done:
+        pop     ix
+        ret
+
+        public  _labs
+_labs:
+        ; long labs(long j)
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      e,(ix+6)
+        ld      d,(ix+7)
+        bit     7,d
+        jr      z,labs_done
+        ld      a,l
+        cpl
+        ld      l,a
+        ld      a,h
+        cpl
+        ld      h,a
+        ld      a,e
+        cpl
+        ld      e,a
+        ld      a,d
+        cpl
+        ld      d,a
+        inc     hl
+        ld      a,h
+        or      l
+        jr      nz,labs_done
+        inc     de
+labs_done:
+        pop     ix
+        ret
+
+        public  _div
+_div:
+        ; div_t div(int numer, int denom)
+        ; Hidden struct return pointer is the first argument at IX+4.
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; HL = numer
+        ld      e,(ix+8)
+        ld      d,(ix+9)        ; DE = denom
+        call    __divs          ; HL = quotient
+        ld      c,(ix+4)
+        ld      b,(ix+5)        ; BC = result pointer
+        ld      a,l
+        ld      (bc),a
+        inc     bc
+        ld      a,h
+        ld      (bc),a
+
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; HL = numer
+        ld      e,(ix+8)
+        ld      d,(ix+9)        ; DE = denom
+        call    __mods          ; HL = remainder
+        ld      c,(ix+4)
+        ld      b,(ix+5)
+        inc     bc
+        inc     bc              ; BC = &result->rem
+        ld      a,l
+        ld      (bc),a
+        inc     bc
+        ld      a,h
+        ld      (bc),a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        pop     ix
+        ret
+
+        public  _ldiv
+_ldiv:
+        ; ldiv_t ldiv(long numer, long denom)
+        ; Hidden struct return pointer is the first argument at IX+4.
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ld      l,(ix+8)
+        ld      h,(ix+9)        ; numer high word
+        push    hl
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; numer low word
+        push    hl
+        ld      l,(ix+12)
+        ld      h,(ix+13)       ; denom high word
+        push    hl
+        ld      l,(ix+10)
+        ld      h,(ix+11)       ; denom low word
+        push    hl
+        call    __lds           ; DE:HL = quotient
+        pop     bc
+        pop     bc
+        pop     bc
+        pop     bc
+        ld      c,(ix+4)
+        ld      b,(ix+5)        ; BC = result pointer
+        ld      a,l
+        ld      (bc),a
+        inc     bc
+        ld      a,h
+        ld      (bc),a
+        inc     bc
+        ld      a,e
+        ld      (bc),a
+        inc     bc
+        ld      a,d
+        ld      (bc),a
+
+        ld      l,(ix+8)
+        ld      h,(ix+9)        ; numer high word
+        push    hl
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; numer low word
+        push    hl
+        ld      l,(ix+12)
+        ld      h,(ix+13)       ; denom high word
+        push    hl
+        ld      l,(ix+10)
+        ld      h,(ix+11)       ; denom low word
+        push    hl
+        call    __lms           ; DE:HL = remainder
+        pop     bc
+        pop     bc
+        pop     bc
+        pop     bc
+        ld      c,(ix+4)
+        ld      b,(ix+5)
+        inc     bc
+        inc     bc
+        inc     bc
+        inc     bc              ; BC = &result->rem
+        ld      a,l
+        ld      (bc),a
+        inc     bc
+        ld      a,h
+        ld      (bc),a
+        inc     bc
+        ld      a,e
+        ld      (bc),a
+        inc     bc
+        ld      a,d
+        ld      (bc),a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        pop     ix
+        ret
+
 
         public  __r1u
 ; 16-bit unsigned dividend modulo 8-bit constant divisor.
@@ -1554,19 +1751,19 @@ __ms_done:
 ; Used for unsigned x % C when C fits in one byte and is not a power of two.
 __r1u:
         push    bc
+        push    de              ; preserve caller DE (D reused as bit counter)
         push    af
         ld      a,e
         or      a
         jr      nz,R1U0
         ; Undefined in C, but keep a deterministic fallback for divisor 0.
         pop     af
+        pop     de
         pop     bc
         ret
 R1U0:
         ld      bc,0            ; BC = partial remainder, kept < divisor
-        ex      af,af'
-        ld      a,16            ; alternate A = loop counter
-        ex      af,af'
+        ld      d,16            ; D = bit counter (D is otherwise unused here)
 R1U1:
         add     hl,hl           ; next dividend bit -> carry
         rl      c
@@ -1588,16 +1785,12 @@ R1US:
         sbc     a,0
         ld      b,a
 R1UN:
-        ex      af,af'
-        dec     a
-        jr      z,R1UD
-        ex      af,af'
-        jr      R1U1
-R1UD:
-        ex      af,af'
+        dec     d
+        jr      nz,R1U1
         ld      h,0
         ld      l,c
         pop     af
+        pop     de
         pop     bc
         ret
 
@@ -2249,11 +2442,11 @@ pf_u:
         push    hl
         call    pf_arg_hl
         push    de
+        call    pf_build_u      ; A = digit count, HL -> first digit (built once)
         push    hl
-        call    pf_count_u_digits  ; A = digit count, HL destroyed
-        call    pf_pad_a
+        call    pf_pad_a        ; emit (width - count) leading spaces
         pop     hl
-        call    pf_print_u
+        call    pf_emit_z       ; emit the prebuilt digits
         pop     de
         pop     hl
         jp      pf_loop
@@ -2263,39 +2456,31 @@ pf_d:
         call    pf_arg_hl
         push    de
 
-        ; Compute display width first: digit count (saved) plus sign if negative.
-        push    hl
-        bit     7,h
-        jr      z,pf_d_count_pos
-        xor     a
-        sub     l
-        ld      l,a
-        ld      a,0
-        sbc     a,h
-        ld      h,a
-        call    pf_count_u_digits
-        ld      (pf_digit),a    ; save digit count of |value|
-        inc     a               ; +1 for '-'
-        jr      pf_d_count_done
-pf_d_count_pos:
-        call    pf_count_u_digits
-        ld      (pf_digit),a    ; save digit count
-pf_d_count_done:
-        call    pf_pad_a
-        pop     hl
-
-        ; Print sign and negate if negative
+        ; Build digits of |value| once, then pad/sign/zero-fill/emit using the
+        ; known length.  Avoids the separate digit-counting divide pass.
         bit     7,h
         jr      z,pf_d_pos
-        ld      a,'-'
-        call    pf_emit_a
+        ; Negative: build digits of -value, remember sign.
         xor     a
         sub     l
         ld      l,a
         ld      a,0
         sbc     a,h
         ld      h,a
+        call    pf_build_u
+        ld      (pf_digit),a    ; save digit count of |value|
+        push    hl              ; save pointer to first digit
+        inc     a               ; width includes the '-'
+        call    pf_pad_a
+        ld      a,'-'
+        call    pf_emit_a
+        jr      pf_d_zfill
 pf_d_pos:
+        call    pf_build_u
+        ld      (pf_digit),a    ; save digit count
+        push    hl              ; save pointer to first digit
+        call    pf_pad_a
+pf_d_zfill:
         ; Zero-fill for precision: print (prec - digit_count) leading zeros
         ld      a,(pf_prec)
         or      a
@@ -2312,7 +2497,8 @@ pf_d_zero_loop:
         dec     d
         jr      nz,pf_d_zero_loop
 pf_d_print:
-        call    pf_print_u
+        pop     hl              ; HL -> first digit
+        call    pf_emit_z
         pop     de
         pop     hl
         jp      pf_loop
@@ -2395,19 +2581,22 @@ pf_ld:
         ld      hl,(__pf32_h)
         bit     7,h
         jr      z,pf_ld_pos
-        ; Negative: negate, then print with '-'
+        ; Negative: negate, build digits once, then print with '-'
         call    pf_neg32
-        call    pf_count_u32_digits
+        call    pf_build_u32    ; A = count, HL -> first digit
+        push    hl
         inc     a               ; +1 for '-'
         call    pf_pad_a
         ld      a,'-'
         call    pf_emit_a
-        jr      pf_ld_print
+        jr      pf_ld_emit
 pf_ld_pos:
-        call    pf_count_u32_digits
+        call    pf_build_u32    ; A = count, HL -> first digit
+        push    hl
         call    pf_pad_a
-pf_ld_print:
-        call    pf_print_u32
+pf_ld_emit:
+        pop     hl
+        call    pf_emit_z
         pop     de
         pop     hl
         jp      pf_loop
@@ -2417,9 +2606,11 @@ pf_lu:
         push    hl
         call    pf_arg_dehl
         push    de
-        call    pf_count_u32_digits
+        call    pf_build_u32    ; A = count, HL -> first digit
+        push    hl
         call    pf_pad_a
-        call    pf_print_u32
+        pop     hl
+        call    pf_emit_z
         pop     de
         pop     hl
         jp      pf_loop
@@ -2484,57 +2675,73 @@ pfsl2:
         pop     hl
         ret
 
-pf_count_u_digits:
+; pf_div10: constant-time unsigned divide of HL by 10.
+; In:  HL = dividend
+; Out: HL = quotient, A = remainder (0..9)
+; Preserves DE and IX.  BC is saved/restored.
+;
+; Fixed 16-step shift-subtract divider specialised for divisor 10.  Unlike
+; DRSU (repeated subtraction, O(quotient)) this is bounded, so printing an
+; N-digit number is O(N*16) instead of O(value) -- e.g. ~44x faster for
+; values in the tens of thousands.
+pf_div10:
         push    bc
-        ld      bc,0
-        ld      a,h
-        or      l
-        jr      nz,pfcud1
-        ld      a,1
-        pop     bc
-        ret
-pfcud1:
-        inc     c
-        ld      de,10
-        call    DRSU   ; HL = quotient, DE = remainder
-        ld      a,h
-        or      l
-        jr      nz,pfcud1
+        ld      bc,1000h        ; B = 16 (loop counter), C = 0 (remainder)
+pf_d10_lp:
+        add     hl,hl           ; HL <<= 1, MSB -> carry
         ld      a,c
+        adc     a,a             ; A = (rem<<1) | bit, range 0..19
+        cp      10
+        jr      c,pf_d10_no
+        sub     10
+        inc     l               ; set quotient bit 0 (clear after add hl,hl)
+pf_d10_no:
+        ld      c,a             ; save remainder
+        djnz    pf_d10_lp
+        ld      a,c             ; A = remainder (0..9)
         pop     bc
         ret
 
-pf_print_u:
+; pf_build_u: convert HL (unsigned 16-bit) to decimal text in pf_decbuf.
+; Digits are built once into the buffer (high end downward) so the caller can
+; derive the field length without a separate counting divide pass.
+; Out: A = digit count, HL -> first digit (buffer null-terminated at
+;      pf_decbuf+6).  Preserves BC and DE.
+; NB: BC carries printf's running character count, so it must not be touched;
+;     the digit count is computed from the buffer pointer, not a register.
+pf_build_u:
         push    ix
+        push    de
         ld      ix,pf_decbuf+6
-        ld      (ix+0),0
-        ld      a,h
-        or      l
-        jr      nz,pfu1
-        ld      a,'0'
-        call    pf_emit_a
-        pop     ix
-        ret
-pfu1:
+        ld      (ix+0),0        ; null terminator
+pfbu1:
         dec     ix
-        ld      de,10
-        call    DRSU
-        ld      a,e
+        call    pf_div10        ; HL = quotient, A = remainder
         add     a,'0'
         ld      (ix+0),a
         ld      a,h
         or      l
-        jr      nz,pfu1
-pfu2:
-        ld      a,(ix+0)
+        jr      nz,pfbu1
+        push    ix
+        pop     hl              ; HL -> first digit
+        ld      de,pf_decbuf+6
+        ex      de,hl           ; DE -> first digit, HL = buffer end
         or      a
-        jr      z,pfu3
-        call    pf_emit_a
-        inc     ix
-        jr      pfu2
-pfu3:
+        sbc     hl,de           ; HL = digit count (end - first)
+        ld      a,l             ; A = digit count (<= 5)
+        ex      de,hl           ; HL -> first digit
+        pop     de
         pop     ix
         ret
+
+; pf_emit_z: emit the null-terminated string at HL through pf_emit_a.
+pf_emit_z:
+        ld      a,(hl)
+        or      a
+        ret     z
+        inc     hl
+        call    pf_emit_a
+        jr      pf_emit_z
 
 pf_print_x:
         ld      a,h
@@ -2616,135 +2823,50 @@ pf_neg32:
 
 ; pf_divu32_10: divide __pf32_l/__pf32_h by 10
 ; Output: __pf32_l/__pf32_h = quotient, A = remainder (0-9)
+; Register-based: holds the 32-bit value in DE:HL and uses the same in-place
+; shift-subtract trick as pf_div10 (quotient fills in at bit 0 as the dividend
+; shifts out at bit 31).  Avoids the old 64-bit memory-resident shift loop.
 pf_divu32_10:
         push    bc
         push    de
         push    hl
-        ld      hl,0
-        ld      (__pf32_rem_l),hl
-        ld      (__pf32_rem_h),hl
-        ld      (__pf32_quo_l),hl
-        ld      (__pf32_quo_h),hl
-        ld      b,32
+        ld      de,(__pf32_h)   ; DE = high word
+        ld      hl,(__pf32_l)   ; HL = low word
+        ld      bc,2000h        ; B = 32 (counter), C = 0 (remainder)
 pf32d_loop:
-        ; Shift {rem:pf32} left 1 (64-bit)
-        ld      hl,(__pf32_l)
-        or      a
-        add     hl,hl
-        ld      (__pf32_l),hl
-        ld      hl,(__pf32_h)
-        adc     hl,hl
-        ld      (__pf32_h),hl
-        ld      hl,(__pf32_rem_l)
-        adc     hl,hl
-        ld      (__pf32_rem_l),hl
-        ld      hl,(__pf32_rem_h)
-        adc     hl,hl
-        ld      (__pf32_rem_h),hl
-        ; rem < 20, so rem_h = 0; compare rem_l with 10
-        ld      hl,(__pf32_rem_l)
-        ld      a,l
+        add     hl,hl           ; DE:HL <<= 1, bit31 -> carry
+        rl      e
+        rl      d
+        ld      a,c
+        adc     a,a             ; A = (rem<<1) | bit, range 0..19
         cp      10
         jr      c,pf32d_no_sub
-        ; rem >= 10
         sub     10
-        ld      l,a
-        ld      h,0
-        ld      (__pf32_rem_l),hl
-        ; quotient <<= 1, set bit 0
-        ld      hl,(__pf32_quo_l)
-        or      a
-        add     hl,hl
-        inc     l
-        ld      (__pf32_quo_l),hl
-        ld      hl,(__pf32_quo_h)
-        adc     hl,hl
-        ld      (__pf32_quo_h),hl
-        jr      pf32d_next
+        inc     l               ; set quotient bit 0 (clear after add hl,hl)
 pf32d_no_sub:
-        ld      hl,(__pf32_quo_l)
-        or      a
-        add     hl,hl
-        ld      (__pf32_quo_l),hl
-        ld      hl,(__pf32_quo_h)
-        adc     hl,hl
-        ld      (__pf32_quo_h),hl
-pf32d_next:
+        ld      c,a             ; save remainder
         djnz    pf32d_loop
-        ld      hl,(__pf32_quo_l)
         ld      (__pf32_l),hl
-        ld      hl,(__pf32_quo_h)
-        ld      (__pf32_h),hl
-        ld      hl,(__pf32_rem_l)
-        ld      a,l             ; remainder 0-9
+        ex      de,hl
+        ld      (__pf32_h),hl   ; store quotient high word
+        ld      a,c             ; A = remainder (0..9)
         pop     hl
         pop     de
         pop     bc
         ret
 
-; pf_count_u32_digits: count decimal digits of __pf32_l/__pf32_h; A = count
-pf_count_u32_digits:
-        push    bc
-        push    de
-        push    hl
-        ld      hl,(__pf32_h)
-        ld      a,h
-        or      l
-        ld      hl,(__pf32_l)
-        or      h
-        or      l
-        jr      nz,pfcud32_start
-        ld      a,1
-        pop     hl
-        pop     de
-        pop     bc
-        ret
-pfcud32_start:
-        ; Save __pf32
-        ld      (__pf32_save_l),hl
-        ld      hl,(__pf32_h)
-        ld      (__pf32_save_h),hl
-        ld      c,0
-pfcud32_loop:
-        inc     c
-        call    pf_divu32_10
-        ld      hl,(__pf32_h)
-        ld      a,h
-        or      l
-        ld      hl,(__pf32_l)
-        or      h
-        or      l
-        jr      nz,pfcud32_loop
-        ld      a,c
-        ; Restore __pf32
-        ld      hl,(__pf32_save_l)
-        ld      (__pf32_l),hl
-        ld      hl,(__pf32_save_h)
-        ld      (__pf32_h),hl
-        pop     hl
-        pop     de
-        pop     bc
-        ret
-
-; pf_print_u32: print __pf32_l/__pf32_h as unsigned decimal
-pf_print_u32:
+; pf_build_u32: convert __pf32_l/__pf32_h (unsigned 32-bit) to decimal text in
+; pf_decbuf32, built once (high end downward).  Out: A = digit count,
+; HL -> first digit (null-terminated at pf_decbuf32+10).  Preserves BC and DE.
+; Destroys __pf32_l/__pf32_h (consumed as the dividend).
+pf_build_u32:
         push    ix
+        push    de
         ld      ix,pf_decbuf32+10
         ld      (ix+0),0        ; null terminator
-        ld      hl,(__pf32_h)
-        ld      a,h
-        or      l
-        ld      hl,(__pf32_l)
-        or      h
-        or      l
-        jr      nz,pfu32_start
-        ld      a,'0'
-        call    pf_emit_a
-        pop     ix
-        ret
-pfu32_start:
+pfbu32_1:
         dec     ix
-        call    pf_divu32_10    ; A = remainder digit
+        call    pf_divu32_10    ; A = remainder digit, __pf32 = quotient
         add     a,'0'
         ld      (ix+0),a
         ld      hl,(__pf32_h)
@@ -2753,26 +2875,28 @@ pfu32_start:
         ld      hl,(__pf32_l)
         or      h
         or      l
-        jr      nz,pfu32_start
-pfu32_emit:
-        ld      a,(ix+0)
+        jr      nz,pfbu32_1
+        push    ix
+        pop     hl              ; HL -> first digit
+        ld      de,pf_decbuf32+10
+        ex      de,hl           ; DE -> first digit, HL = buffer end
         or      a
-        jr      z,pfu32_done
-        call    pf_emit_a
-        inc     ix
-        jr      pfu32_emit
-pfu32_done:
+        sbc     hl,de           ; HL = digit count
+        ld      a,l             ; A = digit count (<= 10)
+        ex      de,hl           ; HL -> first digit
+        pop     de
         pop     ix
+        ret
+
+; pf_print_u32: print __pf32_l/__pf32_h as unsigned decimal (no field width).
+; Used by the %f float formatter for the integer part.
+pf_print_u32:
+        call    pf_build_u32    ; A = count, HL -> first digit
+        call    pf_emit_z
         ret
 
 __pf32_l:       dw      0
 __pf32_h:       dw      0
-__pf32_rem_l:   dw      0
-__pf32_rem_h:   dw      0
-__pf32_quo_l:   dw      0
-__pf32_quo_h:   dw      0
-__pf32_save_l:  dw      0
-__pf32_save_h:  dw      0
 
 pf_float_stub:
         pop     hl                      ; restore fmt ptr pushed by dispatch
@@ -3073,19 +3197,21 @@ at_digits:
         jr      c,at_done_abs
         cp      '9'+1
         jr      nc,at_done_abs
-        sub     '0'
-        push    hl
-        push    af
-        ex      de,hl
-        ld      de,10
-        call    __mulu
-        ex      de,hl
-        pop     af
-        ld      l,a
-        ld      h,0
-        add     hl,de
-        ex      de,hl
-        pop     hl
+        sub     '0'             ; A = digit value
+        push    hl              ; save string pointer
+        ld      h,d
+        ld      l,e             ; HL = accumulator
+        add     hl,hl           ; x2
+        ld      d,h
+        ld      e,l             ; DE = x2
+        add     hl,hl           ; x4
+        add     hl,hl           ; x8
+        add     hl,de           ; x8 + x2 = acc*10
+        ld      e,a
+        ld      d,0             ; DE = digit
+        add     hl,de           ; HL = acc*10 + digit
+        ex      de,hl           ; DE = new accumulator
+        pop     hl              ; restore string pointer
         inc     hl
         jr      at_digits
 at_done_abs:
@@ -4061,25 +4187,17 @@ __lmul:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+8)
-        ld      l,a
-        ld      a,(ix+9)
-        ld      h,a
+        ld      l,(ix+8)
+        ld      h,(ix+9)
         ld      (__lm_lhs_l),hl
-        ld      a,(ix+10)
-        ld      l,a
-        ld      a,(ix+11)
-        ld      h,a
+        ld      l,(ix+10)
+        ld      h,(ix+11)
         ld      (__lm_lhs_h),hl
-        ld      a,(ix+4)
-        ld      l,a
-        ld      a,(ix+5)
-        ld      h,a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
         ld      (__lm_rhs_l),hl
-        ld      a,(ix+6)
-        ld      l,a
-        ld      a,(ix+7)
-        ld      h,a
+        ld      l,(ix+6)
+        ld      h,(ix+7)
         ld      (__lm_rhs_h),hl
         ld      hl,0
         ld      (__lm_res_l),hl
@@ -4159,31 +4277,28 @@ __ldu:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+4)
-        ld      l,a
-        ld      a,(ix+5)
-        ld      h,a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
         ld      (__ldv_dvs_l),hl
-        ld      a,(ix+6)
-        ld      l,a
-        ld      a,(ix+7)
-        ld      h,a
+        ld      l,(ix+6)
+        ld      h,(ix+7)
         ld      (__ldv_dvs_h),hl
-        ld      a,(ix+8)
-        ld      l,a
-        ld      a,(ix+9)
-        ld      h,a
+        ld      l,(ix+8)
+        ld      h,(ix+9)
         ld      (__ldv_dvd_l),hl
-        ld      a,(ix+10)
-        ld      l,a
-        ld      a,(ix+11)
-        ld      h,a
+        ld      l,(ix+10)
+        ld      h,(ix+11)
         ld      (__ldv_dvd_h),hl
         ld      hl,0
         ld      (__ldv_rem_l),hl
         ld      (__ldv_rem_h),hl
         ld      (__ldv_quo_l),hl
         ld      (__ldv_quo_h),hl
+        ; Fast path: divisor fits in 16 bits.
+        ld      hl,(__ldv_dvs_h)
+        ld      a,h
+        or      l
+        jp      z,ldivu_dvs16
         ld      b,32
 ldivu_loop:
         push    bc
@@ -4241,31 +4356,47 @@ ldivu_next:
         pop     ix
         ret
 
+ldivu_dvs16:
+        ; 16-bit divisor fast path: 32-bit dividend / 16-bit divisor.
+        ; Build the 32-bit quotient in place in the dividend bytes (MSB-first)
+        ; and leave the 16-bit remainder in HL (unused for divide).
+        ld      de,(__ldv_dvs_l)        ; DE = divisor
+        ld      hl,0                    ; HL = partial remainder
+        ld      a,(__ldv_dvd_h+1)       ; byte 3 (MSB)
+        call    ldqr_byte
+        ld      (__ldv_dvd_h+1),a       ; quotient byte 3
+        ld      a,(__ldv_dvd_h)         ; byte 2
+        call    ldqr_byte
+        ld      (__ldv_dvd_h),a         ; quotient byte 2
+        ld      a,(__ldv_dvd_l+1)       ; byte 1
+        call    ldqr_byte
+        ld      (__ldv_dvd_l+1),a       ; quotient byte 1
+        ld      a,(__ldv_dvd_l)         ; byte 0 (LSB)
+        call    ldqr_byte
+        ld      (__ldv_dvd_l),a         ; quotient byte 0
+        ld      hl,(__ldv_dvd_l)        ; HL = quotient low word
+        ld      de,(__ldv_dvd_h)        ; DE = quotient high word
+        ld      sp,ix
+        pop     ix
+        ret
+
 ; __lmodu: unsigned 32-bit modulo.  Returns DE:HL = LHS % RHS.
         public  __lmu
 __lmu:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+4)
-        ld      l,a
-        ld      a,(ix+5)
-        ld      h,a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
         ld      (__ldv_dvs_l),hl
-        ld      a,(ix+6)
-        ld      l,a
-        ld      a,(ix+7)
-        ld      h,a
+        ld      l,(ix+6)
+        ld      h,(ix+7)
         ld      (__ldv_dvs_h),hl
-        ld      a,(ix+8)
-        ld      l,a
-        ld      a,(ix+9)
-        ld      h,a
+        ld      l,(ix+8)
+        ld      h,(ix+9)
         ld      (__ldv_dvd_l),hl
-        ld      a,(ix+10)
-        ld      l,a
-        ld      a,(ix+11)
-        ld      h,a
+        ld      l,(ix+10)
+        ld      h,(ix+11)
         ld      (__ldv_dvd_h),hl
         ld      hl,0
         ld      (__ldv_rem_l),hl
@@ -4317,48 +4448,53 @@ lmodu_no_sub:
 lmodu_dvs16:
         ; Divisor is 16-bit (in __ldv_dvs_l).  Process the 32-bit dividend
         ; byte-by-byte MSB-first, accumulating a 16-bit remainder in HL.
-        ; Result fits in HL since remainder < 16-bit divisor.
-        ; Use conditional call (call nz) to skip zero bytes cheaply.
+        ; All four bytes are processed: a zero byte that follows a nonzero one
+        ; still shifts the remainder, so bytes must NOT be skipped.  The final
+        ; remainder is < divisor, so its high word is zero.
         ld      de,(__ldv_dvs_l)        ; DE = divisor (stays in register)
         ld      hl,0                    ; HL = partial remainder
         ld      a,(__ldv_dvd_h+1)       ; byte 3 (MSB)
-        or      a
-        call    nz,lmodu_byte           ; skip entirely if byte = 0
+        call    ldqr_byte
         ld      a,(__ldv_dvd_h)         ; byte 2
-        or      a
-        call    nz,lmodu_byte           ; skip if byte 2 = 0
+        call    ldqr_byte
         ld      a,(__ldv_dvd_l+1)       ; byte 1
-        call    lmodu_byte
+        call    ldqr_byte
         ld      a,(__ldv_dvd_l)         ; byte 0 (LSB)
-        call    lmodu_byte
+        call    ldqr_byte
         ; HL = remainder; DE high word = 0 (remainder < 16-bit divisor)
         ld      de,0
         ld      sp,ix
         pop     ix
         ret
 
-lmodu_byte:
-        ; Process 8 bits of A (MSB-first) into 16-bit remainder HL.
-        ; DE = divisor (constant).  Clobbers A, B.
+ldqr_byte:
+        ; Shared one-byte step for 32-bit / 16-bit division and modulo.
+        ; In:  A = next dividend byte (MSB-first), HL = remainder, DE = divisor.
+        ; Out: A = quotient byte for this position, HL = updated remainder.
+        ;      Clobbers B.  Modulo callers ignore A; divide callers store A
+        ;      back to build the in-place quotient.
         ;
-        ; When adc hl,hl overflows (carry set), true_shifted > 65535 >= DE so
-        ; we must subtract.  (HL_wrapped - DE) wraps to true_shifted - DE which
-        ; is the correct new remainder; skip the restore.
+        ; sla a frees bit0 to receive this position's quotient bit and feeds
+        ; the dividend MSB into carry for adc hl,hl.  When adc hl,hl overflows,
+        ; the true shifted value exceeds 65535 >= divisor, so a subtract is
+        ; mandatory and (HL_wrapped - divisor) is the correct remainder.
         ld      b,8
-lmodu_bit:
-        rlca                            ; rotate A left: MSB  carry (next dividend bit)
+ldqr_bit:
+        sla     a                       ; dividend bit7 -> carry; bit0 = 0 (quotient slot)
         adc     hl,hl                   ; HL = (HL<<1) | bit; carry = 16-bit overflow
-        jr      c,lmodu_ovf             ; overflow: true_shifted > 65535 >= DE; always sub
-        or      a                       ; clear carry (no overflow)
-        sbc     hl,de                   ; try HL -= divisor
-        jr      nc,lmodu_bit_ok         ; HL >= divisor: keep
-        add     hl,de                   ; restore: HL was < divisor
-        jr      lmodu_bit_ok
-lmodu_ovf:
+        jr      c,ldqr_sub              ; overflow: must subtract, quotient bit = 1
+        or      a                       ; clear carry (leaves A unchanged)
+        sbc     hl,de                   ; trial HL -= divisor
+        jr      nc,ldqr_one             ; HL >= divisor: keep, quotient bit = 1
+        add     hl,de                   ; restore: HL < divisor, quotient bit = 0
+        jr      ldqr_cont
+ldqr_sub:
         or      a                       ; clear carry
-        sbc     hl,de                   ; HL_wrapped - DE = correct new remainder
-lmodu_bit_ok:
-        djnz    lmodu_bit
+        sbc     hl,de                   ; HL_wrapped - divisor = correct remainder
+ldqr_one:
+        inc     a                       ; set quotient bit (bit0)
+ldqr_cont:
+        djnz    ldqr_bit
         ret
 
 ; __ldivs: signed 32-bit divide.  Returns DE:HL = LHS / RHS.
@@ -4368,25 +4504,17 @@ __lds:
         ld      ix,0
         add     ix,sp
         ; Load args and make positive, track sign
-        ld      a,(ix+8)
-        ld      l,a
-        ld      a,(ix+9)
-        ld      h,a
+        ld      l,(ix+8)
+        ld      h,(ix+9)
         ld      (__ldv_dvd_l),hl
-        ld      a,(ix+10)
-        ld      l,a
-        ld      a,(ix+11)
-        ld      h,a
+        ld      l,(ix+10)
+        ld      h,(ix+11)
         ld      (__ldv_dvd_h),hl
-        ld      a,(ix+4)
-        ld      l,a
-        ld      a,(ix+5)
-        ld      h,a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
         ld      (__ldv_dvs_l),hl
-        ld      a,(ix+6)
-        ld      l,a
-        ld      a,(ix+7)
-        ld      h,a
+        ld      l,(ix+6)
+        ld      h,(ix+7)
         ld      (__ldv_dvs_h),hl
         ; sign = sign(dvd) XOR sign(dvs)
         ld      a,(ix+11)       ; high byte of LHS_H
@@ -4500,25 +4628,17 @@ __lms:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+8)
-        ld      l,a
-        ld      a,(ix+9)
-        ld      h,a
+        ld      l,(ix+8)
+        ld      h,(ix+9)
         ld      (__ldv_dvd_l),hl
-        ld      a,(ix+10)
-        ld      l,a
-        ld      a,(ix+11)
-        ld      h,a
+        ld      l,(ix+10)
+        ld      h,(ix+11)
         ld      (__ldv_dvd_h),hl
-        ld      a,(ix+4)
-        ld      l,a
-        ld      a,(ix+5)
-        ld      h,a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
         ld      (__ldv_dvs_l),hl
-        ld      a,(ix+6)
-        ld      l,a
-        ld      a,(ix+7)
-        ld      h,a
+        ld      l,(ix+6)
+        ld      h,(ix+7)
         ld      (__ldv_dvs_h),hl
         ; sign of result = sign of dividend
         ld      a,(ix+11)
@@ -4617,24 +4737,16 @@ __ltu:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+8)
-        ld      l,a
-        ld      a,(ix+9)
-        ld      h,a
-        ld      a,(ix+4)
-        ld      e,a
-        ld      a,(ix+5)
-        ld      d,a
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      e,(ix+4)
+        ld      d,(ix+5)
         or      a
         sbc     hl,de
-        ld      a,(ix+10)
-        ld      l,a
-        ld      a,(ix+11)
-        ld      h,a
-        ld      a,(ix+6)
-        ld      e,a
-        ld      a,(ix+7)
-        ld      d,a
+        ld      l,(ix+10)
+        ld      h,(ix+11)
+        ld      e,(ix+6)
+        ld      d,(ix+7)
         sbc     hl,de
         ld      hl,0
         jr      nc,ltu_done
@@ -4650,24 +4762,16 @@ __leu:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+4)
-        ld      l,a
-        ld      a,(ix+5)
-        ld      h,a
-        ld      a,(ix+8)
-        ld      e,a
-        ld      a,(ix+9)
-        ld      d,a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      e,(ix+8)
+        ld      d,(ix+9)
         or      a
         sbc     hl,de
-        ld      a,(ix+6)
-        ld      l,a
-        ld      a,(ix+7)
-        ld      h,a
-        ld      a,(ix+10)
-        ld      e,a
-        ld      a,(ix+11)
-        ld      d,a
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      e,(ix+10)
+        ld      d,(ix+11)
         sbc     hl,de
         ; carry set iff RHS < LHS, i.e. LHS > RHS
         ld      hl,1
@@ -4684,24 +4788,16 @@ __lgu:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+4)
-        ld      l,a
-        ld      a,(ix+5)
-        ld      h,a
-        ld      a,(ix+8)
-        ld      e,a
-        ld      a,(ix+9)
-        ld      d,a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      e,(ix+8)
+        ld      d,(ix+9)
         or      a
         sbc     hl,de
-        ld      a,(ix+6)
-        ld      l,a
-        ld      a,(ix+7)
-        ld      h,a
-        ld      a,(ix+10)
-        ld      e,a
-        ld      a,(ix+11)
-        ld      d,a
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      e,(ix+10)
+        ld      d,(ix+11)
         sbc     hl,de
         ld      hl,0
         jr      nc,gtu_done
@@ -4717,24 +4813,16 @@ __lku:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+8)
-        ld      l,a
-        ld      a,(ix+9)
-        ld      h,a
-        ld      a,(ix+4)
-        ld      e,a
-        ld      a,(ix+5)
-        ld      d,a
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      e,(ix+4)
+        ld      d,(ix+5)
         or      a
         sbc     hl,de
-        ld      a,(ix+10)
-        ld      l,a
-        ld      a,(ix+11)
-        ld      h,a
-        ld      a,(ix+6)
-        ld      e,a
-        ld      a,(ix+7)
-        ld      d,a
+        ld      l,(ix+10)
+        ld      h,(ix+11)
+        ld      e,(ix+6)
+        ld      d,(ix+7)
         sbc     hl,de
         ld      hl,1
         jr      nc,geu_done
@@ -4762,24 +4850,16 @@ __lts:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+8)
-        ld      l,a
-        ld      a,(ix+9)
-        ld      h,a
-        ld      a,(ix+4)
-        ld      e,a
-        ld      a,(ix+5)
-        ld      d,a
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      e,(ix+4)
+        ld      d,(ix+5)
         or      a
         sbc     hl,de
-        ld      a,(ix+10)
-        ld      l,a
-        ld      a,(ix+11)
-        ld      h,a
-        ld      a,(ix+6)
-        ld      e,a
-        ld      a,(ix+7)
-        ld      d,a
+        ld      l,(ix+10)
+        ld      h,(ix+11)
+        ld      e,(ix+6)
+        ld      d,(ix+7)
         sbc     hl,de
         ; Signed less-than: S xor P/V
         ; jp pe = jump if parity/overflow set; jp m = jump if sign (negative)
@@ -4803,24 +4883,16 @@ __lks:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+8)
-        ld      l,a
-        ld      a,(ix+9)
-        ld      h,a
-        ld      a,(ix+4)
-        ld      e,a
-        ld      a,(ix+5)
-        ld      d,a
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      e,(ix+4)
+        ld      d,(ix+5)
         or      a
         sbc     hl,de
-        ld      a,(ix+10)
-        ld      l,a
-        ld      a,(ix+11)
-        ld      h,a
-        ld      a,(ix+6)
-        ld      e,a
-        ld      a,(ix+7)
-        ld      d,a
+        ld      l,(ix+10)
+        ld      h,(ix+11)
+        ld      e,(ix+6)
+        ld      d,(ix+7)
         sbc     hl,de
         ld      hl,1
         jp      pe,ges_ov
@@ -4842,24 +4914,16 @@ __lgs:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+4)
-        ld      l,a
-        ld      a,(ix+5)
-        ld      h,a
-        ld      a,(ix+8)
-        ld      e,a
-        ld      a,(ix+9)
-        ld      d,a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      e,(ix+8)
+        ld      d,(ix+9)
         or      a
         sbc     hl,de
-        ld      a,(ix+6)
-        ld      l,a
-        ld      a,(ix+7)
-        ld      h,a
-        ld      a,(ix+10)
-        ld      e,a
-        ld      a,(ix+11)
-        ld      d,a
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      e,(ix+10)
+        ld      d,(ix+11)
         sbc     hl,de
         ld      hl,0
         jp      pe,gts_ov
@@ -4881,24 +4945,16 @@ __les:
         push    ix
         ld      ix,0
         add     ix,sp
-        ld      a,(ix+4)
-        ld      l,a
-        ld      a,(ix+5)
-        ld      h,a
-        ld      a,(ix+8)
-        ld      e,a
-        ld      a,(ix+9)
-        ld      d,a
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      e,(ix+8)
+        ld      d,(ix+9)
         or      a
         sbc     hl,de
-        ld      a,(ix+6)
-        ld      l,a
-        ld      a,(ix+7)
-        ld      h,a
-        ld      a,(ix+10)
-        ld      e,a
-        ld      a,(ix+11)
-        ld      d,a
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      e,(ix+10)
+        ld      d,(ix+11)
         sbc     hl,de
         ld      hl,1
         jp      pe,les_ov
@@ -5008,8 +5064,7 @@ rl_have_ptr:
         or      l
         jr      nz,rl_alloc
         ld      hl,(__rl_old)
-        dec     hl              ; header flags byte
-        ld      (hl),1
+        call    __frcoal        ; free + coalesce, like _free
         ld      hl,0
         pop     ix
         ret
@@ -5053,8 +5108,7 @@ rl_count_ok:
 
 rl_free_old:
         ld      hl,(__rl_old)
-        dec     hl              ; header flags byte
-        ld      (hl),1
+        call    __frcoal        ; free + coalesce old block, like _free
         ld      hl,(__rl_new)
         pop     ix
         ret
@@ -5071,14 +5125,112 @@ _free:
         add     ix,sp
         ld      l,(ix+4)
         ld      h,(ix+5)        ; HL = ptr
-        ld      a,h
-        or      l
-        jr      z,fr_done       ; NULL: do nothing
-        dec     hl              ; HL = &header[2] flags byte
-        ld      (hl),1          ; mark free
-fr_done:
+        call    __frcoal        ; mark free + coalesce neighbours (handles NULL)
         pop     ix
         ret
+
+        public  __frcoal
+; Internal: HL = user pointer (may be NULL).  Marks the block free and merges
+; it with an immediately-preceding free block and any following free blocks.
+; Shared by _free and realloc so every free path keeps the heap coalesced;
+; malloc's first-fit walk does not itself merge adjacent free blocks.
+; Corrupts AF, BC, DE, HL.  Does not use IX.
+__frcoal:
+        ld      a,h
+        or      l
+        ret     z               ; NULL: do nothing
+        dec     hl              ; HL = &header[2] flags byte
+        ld      (hl),1          ; mark free
+        dec     hl
+        dec     hl              ; HL = header
+        ld      (__fr_hdr),hl
+
+        ; If the immediately preceding block is also free, use that as the
+        ; coalescing anchor so frees in either order merge adjacent blocks.
+        ld      hl,(__hbase)
+        ld      (__fr_scan),hl
+fr_prev:
+        ld      hl,(__fr_scan)
+        ld      de,(__fr_hdr)
+        or      a
+        sbc     hl,de           ; scan - current header
+        jr      z,fr_coal       ; scan reached current block
+        jr      nc,fr_coal      ; defensive: scan passed current block
+        ld      hl,(__fr_scan)
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)          ; DE = scan block user size
+        ld      hl,(__fr_scan)
+        ld      bc,HDRSIZE
+        add     hl,bc
+        add     hl,de           ; HL = block after scan
+        push    hl
+        ld      de,(__fr_hdr)
+        or      a
+        sbc     hl,de
+        pop     hl              ; HL = block after scan
+        jr      z,fr_prev_adj
+        jr      nc,fr_coal      ; defensive: next passed current block
+        ld      (__fr_scan),hl
+        jr      fr_prev
+
+fr_prev_adj:
+        ld      hl,(__fr_scan)
+        inc     hl
+        inc     hl
+        ld      a,(hl)          ; previous flags
+        or      a
+        jr      z,fr_coal       ; previous block is used
+        ld      hl,(__fr_scan)
+        ld      (__fr_hdr),hl   ; previous free block becomes the anchor
+
+fr_coal:
+        ; Merge any immediately following free blocks.  Never read a next
+        ; header unless next < __brk; next == __brk means this is the tail.
+        ld      hl,(__fr_hdr)
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)          ; DE = current user size
+        ld      hl,(__fr_hdr)
+        ld      bc,HDRSIZE
+        add     hl,bc
+        add     hl,de           ; HL = next block header
+        push    hl
+        ld      de,(__brk)
+        or      a
+        sbc     hl,de           ; carry iff next < __brk
+        pop     hl              ; HL = next block header
+        jr      nc,fr_done      ; next >= __brk: no following block
+
+        push    hl
+        inc     hl
+        inc     hl
+        ld      a,(hl)          ; next flags
+        pop     hl              ; HL = next block header
+        or      a
+        jr      z,fr_done       ; next block is used
+
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)          ; DE = next user size
+        ld      hl,(__fr_hdr)
+        ld      c,(hl)
+        inc     hl
+        ld      b,(hl)          ; BC = current user size
+        ld      hl,HDRSIZE
+        add     hl,de
+        add     hl,bc           ; HL = merged user size
+        ex      de,hl
+        ld      hl,(__fr_hdr)
+        ld      (hl),e
+        inc     hl
+        ld      (hl),d
+        jr      fr_coal
+fr_done:
+        ret
+
+__fr_hdr:       dw      0
+__fr_scan:      dw      0
 
         public  __mlh
 ; Internal: HL = requested size (0 treated as 1). Returns HL = ptr or 0.
@@ -5297,12 +5449,12 @@ __ldv_sign:     db      0
 ; Arg: c @ IX+4/5.  Return: HL = result.
         public  __ctu
 __ctu:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      a,l
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)          ; A = c low byte
+        inc     hl
+        ld      h,(hl)          ; H = c high byte
+        ld      l,a             ; HL = c (full int)
         cp      'a'             ; c < 'a' -> leave as-is
         jr      c,toup_done
         cp      'z'+1           ; c > 'z' -> leave as-is
@@ -5311,7 +5463,6 @@ __ctu:
         ld      l,a
         ld      h,0
 toup_done:
-        pop     ix
         ret
 
 ; ---- _isspace(int c) ----
@@ -5319,10 +5470,9 @@ toup_done:
 ; Recognises: SP HT LF VT FF CR.
         public  __csp
 __csp:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      a,(ix+4)
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)
         cp      ' '
         jr      z,issp_yes
         cp      09h             ; HT
@@ -5336,31 +5486,26 @@ __csp:
         cp      0dh             ; CR
         jr      z,issp_yes
         ld      hl,0
-        pop     ix
         ret
 issp_yes:
         ld      hl,1
-        pop     ix
         ret
 
 ; ---- _isdigit(int c) ----
 ; Returns HL=1 if '0'<=c<='9', HL=0 otherwise.
         public  __cdg
 __cdg:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      a,(ix+4)
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)
         cp      '0'
         jr      c,isdig_no
         cp      '9'+1
         jr      nc,isdig_no
         ld      hl,1
-        pop     ix
         ret
 isdig_no:
         ld      hl,0
-        pop     ix
         ret
 
 ; ---- ctype helpers with short external names for M80/L80 ----
@@ -5368,10 +5513,9 @@ isdig_no:
 
         public  __caa
 __caa:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      a,(ix+4)
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)
         cp      'A'
         jr      c,ialp_no
         cp      'Z'+1
@@ -5382,19 +5526,16 @@ __caa:
         jr      c,ialp_yes
 ialp_no:
         ld      hl,0
-        pop     ix
         ret
 ialp_yes:
         ld      hl,1
-        pop     ix
         ret
 
         public  __can
 __can:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      a,(ix+4)
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)
         cp      '0'
         jr      c,ialn_alpha
         cp      '9'+1
@@ -5410,55 +5551,46 @@ ialn_alpha:
         jr      c,ialn_yes
 ialn_no:
         ld      hl,0
-        pop     ix
         ret
 ialn_yes:
         ld      hl,1
-        pop     ix
         ret
 
         public  __cup
 __cup:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      a,(ix+4)
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)
         cp      'A'
         jr      c,isup_no
         cp      'Z'+1
         jr      nc,isup_no
         ld      hl,1
-        pop     ix
         ret
 isup_no:
         ld      hl,0
-        pop     ix
         ret
 
         public  __clo
 __clo:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      a,(ix+4)
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)
         cp      'a'
         jr      c,islo_no
         cp      'z'+1
         jr      nc,islo_no
         ld      hl,1
-        pop     ix
         ret
 islo_no:
         ld      hl,0
-        pop     ix
         ret
 
         public  __cxd
 __cxd:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      a,(ix+4)
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)
         cp      '0'
         jr      c,ixdg_alpha
         cp      '9'+1
@@ -5475,55 +5607,46 @@ ixdg_lower:
         jr      c,ixdg_yes
 ixdg_no:
         ld      hl,0
-        pop     ix
         ret
 ixdg_yes:
         ld      hl,1
-        pop     ix
         ret
 
         public  __cpr
 __cpr:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      a,(ix+4)
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)
         cp      20h
         jr      c,iprt_no
         cp      7fh
         jr      nc,iprt_no
         ld      hl,1
-        pop     ix
         ret
 iprt_no:
         ld      hl,0
-        pop     ix
         ret
 
         public  __cct
 __cct:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      a,(ix+4)
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)
         cp      20h
         jr      c,icnt_yes
         cp      7fh
         jr      z,icnt_yes
         ld      hl,0
-        pop     ix
         ret
 icnt_yes:
         ld      hl,1
-        pop     ix
         ret
 
         public  __cpu
 __cpu:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      a,(ix+4)
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)
         ; printable, not space, and not alnum
         cp      21h
         jr      c,ipnc_no
@@ -5543,21 +5666,19 @@ __cpu:
         jr      c,ipnc_no
 ipnc_yes:
         ld      hl,1
-        pop     ix
         ret
 ipnc_no:
         ld      hl,0
-        pop     ix
         ret
 
         public  __ctl
 __ctl:
-        push    ix
-        ld      ix,0
-        add     ix,sp
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      a,l
+        ld      hl,2
+        add     hl,sp
+        ld      a,(hl)          ; A = c low byte
+        inc     hl
+        ld      h,(hl)          ; H = c high byte
+        ld      l,a             ; HL = c (full int)
         cp      'A'
         jr      c,tolo_done
         cp      'Z'+1
@@ -5566,7 +5687,6 @@ __ctl:
         ld      l,a
         ld      h,0
 tolo_done:
-        pop     ix
         ret
 
 ; ---- _fgets(char *buf, int size, FILE *fp) ----
@@ -6288,16 +6408,731 @@ ferr_no:
         ret
 
 ; ============================================================
-; _scanf, _sscanf, _fscanf    stubs (return 0).
+; scanf family  (small non-floating C89 subset)
+;
+; Supports: whitespace/literal matching, %%, assignment suppression '*',
+; field widths, h/l length modifiers, and conversions:
+;   %d %i %u %x %X %o %c %s
+;
+; Deliberately not implemented here: floating input, scansets, %n, %p.
+; All three public entry points share __scan_run.  IX stays bound to the
+; public caller's frame so varargs can be read by byte offset, just like
+; the printf engine above.
 ; ============================================================
         public  _scanf
-        public  _sscanf
-        public  _fscanf
 _scanf:
-_sscanf:
-_fscanf:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        xor     a
+        inc     a
+        ld      (sc_kind),a             ; 1 = FILE/console source
         ld      hl,0
+        ld      (sc_fp),hl              ; stdin fd
+        ld      l,(ix+4)
+        ld      h,(ix+5)                ; format
+        ld      de,6                    ; first vararg offset
+        call    __scan_run
+        pop     ix
         ret
+
+        public  _sscanf
+_sscanf:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        xor     a
+        ld      (sc_kind),a             ; 0 = string source
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      (sc_src),hl
+        ld      l,(ix+6)
+        ld      h,(ix+7)                ; format
+        ld      de,8                    ; first vararg offset
+        call    __scan_run
+        pop     ix
+        ret
+
+        public  _fscanf
+_fscanf:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        xor     a
+        inc     a
+        ld      (sc_kind),a             ; 1 = FILE/console source
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      (sc_fp),hl
+        ld      l,(ix+6)
+        ld      h,(ix+7)                ; format
+        ld      de,8                    ; first vararg offset
+        call    __scan_run
+        pop     ix
+        ret
+
+__scan_run:
+        ld      (sc_fmt),hl
+        ld      (sc_argoff),de
+        ld      hl,0
+        ld      (sc_count),hl
+        ld      a,(sc_kind)
+        or      a
+        jr      nz,sc_init_file_pushback
+        xor     a
+        ld      (sc_ungot),a
+        jr      sc_init_done
+sc_init_file_pushback:
+        ld      a,(sc_ungot)
+        or      a
+        jr      z,sc_init_done
+        ld      a,(sc_ukind)
+        cp      1
+        jr      nz,sc_init_clear_pushback
+        ld      hl,(sc_ufp)
+        ld      de,(sc_fp)
+        or      a
+        sbc     hl,de
+        ld      a,h
+        or      l
+        jr      z,sc_init_done
+sc_init_clear_pushback:
+        xor     a
+        ld      (sc_ungot),a
+sc_init_done:
+
+sc_loop:
+        ld      hl,(sc_fmt)
+        ld      a,(hl)
+        or      a
+        jp      z,sc_done
+        inc     hl
+        ld      (sc_fmt),hl
+
+        call    sc_is_space
+        jp      c,sc_fmt_space
+
+        cp      '%'
+        jp      z,sc_percent
+
+        ld      b,a
+        call    sc_get
+        jp      c,sc_input_fail
+        cp      b
+        jp      z,sc_loop
+        call    sc_unget
+        jp      sc_match_fail
+
+sc_fmt_space:
+        ld      hl,(sc_fmt)
+sc_fmt_space_loop:
+        ld      a,(hl)
+        call    sc_is_space
+        jr      nc,sc_fmt_space_done
+        inc     hl
+        jr      sc_fmt_space_loop
+sc_fmt_space_done:
+        ld      (sc_fmt),hl
+        call    sc_skip_input_space
+        jp      sc_loop
+
+sc_percent:
+        ld      a,1
+        ld      (sc_assign),a
+        xor     a
+        ld      (sc_long),a
+        ld      hl,0ffffh
+        ld      (sc_width),hl
+
+        call    sc_fmt_get
+        or      a
+        jp      z,sc_done
+
+        cp      '%'
+        jp      z,sc_match_percent
+
+        cp      '*'
+        jr      nz,sc_width_start
+        xor     a
+        ld      (sc_assign),a
+        call    sc_fmt_get
+        or      a
+        jp      z,sc_done
+
+sc_width_start:
+        cp      '0'
+        jr      c,sc_length_start
+        cp      '9'+1
+        jr      nc,sc_length_start
+        ld      hl,0
+        ld      (sc_width),hl
+sc_width_loop:
+        sub     '0'
+        ld      (sc_digit),a
+        ld      hl,(sc_width)
+        add     hl,hl                   ; 2*w
+        ld      d,h
+        ld      e,l
+        add     hl,hl                   ; 4*w
+        add     hl,hl                   ; 8*w
+        add     hl,de                   ; 10*w
+        ld      a,(sc_digit)
+        ld      e,a
+        ld      d,0
+        add     hl,de
+        ld      (sc_width),hl
+        call    sc_fmt_get
+        cp      '0'
+        jr      c,sc_length_start
+        cp      '9'+1
+        jr      c,sc_width_loop
+
+sc_length_start:
+        cp      'h'
+        jr      nz,sc_check_long
+        call    sc_fmt_get              ; short == int on dcc
+        jr      sc_dispatch
+sc_check_long:
+        cp      'l'
+        jr      nz,sc_dispatch
+        ld      a,1
+        ld      (sc_long),a
+        call    sc_fmt_get
+
+sc_dispatch:
+        cp      'd'
+        jp      z,sc_conv_d
+        cp      'i'
+        jp      z,sc_conv_i
+        cp      'u'
+        jp      z,sc_conv_u
+        cp      'x'
+        jp      z,sc_conv_x
+        cp      'X'
+        jp      z,sc_conv_x
+        cp      'o'
+        jp      z,sc_conv_o
+        cp      'c'
+        jp      z,sc_conv_c
+        cp      's'
+        jp      z,sc_conv_s
+        jp      sc_match_fail
+
+sc_match_percent:
+        call    sc_get
+        jp      c,sc_input_fail
+        cp      '%'
+        jp      z,sc_loop
+        call    sc_unget
+        jp      sc_match_fail
+
+sc_conv_d:
+        ld      a,10
+        ld      (sc_base),a
+        xor     a
+        ld      (sc_auto),a
+        jp      sc_scan_number
+sc_conv_u:
+        ld      a,10
+        ld      (sc_base),a
+        xor     a
+        ld      (sc_auto),a
+        jp      sc_scan_number
+sc_conv_o:
+        ld      a,8
+        ld      (sc_base),a
+        xor     a
+        ld      (sc_auto),a
+        jp      sc_scan_number
+sc_conv_x:
+        ld      a,16
+        ld      (sc_base),a
+        xor     a
+        ld      (sc_auto),a
+        jp      sc_scan_number
+sc_conv_i:
+        ld      a,10
+        ld      (sc_base),a
+        ld      a,1
+        ld      (sc_auto),a
+        jp      sc_scan_number
+
+sc_conv_s:
+        call    sc_skip_input_space
+        jp      c,sc_input_fail
+        xor     a
+        ld      (sc_ndig),a
+        ld      a,(sc_assign)
+        or      a
+        jr      z,sc_s_loop
+        call    sc_next_arg
+        ld      (sc_dest),hl
+sc_s_loop:
+        call    sc_get_w
+        jr      c,sc_s_end_check
+        ld      (sc_ch),a
+        call    sc_is_space
+        jr      nc,sc_s_store
+        ld      a,(sc_ch)
+        call    sc_unget
+        jr      sc_s_end_check
+sc_s_store:
+        ld      a,(sc_assign)
+        or      a
+        jr      z,sc_s_count
+        ld      a,(sc_ch)
+        call    sc_store_char
+sc_s_count:
+        ld      a,(sc_ndig)
+        inc     a
+        ld      (sc_ndig),a
+        ld      hl,(sc_width)
+        ld      a,h
+        or      l
+        jr      nz,sc_s_loop
+sc_s_end_check:
+        ld      a,(sc_ndig)
+        or      a
+        jp      z,sc_input_fail
+        ld      a,(sc_assign)
+        or      a
+        jp      z,sc_loop
+        xor     a
+        call    sc_store_char
+        call    sc_inc_count
+        jp      sc_loop
+
+sc_conv_c:
+        ld      hl,(sc_width)
+        ld      a,h
+        cp      0ffh
+        jr      nz,sc_c_width_known
+        ld      a,l
+        cp      0ffh
+        jr      nz,sc_c_width_known
+        ld      hl,1
+        ld      (sc_width),hl
+sc_c_width_known:
+        xor     a
+        ld      (sc_ndig),a
+        ld      a,(sc_assign)
+        or      a
+        jr      z,sc_c_loop
+        call    sc_next_arg
+        ld      (sc_dest),hl
+sc_c_loop:
+        ld      hl,(sc_width)
+        ld      a,h
+        or      l
+        jr      z,sc_c_done
+        call    sc_get_w
+        jp      c,sc_input_fail
+        ld      (sc_ch),a
+        ld      a,(sc_assign)
+        or      a
+        jr      z,sc_c_count
+        ld      a,(sc_ch)
+        call    sc_store_char
+sc_c_count:
+        ld      a,(sc_ndig)
+        inc     a
+        ld      (sc_ndig),a
+        jr      sc_c_loop
+sc_c_done:
+        ld      a,(sc_assign)
+        or      a
+        jp      z,sc_loop
+        call    sc_inc_count
+        jp      sc_loop
+
+sc_scan_number:
+        call    sc_skip_input_space
+        jp      c,sc_input_fail
+        ld      hl,0
+        ld      (sc_val_l),hl
+        ld      (sc_val_h),hl
+        xor     a
+        ld      (sc_sign),a
+        ld      (sc_ndig),a
+
+        call    sc_get_w
+        jp      c,sc_input_fail
+        cp      '-'
+        jr      nz,sc_num_plus
+        ld      a,1
+        ld      (sc_sign),a
+        call    sc_get_w
+        jp      c,sc_match_fail
+        jr      sc_num_after_sign
+sc_num_plus:
+        cp      '+'
+        jr      nz,sc_num_after_sign
+        call    sc_get_w
+        jp      c,sc_match_fail
+
+sc_num_after_sign:
+        ld      b,a                     ; first candidate char
+        ld      a,(sc_auto)
+        or      a
+        jr      z,sc_num_not_auto
+        ld      a,b
+        cp      '0'
+        jr      nz,sc_num_auto_decimal
+        ld      a,8
+        ld      (sc_base),a
+        ld      hl,(sc_width)
+        ld      a,h
+        or      l
+        jr      z,sc_num_process_zero
+        call    sc_get_w
+        jr      c,sc_num_process_zero
+        cp      'x'
+        jr      z,sc_num_prefix_hex
+        cp      'X'
+        jr      z,sc_num_prefix_hex
+        call    sc_unget
+sc_num_process_zero:
+        ld      a,'0'
+        jr      sc_num_have_char
+sc_num_auto_decimal:
+        ld      a,10
+        ld      (sc_base),a
+        ld      a,b
+        jr      sc_num_have_char
+
+sc_num_not_auto:
+        ld      a,(sc_base)
+        cp      16
+        jr      nz,sc_num_use_b
+        ld      a,b
+        cp      '0'
+        jr      nz,sc_num_use_b
+        ld      hl,(sc_width)
+        ld      a,h
+        or      l
+        jr      z,sc_num_process_zero
+        call    sc_get_w
+        jr      c,sc_num_process_zero
+        cp      'x'
+        jr      z,sc_num_prefix_hex
+        cp      'X'
+        jr      z,sc_num_prefix_hex
+        call    sc_unget
+        ld      a,'0'
+        jr      sc_num_have_char
+sc_num_use_b:
+        ld      a,b
+        jr      sc_num_have_char
+
+sc_num_prefix_hex:
+        ld      a,16
+        ld      (sc_base),a
+        call    sc_get_w
+        jp      c,sc_match_fail
+
+sc_num_have_char:
+        ld      (sc_ch),a
+        call    sc_digit_value
+        jr      nc,sc_num_digit_ok
+        ld      a,(sc_ch)
+        call    sc_unget
+        jr      sc_num_end_check
+sc_num_digit_ok:
+        ld      (sc_digit),a
+        call    sc_muladd_digit
+        ld      a,(sc_ndig)
+        inc     a
+        ld      (sc_ndig),a
+        ld      hl,(sc_width)
+        ld      a,h
+        or      l
+        jr      z,sc_num_end_check
+        call    sc_get_w
+        jr      nc,sc_num_have_char
+
+sc_num_end_check:
+        ld      a,(sc_ndig)
+        or      a
+        jp      z,sc_match_fail
+        ld      a,(sc_sign)
+        or      a
+        call    nz,sc_neg_val
+        ld      a,(sc_assign)
+        or      a
+        jp      z,sc_loop
+        call    sc_next_arg
+        ld      (sc_dest),hl
+        ld      a,(sc_long)
+        or      a
+        jr      z,sc_store_num16
+        ld      hl,(sc_dest)
+        ld      de,(sc_val_l)
+        ld      (hl),e
+        inc     hl
+        ld      (hl),d
+        inc     hl
+        ld      de,(sc_val_h)
+        ld      (hl),e
+        inc     hl
+        ld      (hl),d
+        call    sc_inc_count
+        jp      sc_loop
+sc_store_num16:
+        ld      hl,(sc_dest)
+        ld      de,(sc_val_l)
+        ld      (hl),e
+        inc     hl
+        ld      (hl),d
+        call    sc_inc_count
+        jp      sc_loop
+
+sc_done:
+        ld      hl,(sc_count)
+        ret
+sc_match_fail:
+        ld      hl,(sc_count)
+        ret
+sc_input_fail:
+        ld      hl,(sc_count)
+        ld      a,h
+        or      l
+        ret     nz
+        ld      hl,0ffffh
+        ret
+
+sc_fmt_get:
+        ld      hl,(sc_fmt)
+        ld      a,(hl)
+        inc     hl
+        ld      (sc_fmt),hl
+        ret
+
+sc_get_w:
+        ld      hl,(sc_width)
+        ld      a,h
+        or      l
+        jr      z,sc_get_w_fail
+        dec     hl
+        ld      (sc_width),hl
+        call    sc_get
+        ret
+sc_get_w_fail:
+        scf
+        ret
+
+sc_get:
+        ld      a,(sc_ungot)
+        or      a
+        jr      z,sc_get_source
+        xor     a
+        ld      (sc_ungot),a
+        ld      a,(sc_unch)
+        or      a
+        ret
+sc_get_source:
+        ld      a,(sc_kind)
+        or      a
+        jr      nz,sc_get_file
+        ld      hl,(sc_src)
+        ld      a,(hl)
+        or      a
+        jr      z,sc_get_eof
+        inc     hl
+        ld      (sc_src),hl
+        or      a
+        ret
+sc_get_file:
+        ld      hl,(sc_fp)
+        push    hl
+        call    __getc
+        pop     bc
+        ld      a,h
+        cp      0ffh
+        jr      nz,sc_get_file_ok
+        ld      a,l
+        cp      0ffh
+        jr      z,sc_get_eof
+sc_get_file_ok:
+        ld      a,l
+        or      a
+        ret
+sc_get_eof:
+        scf
+        ret
+
+sc_unget:
+        ld      (sc_unch),a
+        ld      a,(sc_kind)
+        ld      (sc_ukind),a
+        or      a
+        jr      z,sc_unget_set
+        ld      hl,(sc_fp)
+        ld      (sc_ufp),hl
+sc_unget_set:
+        ld      a,1
+        ld      (sc_ungot),a
+        ret
+
+sc_skip_input_space:
+        call    sc_get
+        ret     c
+        call    sc_is_space
+        jr      c,sc_skip_input_space
+        call    sc_unget
+        or      a
+        ret
+
+sc_is_space:
+        cp      ' '
+        jr      z,sc_space_yes
+        cp      9
+        jr      z,sc_space_yes
+        cp      10
+        jr      z,sc_space_yes
+        cp      11
+        jr      z,sc_space_yes
+        cp      12
+        jr      z,sc_space_yes
+        cp      13
+        jr      z,sc_space_yes
+        or      a
+        ret
+sc_space_yes:
+        scf
+        ret
+
+sc_digit_value:
+        cp      '0'
+        jr      c,sc_digit_bad
+        cp      '9'+1
+        jr      c,sc_digit_dec
+        cp      'A'
+        jr      c,sc_digit_lower
+        cp      'F'+1
+        jr      c,sc_digit_upper
+sc_digit_lower:
+        cp      'a'
+        jr      c,sc_digit_bad
+        cp      'f'+1
+        jr      nc,sc_digit_bad
+        sub     'a'-10
+        jr      sc_digit_check_base
+sc_digit_upper:
+        sub     'A'-10
+        jr      sc_digit_check_base
+sc_digit_dec:
+        sub     '0'
+sc_digit_check_base:
+        ld      c,a
+        ld      a,(sc_base)
+        cp      c
+        jr      z,sc_digit_bad
+        jr      c,sc_digit_bad
+        ld      a,c
+        or      a
+        ret
+sc_digit_bad:
+        scf
+        ret
+
+sc_muladd_digit:
+        ld      hl,0
+        ld      (sc_tmp_l),hl
+        ld      (sc_tmp_h),hl
+        ld      a,(sc_base)
+        ld      b,a
+sc_muladd_loop:
+        ld      hl,(sc_tmp_l)
+        ld      de,(sc_val_l)
+        add     hl,de
+        ld      (sc_tmp_l),hl
+        ld      hl,(sc_tmp_h)
+        ld      de,(sc_val_h)
+        adc     hl,de
+        ld      (sc_tmp_h),hl
+        djnz    sc_muladd_loop
+        ld      hl,(sc_tmp_l)
+        ld      (sc_val_l),hl
+        ld      hl,(sc_tmp_h)
+        ld      (sc_val_h),hl
+        ld      hl,(sc_val_l)
+        ld      a,(sc_digit)
+        ld      e,a
+        ld      d,0
+        add     hl,de
+        ld      (sc_val_l),hl
+        ld      hl,(sc_val_h)
+        ld      de,0
+        adc     hl,de
+        ld      (sc_val_h),hl
+        ret
+
+sc_neg_val:
+        ld      de,(sc_val_l)
+        ld      hl,0
+        or      a
+        sbc     hl,de
+        ld      (sc_val_l),hl
+        ld      de,(sc_val_h)
+        ld      hl,0
+        sbc     hl,de
+        ld      (sc_val_h),hl
+        ret
+
+sc_next_arg:
+        ld      hl,(sc_argoff)
+        ld      e,l
+        ld      d,h
+        push    ix
+        pop     hl
+        add     hl,de
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)
+        ld      hl,(sc_argoff)
+        inc     hl
+        inc     hl
+        ld      (sc_argoff),hl
+        ex      de,hl
+        ret
+
+sc_store_char:
+        ld      hl,(sc_dest)
+        ld      (hl),a
+        inc     hl
+        ld      (sc_dest),hl
+        ret
+
+sc_inc_count:
+        ld      hl,(sc_count)
+        inc     hl
+        ld      (sc_count),hl
+        ret
+
+sc_kind:        db      0
+sc_ungot:       db      0
+sc_unch:        db      0
+sc_ukind:       db      0
+sc_assign:      db      0
+sc_long:        db      0
+sc_base:        db      10
+sc_auto:        db      0
+sc_sign:        db      0
+sc_ndig:        db      0
+sc_digit:       db      0
+sc_ch:          db      0
+sc_src:         dw      0
+sc_fp:          dw      0
+sc_ufp:         dw      0
+sc_fmt:         dw      0
+sc_argoff:      dw      0
+sc_count:       dw      0
+sc_width:       dw      0
+sc_dest:        dw      0
+sc_val_l:       dw      0
+sc_val_h:       dw      0
+sc_tmp_l:       dw      0
+sc_tmp_h:       dw      0
 
 ; ============================================================
 ; setjmp / longjmp  (C89)
@@ -7660,10 +8495,31 @@ FALGN:
         ; BEXP > AEXP: shift A mantissa right by (BEXP-AEXP), then set AEXP=BEXP
         cp      24
         jp      nc,FALGN_AABS   ; diff >= 24: A's contribution rounds to zero
-        ld      b,a             ; B = shift count
+        ld      b,a             ; B = shift count (1..23)
+FALGN_AB8:
+        ; FSRA is a truncating right shift, so 8 of them == moving each
+        ; mantissa byte down one position with a zero fill at the top.
+        ld      a,b
+        cp      8
+        jp      c,FALGN_ABIT    ; <8 remaining: bit-shift the rest
+        ld      a,(AM1)
+        ld      (AM0),a
+        ld      a,(AM2)
+        ld      (AM1),a
+        xor     a
+        ld      (AM2),a
+        ld      a,b
+        sub     8
+        ld      b,a
+        jp      FALGN_AB8
+FALGN_ABIT:
+        ld      a,b
+        or      a
+        jp      z,FALGN_ADONE   ; whole number of bytes: no residual bits
 FALGN_ASHR:
         call    FSRA
         djnz    FALGN_ASHR
+FALGN_ADONE:
         ld      a,(BEXP)
         ld      (AEXP),a        ; align AEXP up to BEXP
         jp      FASGN
@@ -7673,7 +8529,26 @@ FALGN_AGT:
         neg                     ; A = AEXP - BEXP (positive)
         cp      24
         jp      nc,FALGN_BABS   ; diff >= 24: B's contribution rounds to zero
-        ld      b,a             ; B = shift count
+        ld      b,a             ; B = shift count (1..23)
+FALGN_BB8:
+        ; same truncating byte-shift shortcut for the B mantissa.
+        ld      a,b
+        cp      8
+        jp      c,FALGN_BBIT    ; <8 remaining: bit-shift the rest
+        ld      a,(BM1)
+        ld      (BM0),a
+        ld      a,(BM2)
+        ld      (BM1),a
+        xor     a
+        ld      (BM2),a
+        ld      a,b
+        sub     8
+        ld      b,a
+        jp      FALGN_BB8
+FALGN_BBIT:
+        ld      a,b
+        or      a
+        jp      z,FASGN         ; whole number of bytes: no residual bits
 FALGN_BSHR:
         call    FSRB
         djnz    FALGN_BSHR
@@ -8981,6 +9856,24 @@ FMSLP:
         pop     bc
         pop     bc
         pop     bc
+        ; If the new iterate equals the previous g bit-for-bit, Newton's
+        ; method has reached a fixed point and every remaining iteration would
+        ; reproduce it, so stop early.  g is a positive finite float here
+        ; (never NaN), so a byte compare is a true value compare and the early
+        ; exit is bit-identical to running the full iteration count.
+        ld      a,l
+        cp      (ix-4)
+        jr      nz,FMSUPD
+        ld      a,h
+        cp      (ix-3)
+        jr      nz,FMSUPD
+        ld      a,e
+        cp      (ix-2)
+        jr      nz,FMSUPD
+        ld      a,d
+        cp      (ix-1)
+        jp      z,FMSDONE       ; converged: stored g already equals new g
+FMSUPD:
         ld      (ix-4),l
         ld      (ix-3),h
         ld      (ix-2),e

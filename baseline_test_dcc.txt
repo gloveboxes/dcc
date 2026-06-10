@@ -3064,10 +3064,10 @@ argv[ 2 ]: 'BB'
 argv[ 3 ]: 'CCC'
 argv[ 4 ]: 'DDDD'
 argv[ 5 ]: 'EEEEE'
-targs complted with great success
+targs completed with great success
 test tstdc
-__DATE__ Jun  7 2026
-__TIME__ 21:28:31
+__DATE__ Jun  9 2026
+__TIME__ 16:27:18
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3465,9 +3465,9 @@ first implementation...
   at          100 iterations: 1.202002
   at         1000 iterations: 1.202034
 second implementation...
-  at           10 iterations: 1.428571
-  at          100 iterations: 1.234568
-  at         1000 iterations: 1.201923
+  at           10 iterations: 1.666667
+  at          100 iterations: 1.190476
+  at         1000 iterations: 1.206273
 done
 test cpmenumd
 finding COM files
@@ -3819,3 +3819,47 @@ test tptrdiff
 tptrdiff completed with great success
 test tmulpow2
 tmul_index_pow2 ok
+test toffset
+toffset completed with great success
+test tc89fini
+tc89fini completed with great success
+test tmod3216
+tmod32_16 completed
+test tpromo2
+tpromo2 start
+PASS c >> 4 got -188
+PASS d >> 4 got 3125
+PASS f & a got -294967296
+PASS a + a got -20
+PASS b + a got 190
+PASS b * a got -2000
+PASS d * b got 38528
+PASS d | a got 65526
+PASS d ^ a got 15526
+PASS d << 2 got 3392
+PASS c / a got 300
+PASS e / d got 2
+PASS f + d got -294917296
+PASS f + e got -294843840
+PASS ~b got -201
+PASS (b * a) + c got -5000
+PASS +b got 200
+PASS -b got -200
+PASS ~a got 9
+PASS !a got 0
+PASS a < b got 1
+PASS d > c got 0
+PASS f > e got 1
+PASS e < f got 1
+PASS cond uint16/int8 got 50000
+PASS cond int8/uint32 got -294967296
+PASS assign int8 to uint8 got 246
+PASS assign uint8 to int8 got -56
+PASS u8 += 10 got 4
+PASS b << 1 got 400
+PASS a >> 1 got -5
+PASS b + 300 got 500
+PASS a & 0xff got 246
+tpromo2 completed with great success
+test tunaryp
+tunary_promote completed

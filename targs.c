@@ -9,7 +9,7 @@ int main( int argc, char * argv[] )
     for ( int i = 0; i < argc; i++ )
         printf( "argv[ %d ]: '%s'\n", i, argv[ i ] );
 
-    printf( "targs complted with great success\n" );
+    printf( "targs completed with great success\n" );
     return 0;
 } // main
 

@@ -8574,6 +8574,18 @@ static void emit_incdec_value_in_dehl(int type, int op)
 {
     int no_carry;
 
+    if (type_ptr_depth(type) > 0) {
+        int elem;
+        elem = type_index_elem_size(type);
+        if (op == TOK_INC) {
+            emit_add_const_to_hl(elem);
+        } else {
+            emit_ld_de_const(elem);
+            emit("\tor a\n\tsbc hl,de\n");
+        }
+        return;
+    }
+
     if (type_is_long(type)) {
         no_carry = new_label();
         if (op == TOK_INC) {

@@ -6952,6 +6952,191 @@ static int pass_recover_index_from_sbc(void)
     return changed;
 }
 
+
+
+static int peep_parse_ld_hl_paren_sym(const char *s, char *sym)
+{
+    char tmp[MAX_LINE];
+    const char *p;
+    int i;
+
+    strip_peep_comment_copy(tmp, s);
+    if (strncmp(tmp, "ld hl,(", 7) != 0)
+        return 0;
+    p = tmp + 7;
+    i = 0;
+    while (*p && *p != ')' && i < 120)
+        sym[i++] = *p++;
+    sym[i] = 0;
+    return i > 0 && *p == ')' && p[1] == 0;
+}
+
+static int peep_parse_ld_paren_sym_hl(const char *s, char *sym)
+{
+    char tmp[MAX_LINE];
+    const char *p;
+    int i;
+
+    strip_peep_comment_copy(tmp, s);
+    if (strncmp(tmp, "ld (", 4) != 0)
+        return 0;
+    p = tmp + 4;
+    i = 0;
+    while (*p && *p != ')' && i < 120)
+        sym[i++] = *p++;
+    sym[i] = 0;
+    return i > 0 && *p == ')' && p[1] == ',' &&
+           p[2] == 'h' && p[3] == 'l' && p[4] == 0;
+}
+
+static int peep_parse_ld_hl_symaddr(const char *s, char *sym)
+{
+    char tmp[MAX_LINE];
+    const char *p;
+    int i;
+
+    strip_peep_comment_copy(tmp, s);
+    if (strncmp(tmp, "ld hl,", 6) != 0)
+        return 0;
+    p = tmp + 6;
+    if (*p == '(' || *p == 0)
+        return 0;
+    i = 0;
+    while (*p && i < 120)
+        sym[i++] = *p++;
+    sym[i] = 0;
+    return i > 0;
+}
+
+/*
+ * Collapse DCC's generic code for *(p = p - 1), where p is an int * global.
+ * This is the hot pint popv() workaround shape.  The following dereference
+ * still sees HL equal to the updated pointer.
+ */
+static int pass_global_ptr_word_predec_load(void)
+{
+    int i;
+    int changed;
+    char sym1[128];
+    char sym2[128];
+    char line[192];
+
+    changed = 0;
+    for (i = 0; i + 8 < nlines; i++) {
+        if (!peep_parse_ld_hl_paren_sym(lines[i], sym1)) continue;
+        if (!eq(i + 1, "push hl")) continue;
+        if (!eq(i + 2, "ld hl,1")) continue;
+        if (!eq(i + 3, "add hl,hl")) continue;
+        if (!eq(i + 4, "ex de,hl")) continue;
+        if (!eq(i + 5, "pop hl")) continue;
+        if (!eq(i + 6, "or a")) continue;
+        if (!eq(i + 7, "sbc hl,de")) continue;
+        if (!peep_parse_ld_paren_sym_hl(lines[i + 8], sym2)) continue;
+        if (strcmp(sym1, sym2) != 0) continue;
+
+        sprintf(line, "ld hl,(%s)", sym1);
+        replace1_tagged(i, line, "global_ptr_word_predec_load");
+        replace1(i + 1, "dec hl");
+        replace1(i + 2, "dec hl");
+        sprintf(line, "ld (%s),hl", sym1);
+        replace1(i + 3, line);
+        delete_n(i + 4, 5);
+        changed = 1;
+        if (i > 0)
+            i--;
+    }
+
+    return changed;
+}
+
+/*
+ * Collapse the address/setup half of *p++ = value for an int * global.  The
+ * value-generating code remains between the final push hl and the later
+ * pop hl / store, so this is safe even when the RHS uses the stack.
+ */
+static int pass_global_ptr_word_postinc_store_setup(void)
+{
+    int i;
+    int changed;
+    char sym[128];
+    char line[192];
+
+    changed = 0;
+    for (i = 0; i + 14 < nlines; i++) {
+        if (!peep_parse_ld_hl_symaddr(lines[i], sym)) continue;
+        if (!eq(i + 1, "push hl")) continue;
+        if (!eq(i + 2, "ld e,(hl)")) continue;
+        if (!eq(i + 3, "inc hl")) continue;
+        if (!eq(i + 4, "ld d,(hl)")) continue;
+        if (!eq(i + 5, "ex de,hl")) continue;
+        if (!eq(i + 6, "push hl")) continue;
+        if (!eq(i + 7, "inc hl")) continue;
+        if (!eq(i + 8, "inc hl")) continue;
+        if (!eq(i + 9, "ex de,hl")) continue;
+        if (!eq(i + 10, "pop hl")) continue;
+        if (!eq(i + 11, "ex (sp),hl")) continue;
+        if (!eq(i + 12, "ld (hl),e")) continue;
+        if (!eq(i + 13, "inc hl")) continue;
+        if (!eq(i + 14, "ld (hl),d")) continue;
+
+        sprintf(line, "ld hl,(%s)", sym);
+        replace1_tagged(i, line, "global_ptr_word_postinc_setup");
+        replace1(i + 1, "push hl");
+        replace1(i + 2, "inc hl");
+        replace1(i + 3, "inc hl");
+        sprintf(line, "ld (%s),hl", sym);
+        replace1(i + 4, line);
+        delete_n(i + 5, 10);
+        changed = 1;
+        if (i > 0)
+            i--;
+    }
+
+    return changed;
+}
+
+/*
+ * pass_double_de_before_add:
+ *
+ * DCC often forms word-array addresses as:
+ *
+ *     ...             ; DE = index, HL/base saved on stack
+ *     ex de,hl
+ *     add hl,hl
+ *     ex de,hl
+ *     pop hl
+ *     add hl,de
+ *
+ * The three middle instructions only double DE while preserving HL for the
+ * following pop.  Replace them with a direct 16-bit shift of DE.  This helps
+ * pint's run() loop after loading in->a/in->b and using it as an int-array
+ * index, and is conservative because it only fires immediately before
+ * pop hl / add hl,de where the arithmetic flags from the doubling are dead.
+ */
+static int pass_double_de_before_add(void)
+{
+    int i;
+    int changed;
+
+    changed = 0;
+    for (i = 0; i + 4 < nlines; i++) {
+        if (!eq(i, "ex de,hl")) continue;
+        if (!eq(i + 1, "add hl,hl")) continue;
+        if (!eq(i + 2, "ex de,hl")) continue;
+        if (!eq(i + 3, "pop hl")) continue;
+        if (!eq(i + 4, "add hl,de")) continue;
+
+        replace1_tagged(i, "sla e", "double_de_before_add");
+        replace1(i + 1, "rl d");
+        delete_n(i + 2, 1);
+        changed = 1;
+        if (i > 0)
+            i--;
+    }
+
+    return changed;
+}
+
 /*
  * pass_ix_frame_ptr_load:
  *
@@ -8682,6 +8867,9 @@ int main(int argc, char **argv)
         if (pass_recover_index_from_sbc()) changed = 1;
         if (pass_ix_frame_ptr_load()) changed = 1;
         if (pass_ix_frame_ptr_load_deadd()) changed = 1;
+        if (pass_global_ptr_word_predec_load()) changed = 1;
+        if (pass_global_ptr_word_postinc_store_setup()) changed = 1;
+        if (pass_double_de_before_add()) changed = 1;
         if (pass_deref_byte_cmp()) changed = 1;
         if (pass_cpir()) changed = 1;
         if (pass_reg_bc_deref_byte_cmp()) changed = 1;

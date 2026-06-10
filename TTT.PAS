@@ -26,65 +26,6 @@ var
     evaluated: integer;
     board: boardType;
 
-procedure dumpBoard;
-var
-    i : integer;
-begin
-    Write( '{' );
-    for i := 0 to 8 do
-        Write( board[i] );
-    Write( '}' );
-end;
-
-function lookForWinner : integer;
-var
-    t, p : integer;
-begin
-    {dumpBoard;}
-    p := pieceBlank;
-    t := board[ 0 ];
-    if pieceBlank <> t then
-    begin
-        if ( ( ( t = board[1] ) and ( t = board[2] ) ) or
-             ( ( t = board[3] ) and ( t = board[6] ) ) ) then
-            p := t;
-    end;
-
-    if pieceBlank = p then
-    begin
-        t := board[1];
-        if ( t = board[4] ) and ( t = board[7] ) then
-            p := t
-        else
-        begin
-            t := board[2];
-            if ( t = board[5] ) and ( t = board[8] ) then
-                p := t
-            else
-            begin
-                t := board[3];
-                if ( t = board[4] ) and ( t = board[5] ) then
-                    p := t
-                else
-                begin
-                    t := board[6];
-                    if ( t = board[7] ) and ( t = board[8] ) then
-                        p := t
-                    else
-                    begin
-                      t := board[4];
-                      if ( ( ( t = board[0] ) and ( t = board[8] ) ) or
-                           ( ( t = board[2] ) and ( t = board[6] ) ) ) then
-                          p := t
-                    end;
-                end;
-            end;
-        end;
-    end;
-
-    lookForWinner := p;
-end;
-
 function winner2( move: integer ) : integer;
 var
     x : integer;
@@ -166,7 +107,6 @@ begin
     value := scoreInvalid;
     if depth >= 4 then
     begin
-        { p := lookForWinner; } { this is much slower }
         p := winner2( move );
         if p <> pieceBlank then
         begin

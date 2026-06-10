@@ -87,21 +87,19 @@ struct Proc {
     unsigned char ret_off;
     unsigned char isfunc;
     unsigned char pofs[MAXPARAM];
-};
-
-struct Frame {
-    unsigned char p;
-    int ret;
-    int loc[MAXLOC];
+    int filler_to_32;
 };
 
 static struct Ins *code;
 static struct Sym *sym;
 static struct Proc *proc;
-static struct Frame *fr;
+static int *fret;
+static int *floc;
+static int *flp;
 
 static int *gmem;
 static int *st;
+static int *stp;
 static char **strs;
 
 static int cp;
@@ -1095,8 +1093,8 @@ static void program(void)
 
 #if 1 /* 10% faster overall for most apps */
 
-    #define popv() (st[--sp])
-    #define pushv(v) do { st[sp++] = (v); } while(0)
+    #define popv() (*(stp = stp - 1))
+    #define pushv(v) do { *stp++ = (v); } while(0)
 
 #else
 
@@ -1129,11 +1127,11 @@ static void call_proc(int pi, int pc)
         exit(1);
     }
     fp++;
-    memset(fr[fp].loc, 0, sizeof(fr[fp].loc));
-    fr[fp].ret = pc;
+    flp += MAXLOC;
+    memset(flp, 0, sizeof(int) * MAXLOC);
+    fret[fp] = pc;
     for (i = proc[pi].nparam - 1; i >= 0; i--)
-        fr[fp].loc[proc[pi].pofs[i]] = popv();
-    fr[fp].p = pi;
+        flp[proc[pi].pofs[i]] = popv();
 }
 
 static void run(void)
@@ -1147,7 +1145,11 @@ static void run(void)
 
     pc = 0;
     fp = 0;
-    memset(fr, 0, sizeof(struct Frame) * MAXFRAME);
+    sp = 0;
+    stp = st;
+    flp = floc;
+    memset(fret, 0, sizeof(int) * MAXFRAME);
+    memset(floc, 0, sizeof(int) * MAXFRAME * MAXLOC);
     for (;;) {
         in = &code[pc++];
         switch (in->op) {
@@ -1163,10 +1165,10 @@ static void run(void)
             gmem[in->a] = popv();
             break;
         case OP_LDL:
-            pushv(fr[fp].loc[in->a]);
+            pushv(flp[in->a]);
             break;
         case OP_STL:
-            fr[fp].loc[in->a] = popv();
+            flp[in->a] = popv();
             break;
         case OP_LDGA:
             a = popv();
@@ -1179,12 +1181,12 @@ static void run(void)
             break;
         case OP_LDLA:
             a = popv();
-            pushv(fr[fp].loc[in->a + a]);
+            pushv(flp[in->a + a]);
             break;
         case OP_STLA:
             v = popv();
             a = popv();
-            fr[fp].loc[in->a + a] = v;
+            flp[in->a + a] = v;
             break;
         case OP_ADD:
             b = popv();
@@ -1293,8 +1295,9 @@ static void run(void)
             v = 0;
             if (proc[pi].isfunc)
                 v = popv();
-            pc = fr[fp].ret;
+            pc = fret[fp];
             fp--;
+            flp -= MAXLOC;
             if (proc[pi].isfunc)
                 pushv(v);
             break;
@@ -1351,9 +1354,11 @@ static void init_compile_storage(void)
 
 static void init_run_storage(void)
 {
-    fr = (struct Frame *)xcalloc(MAXFRAME, sizeof(struct Frame));
+    fret = (int *)xcalloc(MAXFRAME, sizeof(int));
+    floc = (int *)xcalloc(MAXFRAME * MAXLOC, sizeof(int));
     gmem = (int *)xcalloc(MAXMEM, sizeof(int));
     st = (int *)xcalloc(MAXSTACK, sizeof(int));
+    stp = st;
 }
 
 static void free_compile_storage(void)
@@ -1379,6 +1384,7 @@ static void print_stats(void)
     fprintf(stderr, "  VM stack cells limit:     %d\n", MAXSTACK);
     fprintf(stderr, "  VM call frames limit:     %d\n", MAXFRAME);
     fprintf(stderr, "  VM locals per frame:      %d\n", MAXLOC);
+    fprintf(stderr, "  VM local cells allocated: %d\n", MAXFRAME * MAXLOC);
 }
 
 static int load_file(const char *name)

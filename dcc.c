@@ -8397,7 +8397,7 @@ static void gen_primary(void)
             int op;
             op = tok.kind;
             next_token();
-            gen_post_update_from_addr(s->type, op);
+            gen_post_update_from_addr(val_type, op);
             return;
         }
 

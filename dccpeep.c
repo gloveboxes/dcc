@@ -375,6 +375,14 @@ static int try_fold_bool_branch(int i)
     if (i + 9 >= nlines)
         return 0;
 
+    /* Do not fold across an intervening label.  The single-branch form below
+     * overwrites i+1, and crc.c can produce a peephole-generated skip label
+     * there after small_const_eq has rewritten a 16-bit equality test.  If we
+     * remove that label, later M80 assembly sees an unresolved Lpeep_sceq_*
+     * target. */
+    if (starts_label(lines[i + 1]))
+        return 0;
+
     if (!eq(i + 2, "ld hl,0"))
         return 0;
     if (!is_uncond_jp(lines[i + 3]))

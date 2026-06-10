@@ -1,5 +1,5 @@
 /* pint.c - tiny Pascal subset compiler/interpreter for DCC/C89.
- * Supports enough Pascal for E.PAS, SIEVE.PAS and ttt.pas.
+ * Supports enough Pascal for E.PAS, SIEVE.PAS, TTT.PAS, and NQ1D.PAS.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -1091,23 +1091,32 @@ static void program(void)
         next();
 }
 
-static int popv(void)
-{
-    if (sp <= 0) {
-        fprintf(stderr, "stack underflow\n");
-        exit(1);
-    }
-    return st[--sp];
-}
+#if 1 // 10% faster overall for most apps
 
-static void pushv(int v)
-{
-    if (sp >= MAXSTACK) {
-        fprintf(stderr, "stack overflow\n");
-        exit(1);
+    #define popv() (st[--sp])
+    #define pushv(v) do { st[sp++] = (v); } while(0)
+
+#else
+
+    static int popv(void)
+    {
+        if (sp <= 0) {
+            fprintf(stderr, "stack underflow\n");
+            exit(1);
+        }
+        return st[--sp];
     }
-    st[sp++] = v;
-}
+    
+    static void pushv(int v)
+    {
+        if (sp >= MAXSTACK) {
+            fprintf(stderr, "stack overflow\n");
+            exit(1);
+        }
+        st[sp++] = v;
+    }
+
+#endif
 
 static void call_proc(int pi, int pc)
 {

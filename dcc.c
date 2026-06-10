@@ -15332,7 +15332,15 @@ static int scan_switch_cases_for_table(int *case_vals, int *case_labs,
     if (!ok || ncase < 3)
         return 0;
 
-    if ((maxv - minv) > 31)
+    /*
+     * Dense switches are important for bytecode interpreters such as
+     * pint.run().  The old limit rejected opcode dispatch ranges above
+     * 31, so OP_HALT..OP_ODD (0..34) fell back to a long compare chain.
+     * A 16-bit jump table costs two bytes per slot; allowing a larger
+     * dense range is still a good space/time tradeoff for interpreter
+     * dispatch and keeps sparse switches on the chain path below.
+     */
+    if ((maxv - minv) > 127)
         return 0;
 
     if ((maxv - minv + 1) > ncase * 2)
@@ -15629,6 +15637,7 @@ static void gen_switch(void)
 static void gen_do_while(void)
 {
     int ltop, lcont, lend;
+    int const_zero;
 
     ltop  = new_label();
     lcont = new_label();
@@ -15648,10 +15657,49 @@ static void gen_do_while(void)
     emit_label(lcont);
     expect(TOK_WHILE);
     expect('(');
-    if (!gen_condition_branch_true(ltop)) {
-        gen_expr();
-        emit_test_expr_nonzero(g_expr_type, ltop, 1);
+
+    /*
+     * The common macro wrapper
+     *
+     *     do { ... } while (0)
+     *
+     * should compile as one execution of the body.  Keep the loop labels so
+     * break and continue inside the body retain correct C semantics, but do
+     * not emit code to materialize/test constant zero or a dead back-edge.
+     */
+    const_zero = 0;
+    if (tok.kind == TOK_NUM && tok.val == 0) {
+        long save_posi;
+        long save_tok_start_pos;
+        int save_line_no;
+        int save_tok_line;
+        struct Token save_tok;
+
+        save_posi = posi;
+        save_tok_start_pos = tok_start_pos;
+        save_line_no = line_no;
+        save_tok_line = tok_line;
+        save_tok = tok;
+
+        next_token();
+        if (tok.kind == ')') {
+            const_zero = 1;
+        } else {
+            posi = save_posi;
+            tok_start_pos = save_tok_start_pos;
+            line_no = save_line_no;
+            tok_line = save_tok_line;
+            tok = save_tok;
+        }
     }
+
+    if (!const_zero) {
+        if (!gen_condition_branch_true(ltop)) {
+            gen_expr();
+            emit_test_expr_nonzero(g_expr_type, ltop, 1);
+        }
+    }
+
     expect(')');
     expect(';');
     emit_label(lend);

@@ -3067,7 +3067,7 @@ argv[ 5 ]: 'EEEEE'
 targs completed with great success
 test tstdc
 __DATE__ Jun 10 2026
-__TIME__ 09:09:09
+__TIME__ 10:09:07
 __FILE__ tstdc.c
 __LINE__ 8
 __STDC__ 1
@@ -3682,6 +3682,8 @@ tpostfld passed
 test pint
 moves evaluated: 6493
 iterations: 1
+test tswitch
+-1 -1 945
 test tpostut
 tpostut all tests passed
 test tbug2

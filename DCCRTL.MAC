@@ -702,8 +702,7 @@ sstr_ne2:
         ld      c,a
         ld      a,b
         cpl
-        ld      b,a
-        inc     bc              ; BC = strlen(haystack) + 1
+        ld      b,a             ; BC = strlen(haystack) + 1
         pop     de              ; DE = current haystack search pointer
         pop     hl              ; HL = needle
         ld      a,(hl)          ; A = needle[0]

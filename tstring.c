@@ -12,6 +12,7 @@ char zeroes[ 4096 ]; // will be put in bss and guaranteed to be 0 by C89 and lat
 int main( int argc, char * argv[] )
 {
     char alpha[27];
+    char *pmem;
     int loops, i, slen;
     int loop_count = ( argc > 1 ) ? atoi( argv[ 1 ] ) : 1;
 
@@ -110,6 +111,11 @@ int main( int argc, char * argv[] )
         }
 
         printf( "testing memcpy and memcmp\n" );
+        if ( memchr( ac, 'a', 0 ) )
+        {
+            printf( "memchr found data with zero length\n" );
+            exit( 1 );
+        }
         for ( i = 0; i < 1000; i++ )
         {
             int start = ( (unsigned int) rand() % 300 );
@@ -126,6 +132,25 @@ int main( int argc, char * argv[] )
             if ( memcmp( other + start, zeroes + start, len ) )
             {
                 printf( "zeroes not found in zero-filled memory, iteration %d, len %d, start %d, end %d\n", i, len, start, end );
+                exit( 1 );
+            }
+
+            other[ start + ( len / 2 ) ] = '!';
+            pmem = (char *) memchr( other + start, '!', len );
+            if ( pmem != other + start + ( len / 2 ) )
+            {
+                printf( "memchr found wrong offset, iteration %d, len %d, start %d, end %d\n", i, len, start, end );
+                exit( 1 );
+            }
+            other[ start + len - 1 ] = '?';
+            if ( memchr( other + start, '?', len - 1 ) )
+            {
+                printf( "memchr searched past count, iteration %d, len %d, start %d, end %d\n", i, len, start, end );
+                exit( 1 );
+            }
+            if ( memchr( other + start, '@', len ) )
+            {
+                printf( "memchr found missing byte, iteration %d, len %d, start %d, end %d\n", i, len, start, end );
                 exit( 1 );
             }
         }

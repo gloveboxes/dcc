@@ -815,19 +815,15 @@ __mchr:
         add     ix,sp
         ld      l,(ix+4)
         ld      h,(ix+5)
-        ld      e,(ix+6)
         ld      c,(ix+8)
         ld      b,(ix+9)
-mchr_loop:
         ld      a,b
         or      c
         jr      z,mchr_none
-        ld      a,(hl)
-        cp      e
-        jr      z,mchr_found
-        inc     hl
-        dec     bc
-        jr      mchr_loop
+        ld      a,(ix+6)
+        cpir
+        jr      nz,mchr_none
+        dec     hl              ; CPIR leaves HL one byte past the match
 mchr_found:
         pop     ix
         ret
@@ -2013,10 +2009,10 @@ qs_inner:
         ld      bc,(__qs_size)
 qs_swap:
         ld      a,(de)
-        push    af
+        ex      af,af'
         ld      a,(hl)
         ld      (de),a
-        pop     af
+        ex      af,af'
         ld      (hl),a
         inc     hl
         inc     de
@@ -3693,6 +3689,10 @@ _stderr:
 _stdin:
         dw      0
 
+        public  _errno
+_errno:
+        dw      0
+
         public  _open
         public  _read
         public  _write
@@ -3701,7 +3701,6 @@ _stdin:
         public  _lseek
         public  _fsync
         public  _fdatasync
-        public  _errno
 
 FIRSTFD  equ     3
 ; NFILES is the number of concurrently open real files (fd FIRSTFD..MAXFD-1).
@@ -3940,7 +3939,7 @@ rdzero:
 
 rdfile:
         call    __chkfd
-        jr      c,rdbad
+        jp      c,rdbad
         ld      l,(ix+6)
         ld      h,(ix+7)
         ld      (__rwbuf),hl
@@ -3956,8 +3955,31 @@ rdloop:
         or      l
         jr      z,rddone
         call    __setrr
+        call    __chunk
+
+        ; Full aligned records can be read directly into the caller buffer.
+        ld      a,(__remdr)
+        or      a
+        jr      nz,rd_dma
+        ld      a,(__chnk)
+        cp      128
+        jr      nz,rd_dma
+        ld      de,(__rwbuf)
+        ld      c,26            ; set DMA to caller buffer
+        call    5
+        ld      a,(__slot)
+        call    __fcbp
+        ex      de,hl
+        ld      c,33            ; random read
+        call    5
+        or      a
+        jr      nz,rddone       ; EOF/error returns short count
+        call    __advio
+        jr      rdloop
+
+rd_dma:
         call    __rdhit         ; is this record already resident in __dma?
-        jr      z,rd_have       ; cache hit: skip BDOS set-DMA + random read
+        jr      z,rd_copy       ; cache hit: skip BDOS set-DMA + random read
         ; Miss: the random read below overwrites __dma even when it fails with
         ; EOF/error, so invalidate the cache now and only re-validate on a
         ; successful read.  Otherwise a later read of the previously cached
@@ -3975,9 +3997,9 @@ rdloop:
         or      a
         jr      nz,rddone       ; EOF/error returns short count
         call    __rdsto         ; __dma now caches this (slot, record)
+        jr      rd_copy
 
-rd_have:
-        call    __chunk
+rd_copy:
         ; copy __chunk bytes from __dma+remainder to user buffer
         ld      a,(__remdr)
         ld      h,0
@@ -4031,18 +4053,32 @@ wrloop:
         ld      hl,(__rwrem)
         ld      a,h
         or      l
-        jr      z,wrdone
+        jp      z,wrdone
         call    __setrr
         call    __chunk
 
-        ; For partial records, read old data first. If it fails,
-        ; zero-fill the shared DMA buffer.
+        ; Full aligned records can be written directly from the caller buffer.
         ld      a,(__remdr)
         or      a
         jr      nz,wrrd
         ld      a,(__chnk)
         cp      128
-        jr      z,wrcopy
+        jr      nz,wrrd
+        ld      de,(__rwbuf)
+        ld      c,26            ; set DMA to caller buffer
+        call    5
+        ld      a,(__slot)
+        call    __fcbp
+        ex      de,hl
+        ld      c,34            ; random write
+        call    5
+        or      a
+        jp      nz,wrnospc
+        call    __advio
+        jr      wrloop
+
+        ; For partial records, read old data first. If it fails,
+        ; zero-fill the shared DMA buffer.
 wrrd:
         ld      de,__dma
         ld      c,26
@@ -4081,9 +4117,9 @@ wrcopy:
         ld      c,34            ; random write
         call    5
         or      a
-        jr      nz,wrnospc
+        jp      nz,wrnospc
         call    __advio
-        jr      wrloop
+        jp      wrloop
 
 wrdone:
         ld      hl,(__rwcnt)
@@ -4632,8 +4668,6 @@ __nospc:
         jr      __seter
 
 
-_errno:
-        dw      0
 __slot:
         db      0
 __chnk:
@@ -4762,89 +4796,69 @@ __rand_state:
 
         public  __lmul
 __lmul:
+        ; long __lmul(long a, long b) -> a*b (mod 2^32) in DE:HL.
+        ;
+        ; 32x32 -> 32 via partial products.  With X = Xhi:Xlo and Y = Yhi:Ylo,
+        ;   X*Y mod 2^32 = Xlo*Ylo + ((Xlo*Yhi + Xhi*Ylo) & 0xFFFF) << 16.
+        ; The base term Xlo*Ylo is a register-only 16x16->32 (no per-iteration
+        ; memory traffic, unlike the old shift/add-in-RAM loop); the two cross
+        ; terms only need the low 16 bits, so they reuse the tuned 16x16->16
+        ; __mulu.  Y = arg0 (ix+4/6), X = arg1 (ix+8/10).
         push    ix
         ld      ix,0
         add     ix,sp
         ld      l,(ix+8)
         ld      h,(ix+9)
-        ld      (__lm_lhs_l),hl
+        ld      (__lm_lhs_l),hl         ; Xlo
         ld      l,(ix+10)
         ld      h,(ix+11)
-        ld      (__lm_lhs_h),hl
+        ld      (__lm_lhs_h),hl         ; Xhi
         ld      l,(ix+4)
         ld      h,(ix+5)
-        ld      (__lm_rhs_l),hl
+        ld      (__lm_rhs_l),hl         ; Ylo
         ld      l,(ix+6)
         ld      h,(ix+7)
-        ld      (__lm_rhs_h),hl
-        ld      hl,0
-        ld      (__lm_res_l),hl
-        ld      (__lm_res_h),hl
-        ; Fast path: select iteration count based on operand width.
-        ; Both high words = 0 (16-bit): 16 iterations suffice.
-        ; Both low words also have high byte = 0 (8-bit): 8 iterations suffice.
-        ld      hl,(__lm_lhs_h)
-        ld      a,h
-        or      l
-        jp      nz,lmul_full32
-        ld      hl,(__lm_rhs_h)
-        ld      a,h
-        or      l
-        jp      nz,lmul_full32
-        ; Both operands fit in 16 bits.  Check if both fit in 8 bits.
-        ld      hl,(__lm_lhs_l)
-        ld      a,h             ; high byte of lhs low word
-        or      a
-        jp      nz,lmul_16bit
-        ld      hl,(__lm_rhs_l)
-        ld      a,h             ; high byte of rhs low word
-        or      a
-        jp      nz,lmul_16bit
-        ld      b,8             ; both 8-bit: 8 iterations suffice
-        jp      lmul_loop
-lmul_16bit:
-        ld      b,16
-        jp      lmul_loop
-lmul_full32:
-        ld      b,32
-lmul_loop:
-        push    bc
-        ld      hl,(__lm_rhs_l)
-        ld      a,l
-        and     1
-        jr      z,lmul_no_add
-        ld      hl,(__lm_res_l)
-        ld      de,(__lm_lhs_l)
-        or      a
-        add     hl,de
-        ld      (__lm_res_l),hl
-        ld      hl,(__lm_res_h)
-        ld      de,(__lm_lhs_h)
-        adc     hl,de
-        ld      (__lm_res_h),hl
-lmul_no_add:
-        ; LHS <<= 1
-        ld      hl,(__lm_lhs_l)
-        or      a
-        add     hl,hl
-        ld      (__lm_lhs_l),hl
-        ld      hl,(__lm_lhs_h)
-        adc     hl,hl
-        ld      (__lm_lhs_h),hl
-        ; RHS >>= 1 (logical)
-        ld      hl,(__lm_rhs_h)
-        or      a
-        srl     h
+        ld      (__lm_rhs_h),hl         ; Yhi
+
+        ; --- base = Xlo * Ylo, register-only 16x16 -> 32 -------------------
+        ; HL:DE is the 32-bit accumulator (HL high, DE low).  DE starts as the
+        ; multiplier Ylo and is consumed LSB-first; product bits shift down out
+        ; of HL into DE.  BC = constant multiplicand Xlo.  16 fixed iterations.
+        ld      de,(__lm_rhs_l)         ; DE = Ylo (multiplier / low accumulator)
+        ld      bc,(__lm_lhs_l)         ; BC = Xlo (multiplicand, constant)
+        ld      hl,0                    ; HL = high accumulator
+        ld      a,16
+lmul_b:
+        bit     0,e                     ; multiplier LSB (bit preserves carry)
+        jr      z,lmul_bn
+        add     hl,bc                   ; HL += Xlo; CF = carry out of bit 15
+        jr      lmul_bs
+lmul_bn:
+        or      a                       ; CF = 0 for a clean shift
+lmul_bs:
+        rr      h                       ; shift CF:HL:DE right by one (33-bit)
         rr      l
-        ld      (__lm_rhs_h),hl
-        ld      de,(__lm_rhs_l)
         rr      d
         rr      e
-        ld      (__lm_rhs_l),de
-        pop     bc
-        djnz    lmul_loop
-        ld      hl,(__lm_res_l)
-        ld      de,(__lm_res_h)
+        dec     a
+        jr      nz,lmul_b
+        ld      (__lm_res_l),de         ; result low = base low (final)
+        push    hl                      ; save base high
+
+        ; --- result high = base_high + low16(Xlo*Yhi) + low16(Xhi*Ylo) ------
+        ld      hl,(__lm_lhs_l)         ; Xlo
+        ld      de,(__lm_rhs_h)         ; Yhi
+        call    __mulu                  ; HL = low16(Xlo*Yhi), BC preserved
+        pop     de                      ; DE = base high
+        add     hl,de
+        push    hl                      ; save partial high
+        ld      hl,(__lm_lhs_h)         ; Xhi
+        ld      de,(__lm_rhs_l)         ; Ylo
+        call    __mulu                  ; HL = low16(Xhi*Ylo)
+        pop     de                      ; DE = partial high
+        add     hl,de                   ; HL = result high
+        ex      de,hl                   ; DE = result high
+        ld      hl,(__lm_res_l)         ; HL = result low
         ld      sp,ix
         pop     ix
         ret
@@ -5132,6 +5146,11 @@ ldivs_dvs_pos:
         ld      (__ldv_rem_h),hl
         ld      (__ldv_quo_l),hl
         ld      (__ldv_quo_h),hl
+        ; Fast path: divisor magnitude fits in 16 bits.
+        ld      hl,(__ldv_dvs_h)
+        ld      a,h
+        or      l
+        jp      z,ldivs_dvs16
         ld      b,32
 ldivs_loop:
         push    bc
@@ -5180,6 +5199,7 @@ ldivs_no_sub:
 ldivs_next:
         pop     bc
         djnz    ldivs_loop
+ldivs_apply_sign:
         ; Apply sign to quotient
         ld      a,(__ldv_sign)
         bit     7,a
@@ -5199,6 +5219,26 @@ ldivs_pos_result:
         ld      sp,ix
         pop     ix
         ret
+
+ldivs_dvs16:
+        ; 16-bit divisor magnitude fast path: build the 32-bit quotient of the
+        ; (already non-negative) dividend MSB-first using the shared ldqr_byte
+        ; step, then apply the result sign via the common tail.
+        ld      de,(__ldv_dvs_l)        ; DE = divisor
+        ld      hl,0                    ; HL = partial remainder
+        ld      a,(__ldv_dvd_h+1)       ; byte 3 (MSB)
+        call    ldqr_byte
+        ld      (__ldv_quo_h+1),a       ; quotient byte 3
+        ld      a,(__ldv_dvd_h)         ; byte 2
+        call    ldqr_byte
+        ld      (__ldv_quo_h),a         ; quotient byte 2
+        ld      a,(__ldv_dvd_l+1)       ; byte 1
+        call    ldqr_byte
+        ld      (__ldv_quo_l+1),a       ; quotient byte 1
+        ld      a,(__ldv_dvd_l)         ; byte 0 (LSB)
+        call    ldqr_byte
+        ld      (__ldv_quo_l),a         ; quotient byte 0
+        jp      ldivs_apply_sign
 
 ; __lmods: signed 32-bit modulo.  Returns DE:HL = LHS % RHS.
         public  __lms
@@ -5251,6 +5291,11 @@ lmods_dvs_pos:
         ld      hl,0
         ld      (__ldv_rem_l),hl
         ld      (__ldv_rem_h),hl
+        ; Fast path: divisor magnitude fits in 16 bits.
+        ld      hl,(__ldv_dvs_h)
+        ld      a,h
+        or      l
+        jp      z,lmods_dvs16
         ld      b,32
 lmods_loop:
         push    bc
@@ -5282,6 +5327,7 @@ lmods_loop:
 lmods_no_sub:
         pop     bc
         djnz    lmods_loop
+lmods_apply_sign:
         ; Apply sign to remainder
         ld      a,(__ldv_sign)
         bit     7,a
@@ -5301,6 +5347,26 @@ lmods_pos_result:
         ld      sp,ix
         pop     ix
         ret
+
+lmods_dvs16:
+        ; 16-bit divisor magnitude fast path: compute the remainder of the
+        ; (already non-negative) dividend MSB-first using the shared ldqr_byte
+        ; step (quotient bytes in A are discarded), then apply the dividend
+        ; sign via the common tail.  Remainder < divisor so its high word is 0.
+        ld      de,(__ldv_dvs_l)        ; DE = divisor
+        ld      hl,0                    ; HL = partial remainder
+        ld      a,(__ldv_dvd_h+1)       ; byte 3 (MSB)
+        call    ldqr_byte
+        ld      a,(__ldv_dvd_h)         ; byte 2
+        call    ldqr_byte
+        ld      a,(__ldv_dvd_l+1)       ; byte 1
+        call    ldqr_byte
+        ld      a,(__ldv_dvd_l)         ; byte 0 (LSB)
+        call    ldqr_byte
+        ld      (__ldv_rem_l),hl        ; remainder low word
+        ld      hl,0
+        ld      (__ldv_rem_h),hl        ; remainder high word = 0
+        jp      lmods_apply_sign
 
 ; ---- 32-bit comparison functions ----
 ; Each returns HL=1 (true) or HL=0 (false).
@@ -5330,7 +5396,6 @@ __ltu:
         jr      nc,ltu_done
         inc     l
 ltu_done:
-        ld      sp,ix
         pop     ix
         ret
 
@@ -5356,7 +5421,6 @@ __leu:
         jr      nc,leu_done ; RHS >= LHS, so LHS <= RHS: return 1
         ld      l,0
 leu_done:
-        ld      sp,ix
         pop     ix
         ret
 
@@ -5381,7 +5445,6 @@ __lgu:
         jr      nc,gtu_done
         inc     l
 gtu_done:
-        ld      sp,ix
         pop     ix
         ret
 
@@ -5406,7 +5469,6 @@ __lku:
         jr      nc,geu_done
         ld      l,0
 geu_done:
-        ld      sp,ix
         pop     ix
         ret
 
@@ -5451,7 +5513,6 @@ lts_ov:
 lts_true:
         inc     l
 lts_done:
-        ld      sp,ix
         pop     ix
         ret
 
@@ -5482,7 +5543,6 @@ ges_ov:
 ges_false:
         ld      l,0
 ges_done:
-        ld      sp,ix
         pop     ix
         ret
 
@@ -5513,7 +5573,6 @@ gts_ov:
 gts_true:
         inc     l
 gts_done:
-        ld      sp,ix
         pop     ix
         ret
 
@@ -5544,7 +5603,6 @@ les_ov:
 les_false:
         ld      l,0
 les_done:
-        ld      sp,ix
         pop     ix
         ret
 
@@ -8118,6 +8176,13 @@ _drd:
         or      a
         jr      nz,__drcur
 
+        ; A read()/write() since opendir may have repointed the BDOS DMA at a
+        ; caller buffer (the direct-DMA file I/O path does this), so search-next
+        ; would fill that buffer instead of __drdma.  Restore our directory DMA.
+        ld      c,26
+        ld      de,__drdma
+        call    5
+
         ld      c,18
         ld      de,__drfcb
         call    5
@@ -8544,69 +8609,12 @@ __flt:
         jp      __flt0
 
 __flt_slow:
-        ; NaN => false
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      e,(ix+6)
-        ld      d,(ix+7)
-        call    __fnan
-        ld      a,h
-        or      l
-        jp      nz,__flt0
-        ld      l,(ix+8)
-        ld      h,(ix+9)
-        ld      e,(ix+10)
-        ld      d,(ix+11)
-        call    __fnan
-        ld      a,h
-        or      l
-        jp      nz,__flt0
-
-        ; both zero => false
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      e,(ix+6)
-        ld      d,(ix+7)
-        call    __fzro
-        push    hl
-        ld      l,(ix+8)
-        ld      h,(ix+9)
-        ld      e,(ix+10)
-        ld      d,(ix+11)
-        call    __fzro
-        pop     de
-        ld      a,d
-        or      e
-        jp      z,__flt_sign
-        ld      a,h
-        or      l
-        jp      nz,__flt0
-
-__flt_sign:
-        ; different signs: negative < positive
-        ld      a,(ix+7)
-        xor     (ix+11)
-        and     80h
-        jp      z,__flt_same
-        ld      a,(ix+7)
-        bit     7,a
-        jp      nz,__flt1
+        ; cold path: classify once with the shared ordered comparator.
+        ; __fcmps returns A = 0 unordered, 1 a<b, 2 a==b, 3 a>b.
+        call    __fcmps
+        cp      1
+        jp      z,__flt1        ; a < b
         jp      __flt0
-
-__flt_same:
-        ld      a,(ix+7)
-        bit     7,a
-        jp      nz,__flt_neg
-        ; positive: raw a < raw b
-        call    __frlt
-        jp      __flt_ret
-__flt_neg:
-        ; negative: raw a > raw b
-        call    __frgt
-__flt_ret:
-        ld      sp,ix
-        pop     ix
-        ret
 __flt1:
         ld      hl,1
         ld      sp,ix
@@ -8658,68 +8666,11 @@ __fgt:
         jp      __fgt0
 
 __fgt_slow:
-        ; NaN => false
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      e,(ix+6)
-        ld      d,(ix+7)
-        call    __fnan
-        ld      a,h
-        or      l
-        jp      nz,__fgt0
-        ld      l,(ix+8)
-        ld      h,(ix+9)
-        ld      e,(ix+10)
-        ld      d,(ix+11)
-        call    __fnan
-        ld      a,h
-        or      l
-        jp      nz,__fgt0
-
-        ; both zero => false
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      e,(ix+6)
-        ld      d,(ix+7)
-        call    __fzro
-        push    hl
-        ld      l,(ix+8)
-        ld      h,(ix+9)
-        ld      e,(ix+10)
-        ld      d,(ix+11)
-        call    __fzro
-        pop     de
-        ld      a,d
-        or      e
-        jp      z,__fgt_sign
-        ld      a,h
-        or      l
-        jp      nz,__fgt0
-
-__fgt_sign:
-        ld      a,(ix+7)
-        xor     (ix+11)
-        and     80h
-        jp      z,__fgt_same
-        ld      a,(ix+7)
-        bit     7,a
-        jp      nz,__fgt0
-        jp      __fgt1
-
-__fgt_same:
-        ld      a,(ix+7)
-        bit     7,a
-        jp      nz,__fgt_neg
-        ; positive: raw a > raw b
-        call    __frgt
-        jp      __fgt_ret
-__fgt_neg:
-        ; negative: raw a < raw b
-        call    __frlt
-__fgt_ret:
-        ld      sp,ix
-        pop     ix
-        ret
+        ; cold path: a > b is true only for the greater classification.
+        call    __fcmps
+        cp      3
+        jp      z,__fgt1        ; a > b
+        jp      __fgt0
 __fgt1:
         ld      hl,1
         ld      sp,ix
@@ -8772,85 +8723,13 @@ __fle:
         jp      __fle1          ; equal => a <= b
 
 __fle_slow:
-        ; NaN => false
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      e,(ix+6)
-        ld      d,(ix+7)
-        call    __fnan
-        ld      a,h
-        or      l
-        jp      nz,__fle0
-        ld      l,(ix+8)
-        ld      h,(ix+9)
-        ld      e,(ix+10)
-        ld      d,(ix+11)
-        call    __fnan
-        ld      a,h
-        or      l
-        jp      nz,__fle0
-
-        ; equality, including +/-0, is true
-        push    ix
-        pop     hl
-        ld      de,4
-        add     hl,de
-        ; Reuse raw compare directly; both-zero is also handled here below.
-        ld      a,(ix+4)
-        cp      (ix+8)
-        jp      nz,__fle_lt
-        ld      a,(ix+5)
-        cp      (ix+9)
-        jp      nz,__fle_lt
-        ld      a,(ix+6)
-        cp      (ix+10)
-        jp      nz,__fle_lt
-        ld      a,(ix+7)
-        cp      (ix+11)
-        jp      z,__fle1
-
-        ; raw differs; +/-0 still equal
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      e,(ix+6)
-        ld      d,(ix+7)
-        call    __fzro
-        push    hl
-        ld      l,(ix+8)
-        ld      h,(ix+9)
-        ld      e,(ix+10)
-        ld      d,(ix+11)
-        call    __fzro
-        pop     de
-        ld      a,d
-        or      e
-        jp      z,__fle_lt
-        ld      a,h
-        or      l
-        jp      nz,__fle1
-
-__fle_lt:
-        ; otherwise same as a < b
-        ld      a,(ix+7)
-        xor     (ix+11)
-        and     80h
-        jp      z,__fle_same
-        ld      a,(ix+7)
-        bit     7,a
-        jp      nz,__fle1
-        jp      __fle0
-__fle_same:
-        ld      a,(ix+7)
-        bit     7,a
-        jp      nz,__fle_neg
-        call    __frlt
-        jp      __fle_ret
-__fle_neg:
-        call    __frgt
-__fle_ret:
-        ld      sp,ix
-        pop     ix
-        ret
+        ; cold path: a <= b is true for less or equal, false if unordered.
+        call    __fcmps
+        or      a
+        jp      z,__fle0        ; unordered
+        cp      3
+        jp      z,__fle0        ; greater
+        jp      __fle1          ; less or equal
 __fle1:
         ld      hl,1
         ld      sp,ix
@@ -8902,79 +8781,11 @@ __fge:
         jp      __fge1          ; equal or a_byte >= b_byte => a >= b
 
 __fge_slow:
-        ; NaN => false
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      e,(ix+6)
-        ld      d,(ix+7)
-        call    __fnan
-        ld      a,h
-        or      l
-        jp      nz,__fge0
-        ld      l,(ix+8)
-        ld      h,(ix+9)
-        ld      e,(ix+10)
-        ld      d,(ix+11)
-        call    __fnan
-        ld      a,h
-        or      l
-        jp      nz,__fge0
-
-        ; equality, including +/-0, is true
-        ld      a,(ix+4)
-        cp      (ix+8)
-        jp      nz,__fge_gt
-        ld      a,(ix+5)
-        cp      (ix+9)
-        jp      nz,__fge_gt
-        ld      a,(ix+6)
-        cp      (ix+10)
-        jp      nz,__fge_gt
-        ld      a,(ix+7)
-        cp      (ix+11)
-        jp      z,__fge1
-
-        ld      l,(ix+4)
-        ld      h,(ix+5)
-        ld      e,(ix+6)
-        ld      d,(ix+7)
-        call    __fzro
-        push    hl
-        ld      l,(ix+8)
-        ld      h,(ix+9)
-        ld      e,(ix+10)
-        ld      d,(ix+11)
-        call    __fzro
-        pop     de
-        ld      a,d
-        or      e
-        jp      z,__fge_gt
-        ld      a,h
-        or      l
-        jp      nz,__fge1
-
-__fge_gt:
-        ; otherwise same as a > b
-        ld      a,(ix+7)
-        xor     (ix+11)
-        and     80h
-        jp      z,__fge_same
-        ld      a,(ix+7)
-        bit     7,a
-        jp      nz,__fge0
-        jp      __fge1
-__fge_same:
-        ld      a,(ix+7)
-        bit     7,a
-        jp      nz,__fge_neg
-        call    __frgt
-        jp      __fge_ret
-__fge_neg:
-        call    __frlt
-__fge_ret:
-        ld      sp,ix
-        pop     ix
-        ret
+        ; cold path: a >= b is true for greater or equal, false if unordered.
+        call    __fcmps
+        cp      2
+        jp      nc,__fge1       ; equal or greater
+        jp      __fge0          ; unordered or less
 __fge1:
         ld      hl,1
         ld      sp,ix
@@ -8986,51 +8797,112 @@ __fge0:
         pop     ix
         ret
 
-; Raw unsigned compare helpers for the two stack operands.
-; __frlt returns a_raw < b_raw.  __frgt returns a_raw > b_raw.
-; These helpers assume IX points at the current comparison frame.
+; ---------------------------------------------------------------------------
+; Shared ordered float comparator.  Classifies a@IX+4 vs b@IX+8 once; the
+; individual __flt/__fgt/__fle/__fge cold paths map the result to a boolean.
+; Returns A = 0 unordered (either NaN), 1 a<b, 2 a==b (incl +0==-0), 3 a>b.
+; Assumes the caller's IX frame is live; preserves IX.
+; ---------------------------------------------------------------------------
+__fcmps:
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      e,(ix+6)
+        ld      d,(ix+7)
+        call    __fnan
+        ld      a,h
+        or      l
+        jp      nz,__fcun       ; a is NaN -> unordered
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      e,(ix+10)
+        ld      d,(ix+11)
+        call    __fnan
+        ld      a,h
+        or      l
+        jp      nz,__fcun       ; b is NaN -> unordered
+        ; zero handling: +0 and -0 are equal to each other
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      e,(ix+6)
+        ld      d,(ix+7)
+        call    __fzro
+        push    hl
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      e,(ix+10)
+        ld      d,(ix+11)
+        call    __fzro          ; HL = (b == 0)
+        pop     de              ; DE = (a == 0)
+        ld      a,d
+        or      e
+        jp      z,__fcsg        ; a != 0 -> compare by sign/magnitude
+        ld      a,h
+        or      l
+        jp      nz,__fceq       ; a == 0 and b == 0 -> equal
+        ; a == 0, b != 0: fall through to sign/magnitude compare
+__fcsg:
+        ld      a,(ix+7)
+        xor     (ix+11)
+        and     80h
+        jp      z,__fcsm        ; same sign
+        ; different signs: the negative operand is the smaller
+        ld      a,(ix+7)
+        bit     7,a
+        jp      nz,__fclt       ; a negative -> a < b
+        jp      __fcgt          ; a positive, b negative -> a > b
+__fcsm:
+        ld      a,(ix+7)
+        bit     7,a
+        jp      nz,__fcsn
+        ; both positive: raw magnitude order matches numeric order
+        jp      __frcmp         ; tail: A = 1/2/3 maps to less/equal/greater
+__fcsn:
+        ; both negative: raw magnitude order is reversed
+        call    __frcmp
+        cp      1
+        jp      z,__fcgt        ; a_raw < b_raw -> a > b
+        cp      3
+        jp      z,__fclt        ; a_raw > b_raw -> a < b
+        ret                     ; equal stays equal (A = 2)
+__fcun:
+        xor     a               ; 0 = unordered
+        ret
+__fclt:
+        ld      a,1
+        ret
+__fceq:
+        ld      a,2
+        ret
+__fcgt:
+        ld      a,3
+        ret
 
-__frlt:
+; Raw unsigned 3-way magnitude compare of a@IX+4 vs b@IX+8.
+; Returns A = 1 (a_raw < b_raw), 2 (a_raw == b_raw), 3 (a_raw > b_raw).
+__frcmp:
         ld      a,(ix+7)
         cp      (ix+11)
-        jp      c,__frt1
-        jp      nz,__frt0
+        jp      c,__frcl
+        jp      nz,__frcg
         ld      a,(ix+6)
         cp      (ix+10)
-        jp      c,__frt1
-        jp      nz,__frt0
+        jp      c,__frcl
+        jp      nz,__frcg
         ld      a,(ix+5)
         cp      (ix+9)
-        jp      c,__frt1
-        jp      nz,__frt0
+        jp      c,__frcl
+        jp      nz,__frcg
         ld      a,(ix+4)
         cp      (ix+8)
-        jp      c,__frt1
-        jp      __frt0
-
-__frgt:
-        ld      a,(ix+11)
-        cp      (ix+7)
-        jp      c,__frt1
-        jp      nz,__frt0
-        ld      a,(ix+10)
-        cp      (ix+6)
-        jp      c,__frt1
-        jp      nz,__frt0
-        ld      a,(ix+9)
-        cp      (ix+5)
-        jp      c,__frt1
-        jp      nz,__frt0
-        ld      a,(ix+8)
-        cp      (ix+4)
-        jp      c,__frt1
-        jp      __frt0
-
-__frt1:
-        ld      hl,1
+        jp      c,__frcl
+        jp      nz,__frcg
+        ld      a,2
         ret
-__frt0:
-        ld      hl,0
+__frcl:
+        ld      a,1
+        ret
+__frcg:
+        ld      a,3
         ret
 
 
@@ -10595,17 +10467,8 @@ FMSLP:
         pop     bc
         pop     bc
         pop     bc
-        push    de
-        push    hl
-        ld      hl,0
-        ld      de,16128          ; 0.5f = 3f000000, high word 3f00h
-        push    de
-        push    hl
-        call    __fmul
-        pop     bc
-        pop     bc
-        pop     bc
-        pop     bc
+        ld      b,0ffh            ; exact * 2^-1, replacing full multiply by 0.5f
+        call    __fscale_pow2
         ; If the new iterate equals the previous g bit-for-bit, Newton's
         ; method has reached a fixed point and every remaining iteration would
         ; reproduce it, so stop early.  g is a positive finite float here

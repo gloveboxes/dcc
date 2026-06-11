@@ -639,6 +639,10 @@ static void add_refs_from_line(const char *line)
         if (q) {
             q++;
             q = skipws(q);
+            /* ld hl,(sym) / ld a,(sym) loads from memory at sym: the symbol
+             * is a reference even though it is wrapped in parentheses. */
+            if (*q == '(')
+                q++;
             if (parse_ident_token(&q, sym))
                 add_root(sym);
         }

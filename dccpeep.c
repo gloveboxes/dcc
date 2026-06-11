@@ -1794,6 +1794,34 @@ static int peep_parse_ld_h_ix(const char *s, char *off)
 
 
 
+static int peep_parse_ld_e_ix(const char *s, char *off)
+{
+    char tmp[MAX_LINE];
+    const char *p;
+    int i;
+    strip_peep_comment_copy(tmp, s);
+    if (strncmp(tmp, "ld e,(ix", 8) != 0) return 0;
+    p = tmp + 8; i = 0;
+    while (*p && *p != ')' && i < 31) off[i++] = *p++;
+    off[i] = 0;
+    if (*p != ')' || p[1] != 0) return 0;
+    return i > 0;
+}
+
+static int peep_parse_ld_d_ix(const char *s, char *off)
+{
+    char tmp[MAX_LINE];
+    const char *p;
+    int i;
+    strip_peep_comment_copy(tmp, s);
+    if (strncmp(tmp, "ld d,(ix", 8) != 0) return 0;
+    p = tmp + 8; i = 0;
+    while (*p && *p != ')' && i < 31) off[i++] = *p++;
+    off[i] = 0;
+    if (*p != ')' || p[1] != 0) return 0;
+    return i > 0;
+}
+
 static int peep_parse_ld_ix_pair(const char *s1, const char *s2, int *off)
 {
     char loff[32];
@@ -3567,6 +3595,149 @@ static int pass_zeroext_byte_cmp_const(void)
         }
     }
 
+    return changed;
+}
+
+/*
+ * When a zero-extended byte value is compared to a small constant (0..255),
+ * DCC emits a push/sbc/pop sequence to preserve HL across the compare:
+ *
+ *   ld h,0
+ *   push hl           ; save HL (byte in L)
+ *   ld de,N           ; 0 <= N <= 255
+ *   or a
+ *   sbc hl,de         ; set Z/C flags, destroys HL
+ *   pop hl            ; restore byte in HL
+ *
+ * Because H=0 and D=0, the 16-bit sbc produces the same Z and C flags as
+ * an 8-bit cp on L.  We can use ld a,l; cp N directly and skip the
+ * push/sbc/pop entirely, leaving HL untouched.
+ */
+static int pass_byte_cmp_push_pop_hl(void)
+{
+    int i, imm, changed = 0;
+    char cp_line[32];
+
+    for (i = 0; i + 5 < nlines; i++) {
+        if (!eq(i, "ld h,0")) continue;
+        if (!eq(i + 1, "push hl")) continue;
+        if (!peep_parse_ld_de_0_to_255(lines[i + 2], &imm)) continue;
+        if (!eq(i + 3, "or a")) continue;
+        if (!eq(i + 4, "sbc hl,de")) continue;
+        if (!eq(i + 5, "pop hl")) continue;
+
+        replace1_tagged(i + 1, "ld a,l", "byte_cmp_push_pop_hl");
+        if (imm == 0)
+            replace1(i + 2, "or a");
+        else {
+            sprintf(cp_line, "cp %d", imm);
+            replace1(i + 2, cp_line);
+        }
+        delete_n(i + 3, 3);
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+
+    return changed;
+}
+
+/*
+ * Binary operations (ADD, SUB, CMP, etc.) load the second operand via:
+ *
+ *   push hl             ; save HL (first operand 'a')
+ *   ld l,(ix+N)         ; load second operand 'b' low
+ *   ld h,(ix+N+1)       ; load second operand 'b' high
+ *   ex de,hl            ; HL = old DE (stale), DE = b
+ *   pop hl              ; HL = a (restored)
+ *
+ * DE is always dead before the push (it held a consumed frame pointer),
+ * so we can load b directly into DE without touching the stack:
+ *
+ *   ld e,(ix+N)
+ *   ld d,(ix+N+1)
+ */
+static int pass_ix_pair_load_to_de(void)
+{
+    int i, off, changed = 0;
+    char new_lo[64], new_hi[64];
+
+    for (i = 0; i + 4 < nlines; i++) {
+        if (!eq(i, "push hl")) continue;
+        if (!peep_parse_ld_ix_pair(lines[i + 1], lines[i + 2], &off)) continue;
+        if (!eq(i + 3, "ex de,hl")) continue;
+        if (!eq(i + 4, "pop hl")) continue;
+
+        sprintf(new_lo, "ld e,(ix%+d)", off);
+        sprintf(new_hi, "ld d,(ix%+d)", off + 1);
+        replace1_tagged(i, new_lo, "ix_pair_load_to_de");
+        replace1(i + 1, new_hi);
+        delete_n(i + 2, 3);
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+
+    return changed;
+}
+
+static int pass_remove_ix_store_reload_hl(void)
+{
+    int i, off, changed = 0;
+    char expected_lo[64], expected_hi[64];
+
+    for (i = 0; i + 3 < nlines; i++) {
+        if (!peep_parse_st_ix_pair(lines[i], lines[i + 1], &off)) continue;
+        sprintf(expected_lo, "ld l,(ix%+d)", off);
+        sprintf(expected_hi, "ld h,(ix%+d)", off + 1);
+        if (!eq(i + 2, expected_lo)) continue;
+        if (!eq(i + 3, expected_hi)) continue;
+        delete_n(i + 2, 2);
+        changed = 1;
+        if (i > 0) i--;
+    }
+    return changed;
+}
+
+static int count_jumps_to_label(const char *label)
+{
+    int k, count = 0;
+    char lab[128], cond[16];
+    for (k = 0; k < nlines; k++) {
+        if (peep_parse_any_cond_jump(lines[k], cond, lab) && strcmp(lab, label) == 0)
+            count++;
+        else if (peep_parse_jp_uncond_label(lines[k], lab) && strcmp(lab, label) == 0)
+            count++;
+    }
+    return count;
+}
+
+static int pass_bool_from_cmp(void)
+{
+    int i, changed = 0;
+    char ltrue[128], lexit[128], cond[16], new_jp[128];
+    const char *inv_cond;
+
+    for (i = 0; i + 5 < nlines; i++) {
+        if (!peep_parse_any_cond_jump(lines[i], cond, ltrue)) continue;
+        if (!eq(i + 1, "ld hl,0")) continue;
+        if (!peep_parse_jp_uncond_label(lines[i + 2], lexit)) continue;
+        if (!line_is_label_name(i + 3, ltrue)) continue;
+        if (!eq(i + 4, "ld hl,1")) continue;
+        if (!line_is_label_name(i + 5, lexit)) continue;
+        if (strcmp(ltrue, lexit) == 0) continue;
+        /* Only safe to delete Ltrue: if no other jump targets it */
+        if (count_jumps_to_label(ltrue) != 1) continue;
+        inv_cond = peep_inverse_cond(cond);
+        if (!inv_cond) continue;
+        peep_make_cond_jump(new_jp, inv_cond, lexit);
+        replace1_tagged(i, "ld hl,0", "bool_from_cmp");
+        replace1(i + 1, new_jp);
+        replace1(i + 2, "inc l");
+        delete_n(i + 3, 2);
+        changed = 1;
+        if (i > 0) i--;
+    }
     return changed;
 }
 
@@ -7050,6 +7221,59 @@ static int pass_global_ptr_word_predec_load(void)
 }
 
 /*
+ * pass_elim_ex_de_hl_before_ix_store:
+ *
+ * After pass_global_ptr_word_predec_load the loaded value is in DE and HL
+ * points one past the last byte read.  DCC then generates:
+ *
+ *   ex de,hl            ; HL = value, DE = stale stp pointer
+ *   ld (ix-N),l         ; store value lo byte
+ *   ld (ix-N+1),h       ; store value hi byte
+ *   ld hl,(sym)         ; HL immediately overwritten by next instruction
+ *
+ * Because the store only needs the value (which is still in DE), the
+ * exchange is unnecessary.  Store from E/D directly:
+ *
+ *   ld (ix-N),e
+ *   ld (ix-N+1),d
+ *   ld hl,(sym)
+ *
+ * Safe because the immediately following instruction (guarded to start with
+ * "ld hl,") clobbers HL before it is read, so leaving HL as the stale
+ * stp-pointer rather than the value does not matter.
+ */
+static int pass_elim_ex_de_hl_before_ix_store(void)
+{
+    int i, off, changed = 0;
+    char next[MAX_LINE];
+    char new_lo[64], new_hi[64];
+
+    for (i = 0; i + 3 < nlines; i++) {
+        if (!eq(i, "ex de,hl")) continue;
+        if (!peep_parse_st_ix_pair(lines[i + 1], lines[i + 2], &off)) continue;
+
+        /* HL must be clobbered by the next instruction; otherwise the
+         * stale stp-pointer left in HL by removing the exchange would be
+         * visible.  All generated instances follow immediately with a
+         * ld hl,(sym) that starts the next predec/postinc sequence. */
+        strip_peep_comment_copy(next, lines[i + 3]);
+        if (strncmp(next, "ld hl,", 6) != 0) continue;
+
+        sprintf(new_lo, "ld (ix%+d),e", off);
+        sprintf(new_hi, "ld (ix%+d),d", off + 1);
+
+        replace1_tagged(i, new_lo, "ex_de_hl_elim");
+        replace1(i + 1, new_hi);
+        delete_n(i + 2, 1);
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+
+    return changed;
+}
+
+/*
  * Collapse the address/setup half of *p++ = value for an int * global.  The
  * value-generating code remains between the final push hl and the later
  * pop hl / store, so this is safe even when the RHS uses the stack.
@@ -7090,6 +7314,76 @@ static int pass_global_ptr_word_postinc_store_setup(void)
         changed = 1;
         if (i > 0)
             i--;
+    }
+
+    return changed;
+}
+
+/*
+ * pass_elim_redundant_pop_push:
+ *
+ * After pass_global_ptr_word_postinc_store_setup the generated sequence ends
+ * with:
+ *
+ *   ld hl,(stp)       ; peep: global_ptr_word_postinc_setup
+ *   push hl           ; [A] save old stp for the later store
+ *   inc hl
+ *   inc hl
+ *   ld (stp),hl       ; advance stp
+ *   pop hl            ; [B] restore old stp into HL ← remove
+ *   push hl           ; [C] save it again           ← remove
+ *   [instruction that immediately clobbers HL]
+ *   ...
+ *   pop hl            ; [D] pops [A]'s saved old stp for the store
+ *
+ * [B]+[C] together are a no-op on both the stack and HL: the same old-stp
+ * value pushed at [A] is still on the stack after [C], and the first
+ * instruction after [C] always clobbers HL (either ld hl,(x) or
+ * ld l,(ix+N)).  Removing [B]+[C] leaves [D] still popping the [A] push.
+ *
+ * Note: pop de / push de looks similar but is NOT always removable — the
+ * pop may set DE for use in the following code while also saving the value
+ * back for a later pop into a different register (e.g. the xstrdup strcpy
+ * loop).  Only hl is handled here.
+ */
+/* Returns 1 if HL is written (all of HL, or at least L with H following) before
+ * it is read, scanning forward from line `start`.  Conservative: returns 0 if
+ * uncertain.  Used to guard pop hl; push hl removal. */
+static int hl_is_written_before_read_from(int start)
+{
+    int j;
+    char tmp[MAX_LINE];
+    char lo_off[32];
+
+    for (j = start; j < start + 4 && j < nlines; j++) {
+        strip_peep_comment_copy(tmp, lines[j]);
+        /* Instructions that fully write HL without first reading it */
+        if (strncmp(tmp, "ld hl,", 6) == 0) return 1;   /* ld hl,N  or  ld hl,(x) */
+        if (peep_parse_ld_l_ix(lines[j], lo_off)) return 1; /* ld l,(ix+N) — H follows */
+        if (strcmp(tmp, "pop hl") == 0) return 1;
+        /* Instructions that read HL */
+        if (strncmp(tmp, "ld ", 3) == 0 && strstr(tmp, "(hl)") != NULL) return 0;
+        if (strcmp(tmp, "inc hl") == 0) return 0;
+        if (strcmp(tmp, "dec hl") == 0) return 0;
+        if (strncmp(tmp, "add hl,", 7) == 0) return 0;
+        if (strcmp(tmp, "push hl") == 0) return 0;
+        if (strcmp(tmp, "ex de,hl") == 0) return 0;
+        /* Otherwise neutral (push de, push bc, push ix, ld de,N, etc.) — keep scanning */
+    }
+    return 0; /* conservative: don't remove if undetermined */
+}
+
+static int pass_elim_redundant_pop_push(void)
+{
+    int i, changed = 0;
+
+    for (i = 0; i + 1 < nlines; i++) {
+        if (eq(i, "pop hl") && eq(i + 1, "push hl") &&
+            hl_is_written_before_read_from(i + 2)) {
+            delete_n(i, 2);
+            changed = 1;
+            if (i > 0) i--;
+        }
     }
 
     return changed;
@@ -8619,18 +8913,29 @@ static int pass_cpir(void)
         if (!label_name_at(i, lhead)) continue;
         j = i + 1;
 
-        /* 2. Loop condition (10 lines) */
+        /* 2. Loop condition: counter in HL, limit in DE, then sbc+jp.
+         * Accept original push/load/ex/pop form, or the ix_pair_load_to_de
+         * form (ld e,(ix+N); ld d,(ix+N+1)) if that pass ran first. */
         if (!stride_parse_ld_r_ix_neg(lines[j], 'l', &cnt_lo)) continue; j++;
         if (!stride_parse_ld_r_ix_neg(lines[j], 'h', &cnt_hi)) continue; j++;
         if (cnt_hi != cnt_lo - 1) continue;
-        if (!eq(j, "push hl")) continue; j++;
-        if (!peep_parse_ld_l_ix(lines[j], lim_lo_off)) continue; j++;
-        if (!peep_parse_ld_h_ix(lines[j], lim_hi_off)) continue; j++;
-        if (!parse_ix_off_numeric(lim_lo_off, &lim_lo_val)) continue;
-        { int v; if (!parse_ix_off_numeric(lim_hi_off, &v)) continue;
-          if (v != lim_lo_val + 1) continue; }
-        if (!eq(j, "ex de,hl"))  continue; j++;
-        if (!eq(j, "pop hl"))    continue; j++;
+        if (eq(j, "push hl")) {
+            j++;
+            if (!peep_parse_ld_l_ix(lines[j], lim_lo_off)) continue; j++;
+            if (!peep_parse_ld_h_ix(lines[j], lim_hi_off)) continue; j++;
+            if (!parse_ix_off_numeric(lim_lo_off, &lim_lo_val)) continue;
+            { int v; if (!parse_ix_off_numeric(lim_hi_off, &v)) continue;
+              if (v != lim_lo_val + 1) continue; }
+            if (!eq(j, "ex de,hl")) continue; j++;
+            if (!eq(j, "pop hl"))   continue; j++;
+        } else {
+            /* ix_pair_load_to_de form: ld e,(ix+N); ld d,(ix+N+1) */
+            if (!peep_parse_ld_e_ix(lines[j], lim_lo_off)) continue; j++;
+            if (!peep_parse_ld_d_ix(lines[j], lim_hi_off)) continue; j++;
+            if (!parse_ix_off_numeric(lim_lo_off, &lim_lo_val)) continue;
+            { int v; if (!parse_ix_off_numeric(lim_hi_off, &v)) continue;
+              if (v != lim_lo_val + 1) continue; }
+        }
         if (!eq(j, "or a"))      continue; j++;
         if (!eq(j, "sbc hl,de")) continue; j++;
         if (!parse_jp_nc_label(lines[j], lexit)) continue; j++;
@@ -8829,6 +9134,7 @@ int main(int argc, char **argv)
         if (pass_hl_cmp_zero_to_or_hl()) changed = 1;
         if (pass_signed_cmp_const_low0()) changed = 1;
         if (pass_zeroext_byte_cmp_const()) changed = 1;
+        if (pass_byte_cmp_push_pop_hl()) changed = 1;
         if (pass_call_hl_stack_roundtrip()) changed = 1;
         if (pass_minmax_winner_result_no_temp()) changed = 1;
         if (pass_minmax_score_b_cache()) changed = 1;
@@ -8868,11 +9174,16 @@ int main(int argc, char **argv)
         if (pass_ix_frame_ptr_load()) changed = 1;
         if (pass_ix_frame_ptr_load_deadd()) changed = 1;
         if (pass_global_ptr_word_predec_load()) changed = 1;
+        if (pass_elim_ex_de_hl_before_ix_store()) changed = 1;
         if (pass_global_ptr_word_postinc_store_setup()) changed = 1;
+        if (pass_elim_redundant_pop_push()) changed = 1;
         if (pass_double_de_before_add()) changed = 1;
         if (pass_deref_byte_cmp()) changed = 1;
         if (pass_cpir()) changed = 1;
         if (pass_reg_bc_deref_byte_cmp()) changed = 1;
+        if (pass_ix_pair_load_to_de()) changed = 1;
+        if (pass_remove_ix_store_reload_hl()) changed = 1;
+        if (pass_bool_from_cmp()) changed = 1;
         if (pass_elim_dead_ix_stores()) changed = 1;
         if (pass_remove_ix_store_reload_a()) changed = 1;
         if (pass_a_tracks_ix_byte()) changed = 1;

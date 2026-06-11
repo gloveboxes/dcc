@@ -272,8 +272,29 @@ ___fpc_ch:
         public  _clearerr
 _clearerr:
         ; void clearerr(FILE *fp)
-        ; This simple RTL keeps no per-FILE error/eof flags.
+        ; Clear the EOF and error indicators for this stream's slot.  fd 0/1/2
+        ; are console pseudo-streams with no slot, so they are left alone.
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)
+        sub     FIRSTFD
+        jr      c,clrerr_done
+        cp      NFILES
+        jr      nc,clrerr_done
+        ld      h,0
+        ld      l,a
+        ld      de,__fdeof
+        add     hl,de
+        ld      (hl),0                  ; clear EOF flag
+        ld      h,0
+        ld      l,a
+        ld      de,__fderr
+        add     hl,de
+        ld      (hl),0                  ; clear error flag
+clrerr_done:
         ld      hl,0
+        pop     ix
         ret
 
         public  _setbuf
@@ -1812,6 +1833,241 @@ _ldiv:
         ret
 
 
+        public  _bsearch
+; const void *bsearch(const void *key, const void *base, size_t num,
+;                     size_t size, int (*compare)(const void *, const void *))
+; Classic size-decrementing binary search: no signed index arithmetic, so it
+; is correct for the full unsigned size_t range.  Calls the comparator through
+; __call_hl using the standard dcc convention (args pushed right-to-left,
+; result in HL, caller cleans the stack).  State is held in static scratch
+; because the comparator may clobber every register.  Returns the matching
+; element pointer, or 0 if not found.
+_bsearch:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      (__bs_key),hl
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      (__bs_base),hl
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      (__bs_num),hl
+        ld      l,(ix+10)
+        ld      h,(ix+11)
+        ld      (__bs_size),hl
+        ld      l,(ix+12)
+        ld      h,(ix+13)
+        ld      (__bs_cmp),hl
+bs_loop:
+        ld      hl,(__bs_num)
+        ld      a,h
+        or      l
+        jp      z,bs_nf                 ; num == 0 -> not found
+        ; half = num >> 1
+        srl     h
+        rr      l
+        ld      (__bs_half),hl
+        ; here = base + half*size
+        ld      de,(__bs_size)
+        call    __mulu                  ; HL = half*size
+        ld      de,(__bs_base)
+        add     hl,de
+        ld      (__bs_here),hl
+        ; compare(key, here): push here (b), push key (a)
+        push    hl
+        ld      hl,(__bs_key)
+        push    hl
+        ld      hl,(__bs_cmp)
+        call    __call_hl
+        pop     bc
+        pop     bc
+        ld      a,h
+        or      l
+        jr      z,bs_found              ; equal
+        bit     7,h
+        jr      nz,bs_lt                ; result < 0 -> search lower half
+        ; result > 0 -> search upper half: base = here+size; num = num-half-1
+        ld      hl,(__bs_here)
+        ld      de,(__bs_size)
+        add     hl,de
+        ld      (__bs_base),hl
+        ld      hl,(__bs_num)
+        ld      de,(__bs_half)
+        or      a
+        sbc     hl,de
+        dec     hl
+        ld      (__bs_num),hl
+        jp      bs_loop
+bs_lt:
+        ld      hl,(__bs_half)
+        ld      (__bs_num),hl
+        jp      bs_loop
+bs_found:
+        ld      hl,(__bs_here)
+        pop     ix
+        ret
+bs_nf:
+        ld      hl,0
+        pop     ix
+        ret
+__bs_key:       dw      0
+__bs_base:      dw      0
+__bs_num:       dw      0
+__bs_size:      dw      0
+__bs_cmp:       dw      0
+__bs_half:      dw      0
+__bs_here:      dw      0
+
+        public  _qsort
+; void qsort(void *base, size_t num, size_t size,
+;            int (*compare)(const void *, const void *))
+; In-place Shell sort: non-recursive (no C-stack growth on adversarial input,
+; unlike a recursive quicksort) and needs no auxiliary memory, which suits the
+; small CP/M TPA.  Element size is arbitrary; elements are exchanged with a
+; byte-wise swap.  The comparator is called through __call_hl.  State is kept
+; in static scratch (the comparator may clobber all registers), so qsort is not
+; re-entrant from within its own comparator -- acceptable for this runtime.
+_qsort:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      (__qs_base),hl
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      (__qs_num),hl
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      (__qs_size),hl
+        ld      l,(ix+10)
+        ld      h,(ix+11)
+        ld      (__qs_cmp),hl
+        ; if num < 2 nothing to do
+        ld      hl,(__qs_num)
+        ld      de,2
+        or      a
+        sbc     hl,de
+        jp      c,qs_ret
+        ; gap = num >> 1
+        ld      hl,(__qs_num)
+        srl     h
+        rr      l
+        ld      (__qs_gap),hl
+qs_gaploop:
+        ; gapb = gap * size
+        ld      hl,(__qs_gap)
+        ld      de,(__qs_size)
+        call    __mulu
+        ld      (__qs_gapb),hl
+        ; i = gap ; pi = base + gapb
+        ld      hl,(__qs_base)
+        ld      de,(__qs_gapb)
+        add     hl,de
+        ld      (__qs_pi),hl
+        ld      hl,(__qs_gap)
+        ld      (__qs_i),hl
+qs_iloop:
+        ld      hl,(__qs_i)
+        ld      de,(__qs_num)
+        or      a
+        sbc     hl,de
+        jp      nc,qs_gapnext           ; i >= num -> end of this gap pass
+        ; pj = pi ; j = i
+        ld      hl,(__qs_pi)
+        ld      (__qs_pj),hl
+        ld      hl,(__qs_i)
+        ld      (__qs_j),hl
+qs_inner:
+        ; while j >= gap
+        ld      hl,(__qs_j)
+        ld      de,(__qs_gap)
+        or      a
+        sbc     hl,de
+        jr      c,qs_idone              ; j < gap -> stop
+        ; pprev = pj - gapb
+        ld      hl,(__qs_pj)
+        ld      de,(__qs_gapb)
+        or      a
+        sbc     hl,de
+        ld      (__qs_pprev),hl
+        ; compare(pprev, pj): push pj (b), push pprev (a)
+        ld      hl,(__qs_pj)
+        push    hl
+        ld      hl,(__qs_pprev)
+        push    hl
+        ld      hl,(__qs_cmp)
+        call    __call_hl
+        pop     bc
+        pop     bc
+        ld      a,h
+        or      l
+        jr      z,qs_idone              ; cmp == 0 -> ordered, stop
+        bit     7,h
+        jr      nz,qs_idone             ; cmp < 0 -> ordered, stop
+        ; cmp > 0 -> swap *pprev and *pj (size bytes), then step down by gap
+        ld      hl,(__qs_pprev)
+        ld      de,(__qs_pj)
+        ld      bc,(__qs_size)
+qs_swap:
+        ld      a,(de)
+        push    af
+        ld      a,(hl)
+        ld      (de),a
+        pop     af
+        ld      (hl),a
+        inc     hl
+        inc     de
+        dec     bc
+        ld      a,b
+        or      c
+        jr      nz,qs_swap
+        ld      hl,(__qs_pprev)
+        ld      (__qs_pj),hl
+        ld      hl,(__qs_j)
+        ld      de,(__qs_gap)
+        or      a
+        sbc     hl,de
+        ld      (__qs_j),hl
+        jp      qs_inner
+qs_idone:
+        ; i++ ; pi += size
+        ld      hl,(__qs_i)
+        inc     hl
+        ld      (__qs_i),hl
+        ld      hl,(__qs_pi)
+        ld      de,(__qs_size)
+        add     hl,de
+        ld      (__qs_pi),hl
+        jp      qs_iloop
+qs_gapnext:
+        ; gap >>= 1 ; continue while gap > 0
+        ld      hl,(__qs_gap)
+        srl     h
+        rr      l
+        ld      (__qs_gap),hl
+        ld      a,h
+        or      l
+        jp      nz,qs_gaploop
+qs_ret:
+        pop     ix
+        ret
+__qs_base:      dw      0
+__qs_num:       dw      0
+__qs_size:      dw      0
+__qs_cmp:       dw      0
+__qs_gap:       dw      0
+__qs_gapb:      dw      0
+__qs_i:         dw      0
+__qs_pi:        dw      0
+__qs_j:         dw      0
+__qs_pj:        dw      0
+__qs_pprev:     dw      0
+
+
         public  __r1u
 ; 16-bit unsigned dividend modulo 8-bit constant divisor.
 ; Input:  HL = dividend, E = divisor (1..255)
@@ -3256,8 +3512,13 @@ at_ws_inc:
         jr      at_ws
 at_sign:
         cp      '-'
-        jr      nz,at_digits
+        jr      nz,at_plus
         ld      b,1
+        inc     hl
+        jr      at_digits
+at_plus:
+        cp      '+'             ; C89 atoi == (int)strtol(s,0,10): accept '+'
+        jr      nz,at_digits
         inc     hl
 at_digits:
         ld      a,(hl)
@@ -3297,6 +3558,123 @@ at_done:
         pop     ix
         ret
 
+        public  _atol
+; long atol(const char *nptr)
+; Like atoi but builds a 32-bit accumulator.  Skips leading spaces/tabs,
+; accepts an optional '+'/'-' sign, then consumes decimal digits.  Overflow
+; wraps modulo 2^32 (same defined-behaviour stance as atoi's 2^16 wrap).
+; Returns the signed long in DE:HL (DE = high word).
+_atol:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      (__atl_p),hl            ; string pointer
+        ld      hl,0
+        ld      (__atl_acc),hl
+        ld      (__atl_acc+2),hl        ; acc = 0
+        xor     a
+        ld      (__atl_neg),a
+        ld      hl,(__atl_p)
+atl_ws:
+        ld      a,(hl)
+        cp      ' '
+        jr      z,atl_ws_i
+        cp      9
+        jr      nz,atl_sign
+atl_ws_i:
+        inc     hl
+        jr      atl_ws
+atl_sign:
+        cp      '-'
+        jr      nz,atl_plus
+        ld      a,1
+        ld      (__atl_neg),a
+        inc     hl
+        jr      atl_pset
+atl_plus:
+        cp      '+'
+        jr      nz,atl_pset
+        inc     hl
+atl_pset:
+        ld      (__atl_p),hl
+atl_dig:
+        ld      hl,(__atl_p)
+        ld      a,(hl)
+        cp      '0'
+        jr      c,atl_fin
+        cp      '9'+1
+        jr      nc,atl_fin
+        sub     '0'
+        ld      (__atl_d),a
+        inc     hl
+        ld      (__atl_p),hl
+        ; acc = acc*10 + digit, computed as acc*8 + acc*2 + digit
+        ld      hl,(__atl_acc)
+        ld      de,(__atl_acc+2)        ; DE:HL = acc
+        add     hl,hl
+        rl      e
+        rl      d                       ; DE:HL = acc*2
+        ld      (__atl_x2),hl
+        ld      a,e
+        ld      (__atl_x2+2),a
+        ld      a,d
+        ld      (__atl_x2+3),a          ; save acc*2
+        add     hl,hl
+        rl      e
+        rl      d                       ; acc*4
+        add     hl,hl
+        rl      e
+        rl      d                       ; DE:HL = acc*8
+        ld      bc,(__atl_x2)
+        add     hl,bc
+        ex      de,hl
+        ld      bc,(__atl_x2+2)
+        adc     hl,bc
+        ex      de,hl                   ; DE:HL = acc*10
+        ld      a,(__atl_d)
+        ld      c,a
+        ld      b,0
+        add     hl,bc
+        jr      nc,atl_nc
+        inc     de
+atl_nc:
+        ld      (__atl_acc),hl
+        ld      (__atl_acc+2),de
+        jr      atl_dig
+atl_fin:
+        ld      hl,(__atl_acc)
+        ld      de,(__atl_acc+2)        ; DE:HL = acc
+        ld      a,(__atl_neg)
+        or      a
+        jr      z,atl_done
+        ld      a,l
+        cpl
+        ld      l,a
+        ld      a,h
+        cpl
+        ld      h,a
+        ld      a,e
+        cpl
+        ld      e,a
+        ld      a,d
+        cpl
+        ld      d,a
+        inc     hl
+        ld      a,h
+        or      l
+        jr      nz,atl_done
+        inc     de
+atl_done:
+        pop     ix
+        ret
+__atl_p:        dw      0
+__atl_acc:      ds      4
+__atl_x2:       ds      4
+__atl_neg:      db      0
+__atl_d:        db      0
+
         public  _fflush
 _fflush:
         ld      hl,0
@@ -3327,8 +3705,14 @@ _stdin:
         public  _errno
 
 FIRSTFD  equ     3
-NFILES   equ     4
-MAXFD    equ     7
+; NFILES is the number of concurrently open real files (fd FIRSTFD..MAXFD-1).
+; C89 (7.9.3) requires FOPEN_MAX >= 8 streams open at once, including the three
+; standard streams.  Here stdin/stdout/stderr are console pseudo-FILEs that do
+; not consume a real-file slot, so 8 real-file slots comfortably satisfies the
+; standard.  The per-slot cost is one FCB (FCBSIZE) plus 7 bytes of state; the
+; 128-byte DMA buffer and the read sector cache stay single/shared.
+NFILES   equ     8
+MAXFD    equ     FIRSTFD+NFILES
 FCBSIZE  equ     36
 
 
@@ -3367,6 +3751,10 @@ opslot:
         ld      a,e
         ld      (__slot),a
         ld      (hl),1
+        ; A new file occupies this slot: any cached record for the slot number
+        ; belonged to a previous file, so drop the read sector cache.
+        xor     a
+        ld      (__rdcv),a
 
         call    __offp
         xor     a
@@ -3464,6 +3852,9 @@ _close:
         ld      a,(__slot)
         call    __usep
         ld      (hl),0
+        ; invalidate the read sector cache: this slot is closing
+        xor     a
+        ld      (__rdcv),a
         pop     af
         cp      0ffh
         jr      z,clio
@@ -3566,6 +3957,14 @@ rdloop:
         or      l
         jr      z,rddone
         call    __setrr
+        call    __rdhit         ; is this record already resident in __dma?
+        jr      z,rd_have       ; cache hit: skip BDOS set-DMA + random read
+        ; Miss: the random read below overwrites __dma even when it fails with
+        ; EOF/error, so invalidate the cache now and only re-validate on a
+        ; successful read.  Otherwise a later read of the previously cached
+        ; record would falsely hit on the clobbered buffer.
+        xor     a
+        ld      (__rdcv),a
         ld      de,__dma
         ld      c,26            ; set DMA
         call    5
@@ -3576,7 +3975,9 @@ rdloop:
         call    5
         or      a
         jr      nz,rddone       ; EOF/error returns short count
+        call    __rdsto         ; __dma now caches this (slot, record)
 
+rd_have:
         call    __chunk
         ; copy __chunk bytes from __dma+remainder to user buffer
         ld      a,(__remdr)
@@ -3614,6 +4015,10 @@ _write:
         jp      z,wrcon
         call    __chkfd
         jp      c,wrbadfd
+        ; A write changes file data and reuses __dma as scratch, so the read
+        ; sector cache is no longer guaranteed to reflect disk contents.
+        xor     a
+        ld      (__rdcv),a
         ld      l,(ix+6)
         ld      h,(ix+7)
         ld      (__rwbuf),hl
@@ -3723,6 +4128,14 @@ wrbadfd:
         pop     ix
         ret
 wrnospc:
+        ; A real write error (disk full / record write rejected).  __slot is
+        ; valid here (we passed __chkfd), so record a stream error for ferror().
+        ld      a,(__slot)
+        ld      h,0
+        ld      l,a
+        ld      de,__fderr
+        add     hl,de
+        ld      (hl),1
         call    __nospc
         ld      hl,0ffffh
         pop     ix
@@ -3900,6 +4313,58 @@ __chkfd:
         ret
 cfbad:
         scf
+        ret
+
+; ---- Read sector cache helpers ----
+; __rdhit: after __setrr has loaded the FCB random record for __slot, test
+; whether the shared __dma buffer already holds that exact (slot, record).
+; Returns Z=1 on hit, Z=0 on miss.  Corrupts AF, BC, DE, HL.
+__rdhit:
+        ld      a,(__rdcv)
+        or      a
+        jr      z,rdh_miss              ; cache empty
+        ld      a,(__slot)
+        ld      hl,__rdck
+        cp      (hl)
+        jr      nz,rdh_miss             ; different slot
+        ld      a,(__slot)
+        call    __fcbp
+        ld      de,33
+        add     hl,de                   ; HL -> FCB random-record bytes
+        ld      de,__rdck+1
+        ld      b,3
+rdh_cmp:
+        ld      a,(de)
+        cp      (hl)
+        jr      nz,rdh_miss
+        inc     de
+        inc     hl
+        djnz    rdh_cmp
+        xor     a                       ; Z=1: hit
+        ret
+rdh_miss:
+        ld      a,1
+        or      a                       ; Z=0: miss
+        ret
+
+; __rdsto: record that __dma now holds (slot, current FCB random record).
+; Corrupts AF, BC, DE, HL.
+__rdsto:
+        ld      a,(__slot)
+        ld      (__rdck),a
+        call    __fcbp
+        ld      de,33
+        add     hl,de                   ; HL -> FCB random-record bytes
+        ld      de,__rdck+1
+        ld      b,3
+rds_cpy:
+        ld      a,(hl)
+        ld      (de),a
+        inc     hl
+        inc     de
+        djnz    rds_cpy
+        ld      a,1
+        ld      (__rdcv),a
         ret
 
 ; A = slot 0..3, returns HL = fd_used slot
@@ -4200,16 +4665,22 @@ __dmrem:
 __dmcnt:
         db      0
 
-__fdeof:        ds      4       ; EOF flag per slot (index = fd - FIRSTFD)
-__fderr:        ds      4       ; error flag per slot
+; Read sector cache: records which 128-byte file record currently resides in
+; the shared __dma buffer, so consecutive small reads of the same record
+; (e.g. fgets reading one byte at a time) skip the BDOS random read entirely.
+__rdcv:         db      0       ; 1 = __dma holds the record identified by __rdck
+__rdck:         ds      4       ; key: slot, then FCB random-record bytes r0,r1,r2
+
+__fdeof:        ds      NFILES  ; EOF flag per slot (index = fd - FIRSTFD)
+__fderr:        ds      NFILES  ; error flag per slot
 __fduse:
-        ds      4
+        ds      NFILES
 __fdoff:
-        ds      16
+        ds      NFILES*4
 
         public  __fcbs
 __fcbs:
-        ds      144
+        ds      NFILES*FCBSIZE
 
         public  __dma
 __dma:
@@ -5105,6 +5576,37 @@ _malloc:
         pop     ix
         ret
 
+        public  __ckmul
+; Internal: HL = a, DE = b.  Returns HL = a*b (low 16 bits) and carry set
+; when the true product exceeds 65535 (16-bit size_t overflow).  Reuses the
+; tested __mulu/__divu helpers: multiply, then verify product/b == a.
+; Corrupts AF, BC, DE.  Does not use IX.
+__ckmul:
+        ld      a,h
+        or      l
+        jr      z,ck_zero       ; a == 0 -> product 0, no overflow
+        ld      a,d
+        or      e
+        jr      z,ck_zero       ; b == 0 -> product 0, no overflow
+        ld      (__ck_a),hl     ; save a
+        push    de              ; save b
+        call    __mulu          ; HL = a*b (mod 65536)
+        pop     de              ; DE = b
+        push    hl              ; save product
+        call    __divu          ; HL = product / b
+        ld      de,(__ck_a)
+        or      a
+        sbc     hl,de           ; quotient - a
+        pop     hl              ; HL = product (POP preserves flags)
+        ret     z               ; quotient == a -> no overflow (carry clear)
+        scf                     ; mismatch -> overflow
+        ret
+ck_zero:
+        ld      hl,0
+        or      a               ; clear carry
+        ret
+__ck_a:         dw      0
+
         public  _calloc
 _calloc:
         push    ix
@@ -5114,7 +5616,8 @@ _calloc:
         ld      h,(ix+5)        ; HL = nmemb
         ld      e,(ix+6)
         ld      d,(ix+7)        ; DE = size
-        call    __mulu          ; HL = nmemb * size
+        call    __ckmul         ; HL = nmemb*size; carry set on overflow
+        jr      c,ca_ovf        ; overflow -> behave like allocation failure
         call    __mlh     ; HL = ptr or 0; __ml_need = total size
         push    hl              ; save ptr for return
         ld      a,h
@@ -5139,6 +5642,10 @@ _calloc:
         ldir                    ; fill remaining bytes
 ca_done:
         pop     hl              ; return ptr (or 0)
+        pop     ix
+        ret
+ca_ovf:
+        ld      hl,0
         pop     ix
         ret
 
@@ -5185,8 +5692,99 @@ rl_alloc:
         ld      e,(hl)
         inc     hl
         ld      d,(hl)
-        ld      (__rl_cnt),de
+        ld      (__rl_cnt),de           ; __rl_cnt = old user size
 
+        ; ---- In-place fast paths (avoid allocate + copy + free) ----
+        ld      hl,(__rl_cnt)           ; old size
+        ld      de,(__rl_size)          ; new size
+        or      a
+        sbc     hl,de
+        jp      c,rl_try_grow           ; new > old -> try growing in place
+        ; new <= old: shrink or same size, in place.  HL = old - new = slack.
+        ld      a,h
+        or      a
+        jr      nz,rl_shrink_split      ; slack >= 256 -> always split a tail
+        ld      a,l
+        cp      HDRSIZE+1
+        jr      c,rl_keep_whole         ; slack < HDRSIZE+1 -> too small to split
+rl_shrink_split:
+        ; Shrink the block to the new size and free the tail as its own block.
+        ld      hl,(__rl_old)
+        ld      de,0-HDRSIZE
+        add     hl,de                   ; HL = header
+        ld      de,(__rl_size)
+        ld      (hl),e
+        inc     hl
+        ld      (hl),d                  ; header size = new size (flags untouched)
+        ; tail user size = slack - HDRSIZE
+        ld      hl,(__rl_cnt)
+        ld      de,(__rl_size)
+        or      a
+        sbc     hl,de                   ; HL = slack
+        ld      de,HDRSIZE
+        or      a
+        sbc     hl,de                   ; HL = tail user size
+        push    hl                      ; save tail user size
+        ld      hl,(__rl_old)
+        ld      de,(__rl_size)
+        add     hl,de                   ; HL = tail header = ptr + new size
+        pop     de                      ; DE = tail user size
+        ld      (hl),e
+        inc     hl
+        ld      (hl),d
+        inc     hl
+        ld      (hl),1                  ; flags = free
+        ; Coalesce the freed tail forward (and trim __brk if it is the top).
+        ld      hl,(__rl_old)
+        ld      de,(__rl_size)
+        add     hl,de
+        ld      de,HDRSIZE
+        add     hl,de                   ; HL = tail user pointer
+        call    __frcoal
+        ld      hl,(__rl_old)
+        pop     ix
+        ret
+rl_keep_whole:
+        ld      hl,(__rl_old)
+        pop     ix
+        ret
+
+rl_try_grow:
+        ; new > old.  Grow in place only when this is the top heap block, i.e.
+        ; its end == __brk and the larger end still fits below __hlimit.
+        ld      hl,(__rl_old)
+        ld      de,(__rl_cnt)
+        add     hl,de                   ; HL = block end = ptr + old size
+        ld      de,(__brk)
+        or      a
+        sbc     hl,de
+        jp      nz,rl_do_alloc          ; not the top block
+        ld      hl,(__rl_old)
+        ld      de,(__rl_size)
+        add     hl,de                   ; HL = new block end
+        jp      c,rl_do_alloc           ; address wrap -> cannot grow here
+        push    hl
+        ld      de,(__hlimit)
+        or      a
+        sbc     hl,de                   ; new_end - hlimit
+        pop     hl                      ; HL = new_end
+        jr      c,rl_grow_ok            ; new_end < hlimit
+        jr      z,rl_grow_ok            ; new_end == hlimit
+        jp      rl_do_alloc             ; would overflow the heap limit
+rl_grow_ok:
+        ld      (__brk),hl              ; extend heap to the new end
+        ld      hl,(__rl_old)
+        ld      de,0-HDRSIZE
+        add     hl,de                   ; HL = header
+        ld      de,(__rl_size)
+        ld      (hl),e
+        inc     hl
+        ld      (hl),d                  ; header size = new size
+        ld      hl,(__rl_old)
+        pop     ix
+        ret
+
+rl_do_alloc:
         ; Allocate the new block.  On failure, leave old block unchanged.
         ld      hl,(__rl_size)
         call    __mlh
@@ -5335,6 +5933,24 @@ fr_coal:
         ld      (hl),d
         jr      fr_coal
 fr_done:
+        ; Heap trim: if the (coalesced) free block ends exactly at __brk it is
+        ; the top block, so lower __brk to its header.  This returns the space
+        ; to the heap/stack gap instead of leaving a stranded top free block,
+        ; so the heap high-water mark falls when the top block is released.
+        ld      hl,(__fr_hdr)
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)                  ; DE = anchor user size
+        ld      hl,(__fr_hdr)
+        ld      bc,HDRSIZE
+        add     hl,bc
+        add     hl,de                   ; HL = anchor block end
+        ld      de,(__brk)
+        or      a
+        sbc     hl,de                   ; anchor_end - __brk
+        ret     nz                      ; not the top block: keep as free block
+        ld      hl,(__fr_hdr)
+        ld      (__brk),hl              ; drop the heap high-water mark
         ret
 
 __fr_hdr:       dw      0
@@ -6236,12 +6852,17 @@ _fread:
         push    ix
         ld      ix,0
         add     ix,sp
-        ; nbytes = size * count
+        ; size == 0 -> 0 items (also avoids divide-by-zero in the item count)
         ld      l,(ix+6)
         ld      h,(ix+7)                ; HL = size
+        ld      a,h
+        or      l
+        jr      z,frd_zero
+        ; nbytes = size * count, rejecting 16-bit overflow
         ld      e,(ix+8)
         ld      d,(ix+9)                ; DE = count
-        call    __mulu                  ; HL = size * count
+        call    __ckmul                 ; HL = size*count; carry set on overflow
+        jr      c,frd_zero              ; overflow -> read nothing
         ld      (__frw_nb),hl
         ; _read(fp, buf, nbytes)
         push    hl                      ; nbytes
@@ -6279,6 +6900,10 @@ frd_neof:
         call    __divu                  ; HL = items read
         pop     ix
         ret
+frd_zero:
+        ld      hl,0
+        pop     ix
+        ret
 
 __frw_nb:       dw      0
 
@@ -6292,12 +6917,17 @@ _fwrite:
         push    ix
         ld      ix,0
         add     ix,sp
-        ; nbytes = size * count
+        ; size == 0 -> 0 items (also avoids divide-by-zero in the item count)
         ld      l,(ix+6)
         ld      h,(ix+7)
+        ld      a,h
+        or      l
+        jr      z,fwr_zero
+        ; nbytes = size * count, rejecting 16-bit overflow
         ld      e,(ix+8)
         ld      d,(ix+9)
-        call    __mulu
+        call    __ckmul                 ; HL = size*count; carry set on overflow
+        jr      c,fwr_zero              ; overflow -> write nothing
         ; _write(fp, buf, nbytes)
         push    hl                      ; nbytes
         ld      l,(ix+4)
@@ -6316,6 +6946,10 @@ _fwrite:
         ld      e,(ix+6)
         ld      d,(ix+7)
         call    __divu
+        pop     ix
+        ret
+fwr_zero:
+        ld      hl,0
         pop     ix
         ret
 
@@ -6436,15 +7070,20 @@ _rewind:
         push    ix
         ld      ix,0
         add     ix,sp
+        ; rewind(fp) == (void)lseek(fd, 0L, SEEK_SET).  offset is a 32-bit long,
+        ; so it must be pushed as two words; pushing a single word (as an
+        ; earlier version did) misaligned the frame so _lseek read a garbage
+        ; whence, fell through to EINVAL, and never moved the file position.
         ld      hl,0
-        push    hl                      ; whence=0
-        push    hl                      ; offset=0
+        push    hl                      ; whence = 0 (SEEK_SET)
+        push    hl                      ; offset high word = 0
+        push    hl                      ; offset low word = 0
         ld      l,(ix+4)
         ld      h,(ix+5)
         push    hl                      ; fp
         call    _lseek
-        ex      de,hl
-        ld      hl,6
+        ; Pop 8 bytes of arguments (return value unused: rewind is void).
+        ld      hl,8
         add     hl,sp
         ld      sp,hl
         ; clear EOF flag

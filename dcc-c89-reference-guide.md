@@ -34,6 +34,7 @@ get surprised by a link error.
     - [Dynamic memory](#dynamic-memory)
     - [Conversion](#conversion)
     - [Integer arithmetic helpers](#integer-arithmetic-helpers)
+    - [Searching and sorting](#searching-and-sorting)
     - [Process control](#process-control)
     - [Pseudo-random numbers](#pseudo-random-numbers)
   - [string.h — strings and memory blocks](#stringh--strings-and-memory-blocks)
@@ -49,6 +50,9 @@ get surprised by a link error.
   - [CP/M extensions](#cpm-extensions)
   - [Declared but not in the runtime](#declared-but-not-in-the-runtime)
   - [Limitations to keep in mind](#limitations-to-keep-in-mind)
+  - [Examples](#examples)
+    - [Sorting and searching an `int` array](#sorting-and-searching-an-int-array)
+    - [Sorting an array of structs by a key field](#sorting-an-array-of-structs-by-a-key-field)
 
 ---
 
@@ -140,7 +144,7 @@ Include the standard headers as usual:
 
 Useful constants from the headers:
 
-- [stdio.h](stdio.h): `EOF` = -1, `BUFSIZ` = 128, `SEEK_SET`/`SEEK_CUR`/`SEEK_END` = 0/1/2.
+- [stdio.h](stdio.h): `EOF` = -1, `BUFSIZ` = 256, `SEEK_SET`/`SEEK_CUR`/`SEEK_END` = 0/1/2.
 - [stdlib.h](stdlib.h): `EXIT_SUCCESS` = 0, `EXIT_FAILURE` = 1, `RAND_MAX` = 32767, `NULL` = 0.
 - [errno.h](errno.h): `EDOM` = 33, `ERANGE` = 34.
 
@@ -367,10 +371,17 @@ free(p);
 | Function                  | Summary                                          |
 | ------------------------- | ------------------------------------------------ |
 | `int atoi(const char *s)` | Parse a leading signed decimal integer (16-bit). |
+| `long atol(const char *s)`| Parse a leading signed decimal integer (32-bit). |
 
 ```c
-int n = atoi("  -123xyz");   /* -123 */
+int  n = atoi("  -123xyz");   /* -123  */
+long m = atol("  -123456");   /* -123456L */
 ```
+
+Both skip leading spaces/tabs, accept an optional `+`/`-` sign, then consume
+decimal digits; conversion stops at the first non-digit. `atoi` accumulates a
+16-bit `int` and `atol` a 32-bit `long`; overflow wraps modulo the type width
+(the same defined-behaviour stance for both).
 
 ### Integer arithmetic helpers
 
@@ -388,6 +399,36 @@ division toward zero; the remainder has the same sign as the numerator.
 ```c
 div_t d = div(-7, 3);       /* d.quot == -2, d.rem == -1 */
 ldiv_t ld = ldiv(200000L, 7L);
+```
+
+### Searching and sorting
+
+| Function | Summary |
+| --- | --- |
+| `void qsort(void *base, size_t num, size_t size, int (*cmp)(const void*, const void*))` | Sort `num` elements of `size` bytes in place. |
+| `const void *bsearch(const void *key, const void *base, size_t num, size_t size, int (*cmp)(const void*, const void*))` | Binary-search a sorted array; returns the matching element or `NULL`. |
+
+Both are in the runtime and take the standard comparator: `cmp(a, b)` returns
+negative if `a` sorts before `b`, zero if equal, positive if after. The
+comparator is called through the runtime's indirect-call path, so an ordinary
+function pointer works. `qsort` uses an in-place, non-recursive Shell sort (no
+extra memory and no deep call stack on adversarial input) and is therefore
+**not a stable sort**; `bsearch` requires the array to be sorted by the same
+comparator and, on duplicate keys, may return any matching element.
+
+```c
+static int cmp_int(const void *a, const void *b)
+{
+    int x = *(const int *)a, y = *(const int *)b;
+    return (x > y) - (x < y);
+}
+
+int v[5] = { 5, 2, 8, 1, 9 };
+int key = 8;
+const int *hit;
+
+qsort(v, 5, sizeof(int), cmp_int);              /* 1 2 5 8 9 */
+hit = (const int *)bsearch(&key, v, 5, sizeof(int), cmp_int);  /* &v[3] */
 ```
 
 ### Process control
@@ -494,6 +535,10 @@ math entry points are the single-precision `…f` variants.
 | `float fmodf(float x, float y)`      | Floating-point remainder of `x / y`. |
 | `float sqrtf(float x)`               | Square root.                         |
 | `float nextafterf(float x, float y)` | Next representable value after `x`.  |
+
+For convenience, the unsuffixed C89 names `fabs`, `floor`, `ceil`, `sqrt`, and
+`fmod` are provided as macro aliases of the `…f` variants, so portable C89
+source compiles unchanged (the operations remain single-precision).
 
 To print floats, compile with `-ffloatio` and use `%f`:
 
@@ -691,18 +736,16 @@ your own):
 
 | Function(s)                          | Where to get an implementation                           |
 | ------------------------------------ | -------------------------------------------------------- |
-| `bsearch`                            | [bsearch.c](bsearch.c)                                   |
-| `qsort`                              | [qsort.c](qsort.c)                                       |
-| `atol`                               | shown inline in [primes.c](primes.c), [pihex.c](pihex.c) |
+| `atof`                               | not declared or implemented; see the note below          |
 
 `atof` is neither declared in [stdlib.h](stdlib.h) nor implemented in the
 runtime. C89 `atof` returns `double`, and dcc does not have an 8-byte `double`
 type; use a project-local `float` parser if you need decimal-to-float input.
 
-To reuse a sample, either `#include "bsearch.c"` from your main file, or
-compile it separately with `dcc -c` and link the resulting `.REL` (see
-[cpmenumd.c](cpmenumd.c) and [mrel.sh](mrel.sh) for the separate-compilation
-workflow).
+If you do need to supply your own implementation of an unimplemented function,
+either `#include` its `.c` from your main file, or compile it separately with
+`dcc -c` and link the resulting `.REL` (see [cpmenumd.c](cpmenumd.c) and
+[mrel.sh](mrel.sh) for the separate-compilation workflow).
 
 ---
 
@@ -719,3 +762,105 @@ workflow).
   `-stack` and see [spsmash.c](spsmash.c) for an optional manual stack check.
 - **CP/M 2.2 only.** The runtime uses BDOS functions only (no BIOS calls), plus
   CP/M 3.0 BDOS 108 for the process exit code.
+
+---
+
+## Examples
+
+Short, self-contained programs that build with the standard helper
+(`sh ./ma.sh foo`) and run under ntvcm. The runnable sources are
+[qsort.c](qsort.c) and [bsearch.c](bsearch.c); the full unit tests live in
+[tqsort.c](tqsort.c) and [tbsearch.c](tbsearch.c).
+
+### Sorting and searching an `int` array
+
+`qsort` orders the array, then `bsearch` locates a key with the *same*
+comparator. The comparator returns negative / zero / positive — here the
+branchless `(x > y) - (x < y)` idiom.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+static int cmp_int(const void *a, const void *b)
+{
+    int x = *(const int *)a;
+    int y = *(const int *)b;
+    return (x > y) - (x < y);
+}
+
+int main(void)
+{
+    int v[8];
+    int key = 13;
+    const int *hit;
+
+    v[0] = 2; v[1] = 8; v[2] = 5; v[3] = 13;
+    v[4] = 1; v[5] = 21; v[6] = 3; v[7] = 34;
+
+    qsort(v, 8U, sizeof(int), cmp_int);     /* 1 2 3 5 8 13 21 34 */
+    hit = (const int *)bsearch(&key, v, 8U, sizeof(int), cmp_int);
+    if (hit)
+        printf("found %d at index %d\n", *hit, (int)(hit - v));
+    else
+        puts("not found");
+    return 0;
+}
+```
+
+Output: `found 13 at index 5`.
+
+### Sorting an array of structs by a key field
+
+Any element width works because `qsort` swaps whole elements byte-by-byte. The
+comparator reads the field it sorts on — here a string member via `strcmp` — and
+`bsearch` reuses it to look a record up by name.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct item {
+    char name[8];
+    int  qty;
+};
+
+static int by_name(const void *a, const void *b)
+{
+    return strcmp(((const struct item *)a)->name,
+                  ((const struct item *)b)->name);
+}
+
+int main(void)
+{
+    struct item items[3];
+    struct item key;
+    const struct item *hit;
+    int i;
+
+    strcpy(items[0].name, "pears");  items[0].qty = 4;
+    strcpy(items[1].name, "apples"); items[1].qty = 9;
+    strcpy(items[2].name, "kiwis");  items[2].qty = 2;
+
+    qsort(items, 3U, sizeof(struct item), by_name);
+    for (i = 0; i < 3; i++)
+        printf("%-8s %d\n", items[i].name, items[i].qty);
+
+    strcpy(key.name, "kiwis");
+    hit = (const struct item *)bsearch(&key, items, 3U,
+                                       sizeof(struct item), by_name);
+    if (hit)
+        printf("%s: %d in stock\n", hit->name, hit->qty);
+    return 0;
+}
+```
+
+Output:
+
+```text
+apples   9
+kiwis    2
+pears    4
+kiwis: 2 in stock
+```

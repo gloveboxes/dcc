@@ -14,7 +14,13 @@
 #define SEEK_CUR    1
 #define SEEK_END    2
 
-#define BUFSIZ 128 /* C89 minimum is 256; dcc keeps this smaller for CP/M */
+#define BUFSIZ 256 /* C89 (7.9.2) minimum */
+
+/* Max streams open at once.  C89 (7.9.3) requires FOPEN_MAX >= 8 including the
+ * three standard streams.  In this runtime stdin/stdout/stderr are console
+ * pseudo-FILEs that do not use a real-file slot, and NFILES real files (fd 3..)
+ * can be open concurrently; keep this in sync with NFILES in dccrtl.mac. */
+#define FOPEN_MAX   8
 
 typedef int FILE;
 

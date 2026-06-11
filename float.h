@@ -12,6 +12,15 @@
 #define FLT_MIN_10_EXP (-37)
 #define FLT_MAX_10_EXP 38
 
+/*
+ * dcc has no double or long double: 32-bit IEEE `float` is the only floating
+ * type, so the DBL_* and LDBL_* macros below are deliberately aliased to the
+ * FLT_* values.  As a documented consequence of the no-double design they do
+ * NOT meet the C89 (2.2.4.2) minimums for double/long double (which would
+ * require DBL_DIG >= 10 and DBL_EPSILON <= 1E-9).  They exist only so that
+ * source referencing these names still compiles; the values intentionally
+ * reflect the single-precision reality of the target.
+ */
 #define DBL_MANT_DIG FLT_MANT_DIG
 #define DBL_DIG FLT_DIG
 #define DBL_EPSILON FLT_EPSILON

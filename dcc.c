@@ -27,7 +27,18 @@
  *   -h, --help       print help and exit
  */
 
-#define MAX_TOK_TEXT   128
+/*
+ * Maximum stored length (including the terminating NUL) of a single token's
+ * spelling: identifiers, numeric tokens, and an individual string-literal
+ * token before concatenation.  C89 (ISO 9899:1990) section 2.2.4.1
+ * "Translation limits" requires a conforming implementation to accept at
+ * least 509 characters in a (logical, post-concatenation) string literal, so
+ * this must exceed 509; the previous value of 128 was below that minimum and
+ * silently truncated long literals.  Adjacent string literals are joined in a
+ * separately grown buffer (read_adjacent_string_literals_ex), so the limit on
+ * the concatenated result is not bounded by this constant.
+ */
+#define MAX_TOK_TEXT   512
 #define MAX_SYMS       4096
 #define MAX_LOCALS     1024
 #define MAX_STRINGS    2048
@@ -2455,8 +2466,21 @@ static void next_token(void)
                 tok.text[i++] = (char)getc_src();
             }
         }
-        if (peekc() == '"') getc_src();
         tok.text[i] = 0;
+        /* Drain an over-long wide literal up to the closing quote (see the
+         * narrow-string case below) so the lexer stays synchronized. */
+        if (peekc() && peekc() != '"') {
+            error_here("string literal too long");
+            while (peekc() && peekc() != '"') {
+                if (peekc() == '\\') {
+                    getc_src();
+                    read_escape();
+                } else {
+                    getc_src();
+                }
+            }
+        }
+        if (peekc() == '"') getc_src();
         tok.kind = TOK_WSTR;
         return;
     }
@@ -2723,8 +2747,25 @@ static void next_token(void)
                 tok.text[i++] = (char)getc_src();
             }
         }
-        if (peekc() == '"') getc_src();
         tok.text[i] = 0;
+        /*
+         * Over-long literal: drain the remainder up to the closing quote so
+         * the lexer stays in sync.  Previously the scan stopped here, leaving
+         * the unread tail (including the closing ") to be relexed as stray
+         * tokens, which silently derailed the parser instead of diagnosing.
+         */
+        if (peekc() && peekc() != '"') {
+            error_here("string literal too long");
+            while (peekc() && peekc() != '"') {
+                if (peekc() == '\\') {
+                    getc_src();
+                    read_escape();
+                } else {
+                    getc_src();
+                }
+            }
+        }
+        if (peekc() == '"') getc_src();
         tok.kind = TOK_STR;
         return;
     }

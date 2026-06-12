@@ -1230,8 +1230,12 @@ void gen_lvalue_addr(int *ptype)
 
                 emit_add_const_to_hl(const_index * elem_size);
                 } else {
+                int old_dead;
                 emit("\tpush hl\n");
+                old_dead = expr_result_dead;
+                expr_result_dead = 0;
                 gen_expr();
+                expr_result_dead = old_dead;
                 expect(']');
 
                 if (s->is_array)
@@ -1287,8 +1291,12 @@ void gen_lvalue_addr(int *ptype)
 
                 emit_add_const_to_hl(const_index * elem_size);
                 } else {
+                int old_dead;
                 emit("\tpush hl\n");
+                old_dead = expr_result_dead;
+                expr_result_dead = 0;
                 gen_expr();
+                expr_result_dead = old_dead;
                 expect(']');
 
                 if (addr_is_array)
@@ -1350,8 +1358,12 @@ void gen_lvalue_addr(int *ptype)
                             elem_size = type_index_elem_size(cur_type);
                         emit_add_const_to_hl(const_index * elem_size);
                     } else {
+                        int old_dead;
                         emit("\tpush hl\n");
+                        old_dead = expr_result_dead;
+                        expr_result_dead = 0;
                         gen_expr();
+                        expr_result_dead = old_dead;
                         expect(']');
                         if (addr_is_array)
                             elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);

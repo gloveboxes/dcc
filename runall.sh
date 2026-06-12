@@ -14,18 +14,21 @@ APPLIST="sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong \
          ttrig tlog tphi tap cpmenumd tbits tfo pihex tstrify tlcont primes \
          tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 \
          tlongaud tlongreg tlongopt tppreg tinitreg ttypesr ttype2 tdecinit tmalloch \
-         tallocx tstdlib tioerr tqsort tbsearch trw2 terrno tpostfld pint tswitch tppifcom tpostidx \
+         tallocx tstdlib tioerr tqsort tbsearch trw2 terrno tpostfld tswitch tppifcom tpostidx \
          tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 \
          tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom \
          tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield \
-         bint fint tstretst tportio"
+         pint cobint forint bint fint cint tstretst tportio tlongidx"
 
 run_args() {
     case "$1" in
         ttt) echo "10" ;;
         pint) echo "e.pas" ;;
+        cobint) echo "e.cob" ;;
+        forint) echo "e.for" ;;
         bint) echo "e.bas" ;;
         fint) echo "e.f" ;;
+        cint) echo "e.c" ;;
         wumpus|tchess) echo "-c" ;;
         targs) echo "a bb ccc dddd eeeee" ;;
         *) echo "" ;;

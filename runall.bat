@@ -16,11 +16,11 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              ttrig tlog tphi tap cpmenumd tbits tfo pihex tstrify tlcont primes ^
              tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 ^
              tlongaud tlongreg tlongopt tppreg tinitreg ttypesr ttype2 tdecinit tmalloch ^
-             tallocx tstdlib tioerr tqsort tbsearch trw2 terrno tpostfld pint tswitch tppifcom tpostidx ^
+             tallocx tstdlib tioerr tqsort tbsearch trw2 terrno tpostfld tswitch tppifcom tpostidx ^
              tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 ^
              tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom ^
              tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield ^
-             bint fint tstretst tportio
+             pint cobint forint bint fint cint tstretst tportio tlongidx
 
 echo --- optimized (ma peep) ---
 set "outputfile=test_dcc.txt"
@@ -61,10 +61,16 @@ for %%a in (%_applist%) do (
         %_emulator% %%a -c >>"%outfile%"
     ) else if "%%a"=="pint" (
         %_emulator% %%a e.pas >>"%outfile%"
+    ) else if "%%a"=="cobint" (
+        %_emulator% %%a e.cob >>"%outfile%"
+    ) else if "%%a"=="forint" (
+        %_emulator% %%a e.for >>"%outfile%"
     ) else if "%%a"=="bint" (
         %_emulator% %%a e.bas >>"%outfile%"
     ) else if "%%a"=="fint" (
         %_emulator% %%a e.f >>"%outfile%"
+    ) else if "%%a"=="cint" (
+        %_emulator% %%a e.c >>"%outfile%"
     ) else if "%%a"=="targs" (
         %_emulator% %%a a bb ccc dddd eeeee >>"%outfile%"
     ) else (

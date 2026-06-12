@@ -1384,7 +1384,8 @@ void macro_expand_argument_text(const char *in, char *out, int outsz, int depth)
     const char *p;
 
     if (depth > 8) {
-        snprintf(out, (size_t)outsz, "%s", in);
+        strncpy(out, in, (size_t)outsz);
+        out[outsz - 1] = '\0';
         return;
     }
 

@@ -997,7 +997,8 @@ void append_global_init(struct Sym *s, const char *label, long v, int bytes, int
     }
     if (bytes <= 0) bytes = 2;
     if (is_label) {
-        snprintf(s->init_labels[s->init_count], sizeof(s->init_labels[0]), "%s", label);
+        strncpy(s->init_labels[s->init_count], label, sizeof(s->init_labels[0]));
+        s->init_labels[s->init_count][sizeof(s->init_labels[0]) - 1] = '\0';
     } else {
         sprintf(s->init_labels[s->init_count], "%lu", (unsigned long)v);
     }

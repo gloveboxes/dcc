@@ -77,6 +77,35 @@ int main(void)
     check_ldiv("ldivneg3", -200000L, -7L, 28571L, -3L);
     check_ldiv("ldivzero", 0L, 13L, 0L, 0L);
 
+    /* atoi: 16-bit decimal parse with sign, whitespace, and trailing junk */
+    check_int("atoi0", atoi("0"), 0);
+    check_int("atoipos", atoi("123"), 123);
+    check_int("atoineg", atoi("-123"), -123);
+    check_int("atoiplus", atoi("+456"), 456);
+    check_int("atoiws", atoi("   789"), 789);
+    check_int("atoitab", atoi("\t-42"), -42);
+    check_int("atoijunk", atoi("123abc"), 123);
+    check_int("atoinodig", atoi("abc"), 0);
+    check_int("atoiempty", atoi(""), 0);
+    check_int("atoiwide", atoi("32767"), 32767);
+
+    /* atol: 32-bit decimal parse, same rules as atoi but full long range */
+    check_long("atol0", atol("0"), 0L);
+    check_long("atolpos", atol("123"), 123L);
+    check_long("atolneg", atol("-123"), -123L);
+    check_long("atolplus", atol("+456"), 456L);
+    check_long("atolws", atol("   789"), 789L);
+    check_long("atoltab", atol("\t-42"), -42L);
+    check_long("atoljunk", atol("123abc"), 123L);
+    check_long("atolnodig", atol("abc"), 0L);
+    check_long("atolempty", atol(""), 0L);
+    check_long("atolwide", atol("65536"), 65536L);
+    check_long("atolmillion", atol("1000000"), 1000000L);
+    check_long("atolmax", atol("2147483647"), 2147483647L);
+    check_long("atolnearmin", atol("-2147483647"), -2147483647L);
+    check_long("atolmin", atol("-2147483648"), -2147483647L - 1L);
+    check_long("atolnegzero", atol("  -0"), 0L);
+
     if (failures != 0)
         return 1;
 

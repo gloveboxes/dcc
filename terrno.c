@@ -21,6 +21,13 @@ extern char *strerror(int errnum);
 
 static int fails;
 
+/* TE0..TE7 fill all NFILES (8) real-file slots; TE8 is the overflow that must
+ * fail with EMFILE.  Keep this count in sync with NFILES / FOPEN_MAX. */
+static const char *tmpnames[9] = {
+    "TE0.TMP", "TE1.TMP", "TE2.TMP", "TE3.TMP",
+    "TE4.TMP", "TE5.TMP", "TE6.TMP", "TE7.TMP", "TE8.TMP"
+};
+
 static void expect_errno(const char *name, int rv, int want)
 {
     if (rv == -1 && errno == want) {
@@ -56,7 +63,10 @@ static void expect_ok_fd(const char *name, int fd)
 int main(void)
 {
     int fd;
-    int fd0, fd1, fd2, fd3, fd4;
+    int fds[8];
+    int fdover;
+    int i;
+    int allok;
     char buf[4];
     char c;
     int r;
@@ -67,11 +77,8 @@ int main(void)
     errno = 0;
 
     /* Make the test repeatable.  These may fail with ENOENT; ignore here. */
-    unlink("TE0.TMP");
-    unlink("TE1.TMP");
-    unlink("TE2.TMP");
-    unlink("TE3.TMP");
-    unlink("TE4.TMP");
+    for (i = 0; i < 9; i++)
+        unlink(tmpnames[i]);
     unlink("NOFILE.X");
 
     errno = 0;
@@ -111,32 +118,32 @@ int main(void)
     }
 
     errno = 0;
-    fd0 = open("TE0.TMP", O_CREAT | O_TRUNC | O_RDWR);
-    fd1 = open("TE1.TMP", O_CREAT | O_TRUNC | O_RDWR);
-    fd2 = open("TE2.TMP", O_CREAT | O_TRUNC | O_RDWR);
-    fd3 = open("TE3.TMP", O_CREAT | O_TRUNC | O_RDWR);
-    fd4 = open("TE4.TMP", O_CREAT | O_TRUNC | O_RDWR);
-
-    if (fd0 >= 3 && fd1 >= 3 && fd2 >= 3 && fd3 >= 3) {
-        expect_errno("open too many", fd4, EMFILE);
-    } else {
-        printf("FAIL setup open slots fd=%d,%d,%d,%d errno=%d\n",
-               fd0, fd1, fd2, fd3, errno);
-        fails++;
-        if (fd4 >= 3)
-            close(fd4);
+    allok = 1;
+    for (i = 0; i < 8; i++) {
+        fds[i] = open(tmpnames[i], O_CREAT | O_TRUNC | O_RDWR);
+        if (fds[i] < 3)
+            allok = 0;
     }
 
-    if (fd0 >= 3) close(fd0);
-    if (fd1 >= 3) close(fd1);
-    if (fd2 >= 3) close(fd2);
-    if (fd3 >= 3) close(fd3);
+    /* One more than NFILES must fail with EMFILE. */
+    errno = 0;
+    fdover = open(tmpnames[8], O_CREAT | O_TRUNC | O_RDWR);
 
-    unlink("TE0.TMP");
-    unlink("TE1.TMP");
-    unlink("TE2.TMP");
-    unlink("TE3.TMP");
-    unlink("TE4.TMP");
+    if (allok) {
+        expect_errno("open too many", fdover, EMFILE);
+    } else {
+        printf("FAIL setup open slots errno=%d\n", errno);
+        fails++;
+        if (fdover >= 3)
+            close(fdover);
+    }
+
+    for (i = 0; i < 8; i++)
+        if (fds[i] >= 3)
+            close(fds[i]);
+
+    for (i = 0; i < 9; i++)
+        unlink(tmpnames[i]);
 
     if (fails) {
         printf("terrno failed: %d\n", fails);

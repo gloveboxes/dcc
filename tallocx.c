@@ -97,20 +97,28 @@ static void t_nosplit(void)
     unsigned char *a;
     unsigned char *b;
     unsigned char *c;
+    unsigned char *guard;
 
+    /* Keep a guard block above the block under test so freeing it never trims
+     * the heap top; that lets us exercise the no-split reuse path. */
     a = (unsigned char *)malloc(16U);
-    if (a == 0)
+    guard = (unsigned char *)malloc(7U);
+    if (a == 0 || guard == 0)
         fail("nosplit setup malloc failed");
     free(a);
 
     b = (unsigned char *)malloc(13U);
-    c = (unsigned char *)malloc(1U);
     if (b != a)
         fail("nosplit did not reuse block head");
-    if ((unsigned)c != (unsigned)b + 19U)
-        fail("nosplit unexpectedly created tail fragment");
+    /* slack is 16-13 = 3 < HDRSIZE+1, so no tail fragment must be split off;
+     * the block must remain a full 16-byte block.  Freeing it (still non-top)
+     * and requesting 16 must reuse the exact same address. */
     free(b);
+    c = (unsigned char *)malloc(16U);
+    if (c != a)
+        fail("nosplit unexpectedly created tail fragment");
     free(c);
+    free(guard);
 }
 
 static void t_forward(void)
@@ -347,14 +355,17 @@ static void t_recoalesce(void)
 {
     unsigned char *a;
     unsigned char *b;
+    unsigned char *guard;
     unsigned char *q;
     unsigned char *r;
 
-    /* Lay out A(200) then B(100), then free A so the following realloc reuses
-     * and splits A's block. */
+    /* Lay out A(200) then B(100), then a guard so B is not the heap-top block
+     * (which would let realloc grow it in place).  Free A so the following
+     * realloc reuses and splits A's block via the allocate-new path. */
     a = (unsigned char *)malloc(200U);
     b = (unsigned char *)malloc(100U);
-    if (a == 0 || b == 0)
+    guard = (unsigned char *)malloc(8U);
+    if (a == 0 || b == 0 || guard == 0)
         fail("recoalesce setup malloc failed");
     fill(b, 100U, 12);
     free(a);
@@ -377,6 +388,7 @@ static void t_recoalesce(void)
         fail("realloc free did not coalesce (heap fragmented)");
     free(q);
     free(r);
+    free(guard);
 }
 
 static void t_rezero_coalesce(void)
@@ -491,6 +503,87 @@ static void t_stress(void)
     free(p);
 }
 
+static void t_shrink_inplace(void)
+{
+    unsigned char *p;
+    unsigned char *q;
+
+    /* Shrinking must keep the same address (no allocate + copy) and preserve
+     * the leading bytes. */
+    p = (unsigned char *)malloc(200U);
+    if (p == 0)
+        fail("shrink setup malloc failed");
+    fill(p, 200U, 20);
+    q = (unsigned char *)realloc(p, 50U);
+    if (q != p)
+        fail("shrink-in-place changed the block address");
+    check(q, 50U, 20, "shrink-in-place lost contents");
+    free(q);
+}
+
+static void t_grow_top(void)
+{
+    unsigned char *p;
+    unsigned char *q;
+
+    /* p is the most recent allocation, so it is the heap-top block; growing it
+     * must extend it in place and return the same pointer. */
+    p = (unsigned char *)malloc(50U);
+    if (p == 0)
+        fail("grow-top setup malloc failed");
+    fill(p, 50U, 21);
+    q = (unsigned char *)realloc(p, 180U);
+    if (q != p)
+        fail("grow-at-top did not grow in place");
+    check(q, 50U, 21, "grow-at-top lost contents");
+    fill(q, 180U, 22);
+    check(q, 180U, 22, "grow-at-top block not fully usable");
+    free(q);
+}
+
+static void t_trim(void)
+{
+    unsigned char *p;
+    unsigned char *q;
+    unsigned char *r;
+
+    /* Freeing the heap-top block must lower the heap limit so the space is
+     * fully reclaimed: a later, larger request reuses the same base address
+     * instead of growing the heap above the stranded free block. */
+    p = (unsigned char *)malloc(4000U);
+    if (p == 0)
+        fail("trim setup malloc failed");
+    free(p);
+    q = (unsigned char *)malloc(4000U);
+    if (q != p)
+        fail("heap did not reuse freed top block");
+    free(q);
+    r = (unsigned char *)malloc(8000U);
+    if (r != p)
+        fail("heap did not trim on free of top block");
+    free(r);
+}
+
+static void t_calloc_overflow(void)
+{
+    unsigned char *p;
+
+    /* nmemb * size that overflows 16 bits must fail rather than return a
+     * wrapped, too-small block. */
+    p = (unsigned char *)calloc(4096U, 16U);    /* 65536 -> wraps to 0 */
+    if (p != 0)
+        fail("calloc overflow (wrap to 0) not rejected");
+    p = (unsigned char *)calloc(700U, 100U);    /* 70000 -> wraps to 4464 */
+    if (p != 0)
+        fail("calloc overflow (partial wrap) not rejected");
+    /* a large but non-overflowing product still succeeds and is zeroed */
+    p = (unsigned char *)calloc(100U, 100U);
+    if (p == 0)
+        fail("valid large calloc rejected");
+    zcheck(p, 10000U, "calloc did not zero large block");
+    free(p);
+}
+
 int main(void)
 {
     t_split();
@@ -506,6 +599,10 @@ int main(void)
     t_wrap();
     t_recoalesce();
     t_rezero_coalesce();
+    t_shrink_inplace();
+    t_grow_top();
+    t_trim();
+    t_calloc_overflow();
     t_stress();
 
     printf("tallocx: all tests passed\n");

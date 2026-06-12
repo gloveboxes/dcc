@@ -9,13 +9,10 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-// One could instead use dcc's -c flag to compile these then assemble them to bsearch.rel and qsort.rel
-// See mrel.bat / mrel.sh for an example of how to do that.
-// Then link those with something like this in ma.bat:
-//     ntvcm l80 /P:100,rtlmin,bsearch,qsort,%name%,%name%/N/E
-
-#include <bsearch.c>
-#include <qsort.c>
+/* qsort and bsearch are provided by the runtime (declared in <stdlib.h>), so
+   this app just calls them directly.  They used to be #included here from the
+   bsearch.c / qsort.c samples, but those are now standalone demo programs with
+   their own main(). */
 
 extern int bdos( int fn, int dearg );
 

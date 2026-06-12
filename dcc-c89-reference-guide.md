@@ -22,6 +22,7 @@ get surprised by a link error.
   - [C89 keywords (reserved words)](#c89-keywords-reserved-words)
     - [Not supported](#not-supported)
     - [Semantics of the accepted-but-inert qualifiers](#semantics-of-the-accepted-but-inert-qualifiers)
+    - [Operators](#operators)
     - [Beyond C89](#beyond-c89)
   - [stdio.h — console and file I/O](#stdioh--console-and-file-io)
     - [Formatted output](#formatted-output)
@@ -67,8 +68,7 @@ written in Z80 assembly (M80/L80 syntax) for size and speed and provides:
 - 16-/32-bit integer and 32-bit float arithmetic helpers the compiler calls
   implicitly.
 
-Most library names in the standard headers are ordinary C identifiers. Because
-L80/M80 only preserve a short, significant prefix of external symbols, the
+Most library names in the standard headers are ordinary C identifiers. The
 compiler maps well-known library calls to short internal assembler labels (for
 example `memcpy` becomes `__mcpy`, `strlen` becomes `__slen`). You never write
 those short names yourself — just call the standard C functions and include the
@@ -142,6 +142,11 @@ Include the standard headers as usual:
 | `size_t`       | 16 bits | unsigned `int`                                |
 | `FILE`         | 16 bits | `typedef int FILE`; streams are small handles |
 
+Identifier significance is C89-conformant: internal identifiers are
+distinguished by at least their first 31 characters and external (global and
+function) names by at least their first 6, so you never need to abbreviate
+identifiers for the toolchain.
+
 Useful constants from the headers:
 
 - [stdio.h](stdio.h): `EOF` = -1, `BUFSIZ` = 256, `SEEK_SET`/`SEEK_CUR`/`SEEK_END` = 0/1/2.
@@ -183,6 +188,30 @@ generation:
 - `register` — accepted as a hint only; it does not force register allocation.
 - `auto` — accepted; since it is already the default storage for locals, it is a
   no-op.
+
+### Operators
+
+dcc supports the full C89 operator set:
+
+- Arithmetic: `+` `-` `*` `/` `%` (and unary `+`/`-`).
+- Bitwise: `&` `|` `^` `~` `<<` `>>`.
+- Logical / relational: `&&` `||` `!`, `==` `!=` `<` `<=` `>` `>=`.
+- Assignment: `=` and the compound forms `+=` `-=` `*=` `/=` `%=` `&=` `|=`
+  `^=` `<<=` `>>=`.
+- Increment / decrement: `++` `--` (prefix and postfix).
+- Other: `?:`, the comma operator, `sizeof`, casts `(type)`, address-of `&`,
+  dereference `*`, member `.` and `->`, and subscript `[]`.
+
+Notes specific to the 16-bit model:
+
+- `>>` is an **arithmetic** (sign-extending) shift on signed operands and a
+  **logical** (zero-fill) shift on unsigned operands — use `unsigned` /
+  `unsigned long` when you need a guaranteed zero-fill shift.
+- Shifts and bitwise operators act at the operand's width: 16-bit for `int`,
+  32-bit for `long`. Cast or promote to `long` before shifting if you need
+  more than 16 bits (for example `(long)x << 20`).
+- The optimizer rewrites multiply/divide by a power-of-two constant into the
+  equivalent shift.
 
 ### Beyond C89
 
@@ -713,16 +742,36 @@ assert(ptr != NULL);
 ## CP/M extensions
 
 The runtime exposes the raw CP/M BDOS entry point for things the standard
-library doesn't cover (console status, direct disk calls, and so on). It is not
-declared in a header, so declare it yourself:
+library doesn't cover (console status, direct disk calls, and so on). It is
+declared in [stdlib.h](stdlib.h):
 
 ```c
-extern int bdos(int fn, int dearg);
+int bdos(int fn, int dearg);
 ```
 
 `fn` is the BDOS function number and `dearg` is the value passed in `DE`; the
-result comes back in `HL`/`A`. See [tbdos.c](tbdos.c) and [crc.c](crc.c) for
-working examples.
+byte result comes back in the low byte of the returned `int`. Calls whose useful
+result is an FCB/DMA region (directory and file operations) return their data
+through the memory `dearg` points at, not in the return value. See
+[tbdos.c](tbdos.c) and [crc.c](crc.c) for working examples. (Older CP/M C code
+often declares its own `extern int bdos();`; that K&R declaration stays
+compatible with the prototype, so existing sources keep compiling.)
+
+**Direct port I/O.** For talking to hardware or an emulator's virtual devices,
+the runtime also provides 8-bit port I/O, declared alongside `bdos` in
+[stdlib.h](stdlib.h):
+
+```c
+int  inp(unsigned port);                 /* IN  A,(port) -> 0..255 */
+void outp(unsigned port, unsigned val);  /* OUT (port),A           */
+```
+
+`inp` runs the Z80 `IN A,(port)` instruction and returns the byte read,
+zero-extended to `int` (so the result is always 0..255). `outp` runs
+`OUT (port),A`, sending the low byte of `val` to the port. Only the low 8 bits
+of `port` are significant (CP/M-era I/O uses an 8-bit port address), and the
+byte read back is entirely device/emulator dependent. Neither is part of C89.
+See [tportio.c](tportio.c) for the unit test.
 
 ---
 

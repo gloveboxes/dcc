@@ -1,0 +1,876 @@
+/*
+ * dcc.h - umbrella header for the modularised dcc compiler.
+ *
+ * dcc is a tiny bootstrap C89 compiler that targets Z80 assembly for the
+ * Microsoft M80 / LINK-80 toolchain on CP/M-80. It is a single-pass,
+ * syntax-directed translator (no AST): the parser and code generator share a
+ * large amount of file-scope state. Because of that tight coupling, the
+ * separate-compilation layout uses ONE shared header (this file) included by
+ * every module's .c, in the spirit of a classic single-binary C compiler.
+ *
+ * This header declares everything the modules agree on:
+ *   1. System headers used across the compiler.
+ *   2. Capacity / translation-limit macros (MAX_*).
+ *   3. Type-kind, storage-class and token-kind constants.
+ *   4. The core record types (Token, Sym, Def, AsmName, TypeDef, FieldDef,
+ *      StructDef, ConstVal, ByteOperand).
+ *   5. `extern` declarations for the shared global state (defined once in
+ *      dcc_state.c).
+ *   6. Prototypes for every cross-module function, grouped by owning module.
+ *
+ * Module .c files and their responsibilities:
+ *   dcc_state.c     definitions of the shared globals declared extern below
+ *   dcc_asmname.c   C identifier -> M80 assembler symbol mapping
+ *   dcc_diag_emit.c diagnostics, allocation, emit primitives, char input
+ *   dcc_preproc.c   preprocessor + macro engine + lexer (next_token)
+ *   dcc_types.c     type system, struct/union/typedef parsing
+ *   dcc_constexpr.c integer constant-expression parser
+ *   dcc_symbols.c   symbol tables + symbol-access codegen + EXTRN
+ *   dcc_fold.c      constant folding + sizeof/offsetof
+ *   dcc_expr.c      expression codegen (primary/unary/calls/fast paths)
+ *   dcc_cmp.c       comparison + conditional-branch codegen
+ *   dcc_ops.c       binary-operator / arithmetic codegen
+ *   dcc_assign.c    assignment, float r-values, gen_expr entry points
+ *   dcc_stmt_fast.c statement-level fast-path idioms
+ *   dcc_decl.c      local declaration + initializer codegen
+ *   dcc_stmt.c      statement codegen (if/while/for/switch/...)
+ *   dcc_func.c      function + top-level declaration parsing
+ *   dcc_data.c      data-section emission
+ *   dcc.c           driver: file I/O, #include, CLI, and main()
+ *
+ * A small amount of state is intentionally NOT declared here because it is
+ * private to a single module and kept `static` there:
+ *   - pp_expr_p / pp_expr_depth        (dcc_preproc.c: #if expression cursor)
+ *   - include_dirs / num_include_dirs  (dcc.c: include search path)
+ */
+#ifndef DCC_H
+#define DCC_H
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <time.h>
+
+/* ------------------------------------------------------------------------- *
+ * Capacity / translation-limit macros.
+ * ------------------------------------------------------------------------- */
+
+/*
+ * Maximum stored length (including the terminating NUL) of a single token's
+ * spelling: identifiers, numeric tokens, and an individual string-literal
+ * token before concatenation.  C89 (ISO 9899:1990) section 2.2.4.1
+ * "Translation limits" requires a conforming implementation to accept at
+ * least 509 characters in a (logical, post-concatenation) string literal, so
+ * this must exceed 509; the previous value of 128 was below that minimum and
+ * silently truncated long literals.  Adjacent string literals are joined in a
+ * separately grown buffer (read_adjacent_string_literals_ex), so the limit on
+ * the concatenated result is not bounded by this constant.
+ */
+#define MAX_TOK_TEXT   512
+#define MAX_SYMS       4096
+#define MAX_LOCALS     1024
+#define MAX_STRINGS    2048
+#define MAX_DEFINES    512
+#define MAX_MACRO_TEXT 2048
+#define MAX_FLOW       128
+#define MAX_SNAPSHOT   256
+#define MAX_PROTO_PARAMS 16
+#define MAX_SWITCH_CASES 128
+#define MAX_ASM_NAMES 2048
+#define MAX_TYPEDEFS   512
+#define MAX_STRUCTS    256
+#define MAX_FIELDS     2048
+#define MAX_IFSTACK    64
+#define MAX_USED_EXTRNS 512
+#define MAX_USER_LABELS 256
+#define MAX_ENUM_CONSTS 512
+#define MAX_INCLUDE_DIRS 32
+
+/* ------------------------------------------------------------------------- *
+ * Type-kind bit encoding. A "type" is an int: low bits select the base kind,
+ * high bits are flags (pointer levels, unsignedness, struct). STRUCT_SHIFT
+ * carries the struct id.
+ * ------------------------------------------------------------------------- */
+#define TYPE_CHAR      1
+#define TYPE_INT       2
+#define TYPE_VOID      3
+#define TYPE_LONG      4
+#define TYPE_FLOAT     5   /* syntax/storage only: 32-bit opaque float */
+#define TYPE_PTR       16
+#define TYPE_PTR2      64
+#define TYPE_UNSIGNED  32
+#define TYPE_STRUCT    128
+#define STRUCT_SHIFT   8
+
+/* ------------------------------------------------------------------------- *
+ * Storage classes.
+ * ------------------------------------------------------------------------- */
+#define SC_GLOBAL      1
+#define SC_LOCAL       2
+#define SC_PARAM       3
+#define SC_FUNC        4
+#define SC_EXTERN      5
+#define SC_REGISTER    6   /* unused; reserved */
+
+/* ------------------------------------------------------------------------- *
+ * Lexer token kinds. Single-character tokens use their ASCII code; multi-byte
+ * tokens and keywords use the numbered values below (>= 256).
+ * ------------------------------------------------------------------------- */
+#define TOK_EOF        0
+#define TOK_ID         256
+#define TOK_NUM        257
+#define TOK_STR        258
+#define TOK_CHARLIT    259
+#define TOK_INT        260
+#define TOK_CHAR       261
+#define TOK_VOID       262
+#define TOK_UNSIGNED   263
+#define TOK_SIGNED     264
+#define TOK_EXTERN     265
+#define TOK_STATIC     266
+#define TOK_CONST      267
+#define TOK_IF         268
+#define TOK_ELSE       269
+#define TOK_WHILE      270
+#define TOK_FOR        271
+#define TOK_RETURN     272
+#define TOK_BREAK      273
+#define TOK_CONTINUE   274
+#define TOK_SIZEOF     275
+#define TOK_EQ         276
+#define TOK_NE         277
+#define TOK_LE         278
+#define TOK_GE         279
+#define TOK_ANDAND     280
+#define TOK_OROR       281
+#define TOK_SHL        282
+#define TOK_SHR        283
+#define TOK_INC        284
+#define TOK_DEC        285
+#define TOK_ADDEQ      286
+#define TOK_SUBEQ      287
+#define TOK_MULEQ      288
+#define TOK_DIVEQ      289
+#define TOK_MODEQ      290
+#define TOK_ANDEQ      291
+#define TOK_OREQ       292
+#define TOK_XOREQ      293
+#define TOK_SHLEQ      294
+#define TOK_SHREQ      295
+#define TOK_TYPEDEF    296
+#define TOK_REGISTER   303
+#define TOK_AUTO       313
+#define TOK_DO         304
+#define TOK_INLINE     305
+#define TOK_GOTO       306
+#define TOK_ENUM       307
+#define TOK_UNION      308
+#define TOK_ELLIPSIS   309
+#define TOK_VOLATILE  310
+#define TOK_STRUCT     297
+#define TOK_ARROW      298
+#define TOK_LONG       299
+#define TOK_FLOAT      311
+#define TOK_FLOATLIT   312
+#define TOK_SHORT      315
+#define TOK_WSTR       314
+#define TOK_SWITCH     300
+#define TOK_CASE       301
+#define TOK_DEFAULT    302
+
+/* ------------------------------------------------------------------------- *
+ * Core record types.
+ * ------------------------------------------------------------------------- */
+
+struct Token {
+    int kind;
+    long val;
+    char text[MAX_TOK_TEXT];
+    char file[256];
+};
+
+struct Sym {
+    char name[64];
+    int type;
+    int storage;
+    int offset;
+    int size;
+    int has_init;
+    long init_value;
+    int init_count;
+    char init_labels[256][64];
+    int init_sizes[256];
+    int is_array;
+    int array_len;
+    int elem_size; /* stride per first-dimension element */
+    int dim_count; /* C array dimensions, e.g. a[2][3] -> 2 */
+    int dims[8];   /* dims[0] may be 0 until inferred for a[][N] */
+    int needs_extrn; /* 1 = symbol has external linkage and may need EXTRN if referenced */
+    int is_defined;  /* 1 = this translation unit emits storage/PUBLIC for the symbol */
+    int is_static;   /* file-scope static: internal linkage, mangle and do not PUBLIC */
+    int has_proto;
+    int proto_nargs;
+    int proto_variadic;
+    int proto_types[MAX_PROTO_PARAMS];
+    int is_const_value;        /* local const scalar folded as immediate */
+    unsigned long const_value; /* raw integer bits or IEEE float bits */
+};
+
+struct Def {
+    char name[64];
+    char value[MAX_MACRO_TEXT];
+    int is_func;
+    int nargs;
+    char params[8][32];
+};
+
+struct AsmName {
+    char cname[64];
+    char aname[66]; /* '_' + up to 63-char name + '\0' = 65 bytes */
+};
+
+struct TypeDef {
+    char name[64];
+    int type;
+    int array_len; /* >0 when typedef is an array type, e.g. typedef int T[4] */
+    int is_func;   /* typedef names a function type, e.g. typedef int F(int); */
+};
+
+struct FieldDef {
+    char name[64];
+    int type;
+    int offset;
+    int size;
+    int is_array;
+    int array_len;
+    int elem_type;
+    int elem_size;
+    int dim_count;
+    int dims[4];
+    int parent_struct_id; /* which struct/union owns this field */
+    int bit_width;      /* >0 for C89 int bitfield */
+    int bit_shift;      /* bit offset within containing 16-bit storage unit */
+    unsigned int bit_mask;
+};
+
+struct StructDef {
+    char name[64];
+    int first_field;
+    int field_count;
+    int size;
+    int is_union; /* 1 = union: all fields at offset 0, size = max(field_sizes) */
+};
+
+/* Constant-folding value: a raw 32-bit payload plus the dcc type it carries. */
+struct ConstVal {
+    unsigned long u;
+    int type;
+};
+
+/* One operand of a fast byte-comparison/branch peephole. */
+struct ByteOperand {
+    int kind;          /* 1 = IX direct byte, 2 = constant, 3 = global byte array[index] */
+    struct Sym *sym;
+    struct Sym *idx_sym;
+    long val;
+};
+
+/* ------------------------------------------------------------------------- *
+ * Shared global state. Defined once in dcc_state.c; declared extern here so
+ * every module can reach the source buffer, lookahead token, symbol tables
+ * and per-function codegen flags without passing them around.
+ * ------------------------------------------------------------------------- */
+
+/* assembler symbol-name table + command-line options */
+extern struct AsmName asm_names[MAX_ASM_NAMES];
+extern int nasm_names;
+extern int opt_floatio;
+extern int opt_module;      /* -c/-module: emit linkable helper module, not final app TU */
+extern int opt_stack_size;  /* bytes reserved above heap for C stack */
+
+/* typedef table */
+extern struct TypeDef typedefs[MAX_TYPEDEFS];
+extern int ntypedefs;
+
+/* struct/union + field tables */
+extern struct StructDef struct_defs[MAX_STRUCTS];
+extern int nstruct_defs;
+extern struct FieldDef field_defs[MAX_FIELDS];
+extern int nfield_defs;
+
+/* in-progress field metadata (filled while parsing one declarator) */
+extern int current_field_array_elem_size;
+extern int current_field_array_dim_count;
+extern int current_field_array_dims[4];
+extern int current_field_bit_width;
+extern int current_field_bit_shift;
+extern unsigned int current_field_bit_mask;
+
+/* source buffer + lexer position + lookahead token */
+extern char *src;
+extern long src_len;
+extern long posi;
+extern long tok_start_pos;
+extern int line_no;
+extern int tok_line;
+extern struct Token tok;
+extern FILE *outf;
+extern const char *input_name;
+extern const char *output_name;
+extern char current_file_name[256];
+extern char predefined_date_text[16];
+extern char predefined_time_text[16];
+
+/* symbol tables */
+extern struct Sym globals[MAX_SYMS];
+extern int nglobals;
+extern struct Sym locals[MAX_LOCALS];
+extern int nlocals;
+extern int local_size;
+extern int param_offset;
+
+/* preprocessor macro table */
+extern struct Def defs[MAX_DEFINES];
+extern int ndefs;
+
+/* #if/#ifdef conditional-inclusion stack */
+extern int if_parent_active[MAX_IFSTACK];
+extern int if_this_active[MAX_IFSTACK];
+extern int if_seen_else[MAX_IFSTACK];
+extern int if_branch_taken[MAX_IFSTACK];
+extern int if_sp;
+extern int pp_active;
+
+/* string-literal pool */
+extern char *strings[MAX_STRINGS];
+extern int string_wide[MAX_STRINGS];
+extern int nstrings;
+
+/* deferred EXTRN emission list */
+extern struct Sym *used_extrns[MAX_USED_EXTRNS];
+extern int nused_extrns;
+
+/* per-function code-generation state */
+extern int label_id;
+extern int current_return_label;
+extern int current_return_type;
+extern int parse_function_return_type;
+extern int current_local_bytes;
+extern int max_function_local_bytes;
+extern int current_omit_ix_frame;
+extern int current_function_has_call;
+
+/* loop break/continue target stack + parser flags */
+extern int break_stack[MAX_FLOW];
+extern int cont_stack[MAX_FLOW];
+extern int nflow;
+extern int errors;
+extern int scan_mode;
+extern int decl_is_extern;
+extern int decl_is_static;
+extern int decl_is_const;      /* current declaration used const qualifier */
+extern int decl_is_register;   /* current decl used 'register' keyword */
+extern int expr_result_dead;
+extern int g_expr_type;
+extern int g_tok_long_suffix; /* set by lexer when L/l suffix seen on integer literal */
+extern int g_tok_unsigned_suffix; /* set for U/u suffix or non-decimal unsigned-int literal */
+
+/* user-defined goto labels (function-scoped) */
+extern char ulabel_names[MAX_USER_LABELS][64];
+extern int  ulabel_ids[MAX_USER_LABELS];
+extern int  ulabel_defined[MAX_USER_LABELS];
+extern int  ulabel_referenced[MAX_USER_LABELS];
+extern int  nulabels;
+
+/* enum constants (file-scoped) */
+extern char enum_const_names[MAX_ENUM_CONSTS][64];
+extern int  enum_const_values[MAX_ENUM_CONSTS];
+extern int  nenum_consts;
+
+/* communicates array length from array-typedef through parse_base_type */
+extern int g_typedef_array_len;
+extern int g_typedef_is_func;
+
+/* counter for naming anonymous structs/unions uniquely */
+extern int g_anon_struct_counter;
+
+/* most recently parsed function prototype/parameter-list metadata */
+extern int g_proto_has;
+extern int g_proto_nargs;
+extern int g_proto_variadic;
+extern int g_proto_types[MAX_PROTO_PARAMS];
+extern int g_funcptr_decl_array_len;
+extern int g_ptr_array_dim_count;
+extern int g_ptr_array_dims[8];
+extern int g_ptr_array_elem_size;
+extern int g_last_array_dim_count;
+extern int g_last_array_dims[8];
+
+/* ------------------------------------------------------------------------- *
+ * Cross-module function prototypes, grouped by owning module. (Generated to
+ * match each definition exactly; the compiler verifies the match.)
+ * ------------------------------------------------------------------------- */
+
+/* ---- asmname ---- */
+int asm_name_must_mangle(const char *cname);
+int asm_name_is_internal_public(const char *cname);
+const char *asm_name_for_runtime(const char *cname);
+const char *asm_name_for(const char *cname);
+
+/* ---- diag_emit ---- */
+void fatal(const char *msg);
+void init_predefined_macro_texts(void);
+void source_location_at(long ofs, char *filebuf, int filebufsz, int *linep);
+void error_here(const char *msg);
+void *xmalloc(size_t n);
+char *xstrdup2(const char *s);
+int new_label(void);
+void emit_ld_de_const(long v);
+void emit_add_const_to_hl(long v);
+void emit(const char *s);
+void emit_label(int n);
+void emit_jp_label(const char *op, int n);
+int is_ident_start(int c);
+int is_ident_char(int c);
+int peekc(void);
+int getc_src(void);
+
+/* ---- preproc ---- */
+int find_define(const char *name);
+void add_define_ex(const char *name, const char *value, int is_func, int nargs, char params[8][32]);
+void add_define(const char *name, const char *value);
+void pp_expr_skip_ws(void);
+int pp_expr_match_word(const char *w);
+long pp_expr_number(void);
+long pp_expr_charlit(void);
+long pp_expr_defined(void);
+long pp_expr_primary(void);
+long pp_expr_unary(void);
+long pp_expr_mul(void);
+long pp_expr_add(void);
+long pp_expr_shift(void);
+long pp_expr_rel(void);
+long pp_expr_eq(void);
+long pp_expr_bitand(void);
+long pp_expr_bitxor(void);
+long pp_expr_bitor(void);
+long pp_expr_andand(void);
+long pp_expr_oror(void);
+int pp_eval_simple_expr(const char *s);
+void remove_define(const char *name);
+void pp_recompute_active(void);
+void parse_preprocessor_line(void);
+void skip_ws_and_comments(void);
+int keyword_kind(const char *s);
+int read_escape(void);
+long parse_number_string(const char *s);
+unsigned long parse_float_literal_bits(const char *text);
+int parse_escape_string_char(const char **ps);
+int parse_charlit_string_value(const char *s, long *out);
+void replace_source_range(long start, long end, const char *text);
+void trim_arg(char *s);
+void strip_macro_replacement_comments(char *s);
+int read_macro_call_args(char args[8][128], int *nargs);
+void append_macro_string_literal(const char *arg, char *out, int *oip, int outsz);
+int macro_param_index(int di, const char *ident);
+int read_macro_call_args_text(const char **pp, char args[8][128], int *nargs);
+void macro_expand_argument_text(const char *in, char *out, int outsz, int depth);
+void paste_tokens_in_text(char *s);
+int replacement_param_raw_context(const char *start, const char *param_start, const char *param_end);
+void expand_function_macro(int di, char args[8][128], char *out, int outsz);
+int macro_value_is_float_literal(const char *s);
+int macro_number_should_expand_textually(const char *s);
+int define_number_value(const char *name, long *out, int depth);
+void next_token(void);
+int accept(int k);
+void expect(int k);
+
+/* ---- types ---- */
+int find_enum_const(const char *name);
+int is_type_qualifier_token(int k);
+void skip_type_qualifiers(void);
+int type_struct_id(int type);
+int make_struct_type(int id);
+int type_size(int type);
+int type_is_long(int type);
+int type_is_float(int type);
+void error_float_unsupported(const char *what);
+int object_array_size(int type, int count);
+int type_ptr_depth(int type);
+int type_add_ptr(int type);
+int type_decay_ptr(int type);
+int type_index_elem_size(int type);
+void copy_last_array_dims_to_sym(struct Sym *s);
+int sym_array_inner_count_from(struct Sym *s, int from_dim);
+int sym_array_index_elem_size(struct Sym *s, int index_count);
+int sym_pointer_array_index_elem_size(struct Sym *s, int cur_type, int index_count);
+void infer_omitted_first_dim_from_init(struct Sym *s, int init_elems);
+int find_struct_def(const char *name);
+int add_struct_def(const char *name);
+struct FieldDef *find_field_def(int struct_id, const char *field_name);
+void parse_struct_definition(int struct_id);
+int find_typedef(const char *name);
+void add_typedef_name_ex(const char *name, int type, int array_len, int is_func);
+void add_typedef_name(const char *name, int type, int array_len);
+int parse_base_type(void);
+int parse_type(void);
+void skip_type_name_param_list(void);
+int parse_type_name_decl(int *typep, int *sizep);
+
+/* ---- constexpr ---- */
+long parse_const_long_primary(void);
+long parse_const_long_mul(void);
+long parse_const_long_add(void);
+long parse_const_long_shift(void);
+long parse_const_long_rel(void);
+long parse_const_long_eq(void);
+long parse_const_long_band(void);
+long parse_const_long_xor(void);
+long parse_const_long_bitor(void);
+long parse_const_long_andand(void);
+long parse_const_long_expr(void);
+int parse_const_int_expr(void);
+int starts_type(void);
+
+/* ---- symbols ---- */
+struct Sym *find_local(const char *name);
+struct Sym *find_global(const char *name);
+struct Sym *find_sym(const char *name);
+int is_global_char_array_sym(struct Sym *s);
+void emit_global_char_index_addr(struct Sym *s);
+int emit_simple_local_index_to_hl(void);
+void emit_test_global_char_index_zero(struct Sym *s, int false_label);
+struct Sym *add_global(const char *name, int type, int storage);
+struct Sym *add_local_known(const char *name, int type, int storage, int offset, int bytes);
+struct Sym *add_local_alloc(const char *name, int type, int bytes);
+struct Sym *add_param_alloc(const char *name, int type);
+int add_string_ex(const char *s, int is_wide);
+char *read_adjacent_string_literals_ex(int *is_widep);
+void emit_extrn_if_needed(struct Sym *s);
+void emit_deferred_extrns(void);
+void emit_runtime_extrn_if_needed(const char *name);
+void emit_runtime_call(const char *name);
+int frame_sp_offset_for_sym(struct Sym *s);
+void emit_load_frame_addr_hl(struct Sym *s);
+void emit_load_sym_addr(struct Sym *s);
+int sym_can_ix_direct(struct Sym *s);
+int is_global_word_sym(struct Sym *s);
+void emit_load_global_word_direct(struct Sym *s);
+void emit_store_global_word_direct(struct Sym *s);
+void emit_load_sym_value_direct(struct Sym *s);
+void emit_load_sym_de_direct(struct Sym *s);
+void emit_store_hl_to_sym_direct(struct Sym *s);
+int try_emit_post_update_sym_direct(struct Sym *s, int op);
+void emit_incdec_sym_direct(struct Sym *s, int op);
+int base_struct_id_from_type(int type);
+void emit_add_field_offset(struct FieldDef *fd);
+int apply_field_access_from_addr(int cur_type, int arrow, int *is_array);
+void skip_balanced_bracket(int open_ch, int close_ch);
+int parse_offsetof_value(void);
+int sizeof_common_type(int a, int b, int op);
+int sizeof_parse_primary_type(int *typep, int *sizep);
+
+/* ---- fold ---- */
+unsigned long cf_mask_for_type(int type);
+unsigned long cf_sign_bit_for_type(int type);
+long cf_signed_value(struct ConstVal v);
+int cf_promote_type(int type);
+int cf_common_arith_type(int a, int b);
+void cf_cast_to_type(struct ConstVal *v, int type);
+void cf_convert_to_type(struct ConstVal *v, int type);
+int cf_is_expr_stop(int kind);
+unsigned long cf_parse_integer_literal_bits(const char *text);
+int cf_parse_primary(struct ConstVal *out);
+int cf_parse_unary(struct ConstVal *out);
+int cf_parse_mul(struct ConstVal *out);
+int cf_parse_add(struct ConstVal *out);
+int cf_parse_shift(struct ConstVal *out);
+int cf_parse_rel(struct ConstVal *out);
+int cf_parse_eq(struct ConstVal *out);
+int cf_parse_band(struct ConstVal *out);
+int cf_parse_bxor(struct ConstVal *out);
+int cf_parse_bor(struct ConstVal *out);
+int cf_parse_land(struct ConstVal *out);
+int cf_parse_lor(struct ConstVal *out);
+int try_parse_const_expr_value(struct ConstVal *out);
+void emit_const_value(struct ConstVal v);
+int try_gen_const_expr(void);
+
+/* ---- expr ---- */
+int parse_sizeof_expr_operand(void);
+void emit_load_from_hl(int type);
+void emit_store_de_to_addr_hl(int type);
+int type_is_struct_object(int type);
+int same_struct_type(int a, int b);
+void emit_copy_de_to_hl_bytes(int n);
+void emit_push_struct_arg_from_hl(int n);
+void emit_load_hl_from_sp_offset(int off);
+int parse_funcptr_declarator(int *ptype, char *name, int namesz);
+int parse_abstract_funcptr_declarator(int *ptype);
+int char_array_string_initializer_size(int base_type);
+void parse_array_declarator_dims(int base_type, int *total_len, int *first_stride_bytes, int allow_empty_first);
+int count_initializer_atoms_level(void);
+int count_omitted_array_initializer_atoms(void);
+void emit_init_auto_char_array_from_string(struct Sym *s, const char *str);
+int find_or_alloc_user_label_index(const char *name);
+int mark_user_label_reference(const char *name);
+int define_user_label(const char *name);
+void check_undefined_user_labels(void);
+int parse_enum_const_value(void);
+int bracket_expr_has_field_access(void);
+int try_fast_global_char_array_condition(int false_label);
+int is_assignment_token(int k);
+int skip_lvalue_syntax(void);
+int lookahead_is_assignment(void);
+int try_fast_global_char_array_store(void);
+void gen_post_update_symbol_addr_value(struct Sym *s, int op);
+int try_gen_deref_postinc_lvalue_addr(int *ptype);
+int try_parse_const_subscript(long *out);
+void gen_lvalue_addr(int *ptype);
+void gen_post_update_from_addr(int type, int op);
+int paren_starts_indirect_call(void);
+int try_inline_strcpy_call(char *name, long *arg_start, long *arg_end, int argc);
+void emit_promote_byte_to_int(int actual_type);
+void emit_promote_int_to_long(int actual_type, int expected_type);
+void emit_convert_int_to_float(int actual_type);
+void emit_convert_float_to_intlike(int target_type);
+int expected_arg_type(struct Sym *fn, int arg_index, int *ptype);
+void trim_small(char *s);
+void strip_line_directives_and_semi(char *s);
+int parse_simple_ident_text(const char *s, char *out);
+int va_size_from_text(const char *s);
+int try_builtin_stdarg_call(const char *name, long *arg_start, long *arg_end, int argc);
+int parse_call_args_after_lparen(long *arg_start, long *arg_end, int *argcp);
+int try_emit_fast_byte_add_const_snippet(const char *snippet);
+int emit_default_call_args(long *arg_start, long *arg_end, int argc);
+void emit_cleanup_stack_bytes(int bytes);
+int try_emit_struct_return_call_assignment(int lhs_type);
+int try_emit_push_struct_return_call_arg(const char *snippet, int want_type);
+void emit_call_hl_from_stack_offset(int off);
+void emit_extract_bitfield(void);
+void emit_store_bitfield_from_hl(void);
+int try_emit_string_fastcall(const char *name, long arg_start[MAX_SNAPSHOT], long arg_end[MAX_SNAPSHOT], int argc);
+int try_inline_cb_is_zero_call(const char *name, long arg_start[MAX_SNAPSHOT], long arg_end[MAX_SNAPSHOT], int argc);
+int try_gen_parenthesized_const_size_expr(void);
+int try_gen_parenthesized_deref_array_value(void);
+void gen_primary(void);
+int paren_starts_cast(void);
+int try_gen_simple_deref_value(void);
+void emit_incdec_value_in_dehl(int type, int op);
+void emit_pre_incdec_lvalue(int type, int op);
+void gen_unary(void);
+
+/* ---- cmp ---- */
+void gen_cmp(int op);
+void gen_cmp_typed(int op, int lhs_type);
+int is_relop_token(int k);
+void emit_signed_bias_for_relop(int op);
+void emit_cmp_branch_false(int op, int lfalse);
+void emit_cmp_branch_true(int op, int ltrue);
+int const_positive_snippet_value(const char *s, long *out);
+int snippet_const_expr_value(const char *snippet, struct ConstVal *out);
+int const_rel_result(struct ConstVal lhs, int op, struct ConstVal rhs, int *resultp);
+void emit_const_rel_branch(int rel_result, int label, int branch_when_true);
+void emit_cmp_branch_false_unsigned(int op, int lfalse);
+void emit_cmp_branch_true_unsigned(int op, int ltrue);
+void scan_until_stop_at_depth0(int stop_kind);
+int invert_relop_for_swap(int op);
+int parse_byte_const_operand(long *vp);
+int parse_global_byte_array_index_operand(struct ByteOperand *op);
+int parse_byte_operand_fast(struct ByteOperand *op);
+void emit_byte_operand_to_a(struct ByteOperand *op);
+void emit_cp_byte_operand(struct ByteOperand *op);
+int byte_operand_can_be_lhs(struct ByteOperand *op);
+void emit_byte_cmp_branch_after_cp(int op, int label, int branch_when_true);
+int gen_direct_byte_rel_branch_until(int label, int branch_when_true, int stop_kind);
+int simple_direct_condition_until(int stop_kind);
+int snippet_is_single_pointer_id(const char *s);
+const char *skip_snippet_ws_and_lines(const char *s);
+int snippet_simple_type(const char *s, int *typep);
+int snippet_needs_long_compare(const char *lhs, const char *rhs, int *commonp);
+void emit_branch_on_bool_hl(int label, int branch_when_true);
+void gen_direct_rel_branch_until(int op, int label, int branch_when_true, int stop_kind);
+int gen_direct_byte_bitand_branch_until(int label, int branch_when_true, int stop_kind);
+int gen_const_and_byte_condition_branch_until(int label, int branch_when_true, int stop_kind);
+int emit_cmp_const_branch_for_signed_local16(struct Sym *s, int op, long c, int label, int branch_when_true);
+int gen_direct_small_const_int_rel_branch_until(int label, int branch_when_true, int stop_kind);
+int gen_condition_branch_false_until(int lfalse, int stop_kind);
+int gen_condition_branch_true_until(int ltrue, int stop_kind);
+int gen_condition_branch_false(int lfalse);
+int gen_condition_branch_true(int ltrue);
+
+/* ---- ops ---- */
+void gen_signed_divmod16(int op);
+void gen_binop(int op);
+void gen_binop_typed(int op, int lhs_type);
+void emit_extend_to_long_typed(int source_type);
+void emit_extend_to_long(int source_is_unsigned);
+void gen_binop32(int op, int lhs_type);
+void gen_cmp32(int op, int lhs_type);
+void gen_binop32_typed(int op, int lhs_type);
+void emit_mul_hl_const(long v);
+int try_gen_const_times(void);
+int type_is_unsigned(int t);
+int type_is_arith(int t);
+int promote_int_type(int t);
+int common_arith_type(int a, int b);
+void emit_cast_16_to_common(int from_type, int common_type);
+int peek_simple_unary_type(void);
+int float_literal_pow2_exp(const char *s, int *exp_out);
+void emit_fscale_pow2(int exp_delta);
+int try_consume_float_pow2_compound_scale(int op);
+int try_gen_float_pow2_times(void);
+void gen_mul(void);
+void scale_hl_by_elem_size(int elem);
+int int_log2_pow2(int v);
+void emit_arith_shift_right_hl_const(int count);
+void emit_logical_shift_right_hl_const(int count);
+void emit_and_hl_const(unsigned int mask);
+void divide_hl_by_elem_size(int elem);
+void gen_add(void);
+int emit_shift_const_long(int op, int lhs_type, long count);
+void emit_shift_loop(int op, int lhs_type);
+void gen_shift(void);
+void emit_float_compare_call(int op);
+void gen_rel(void);
+void gen_eq(void);
+void gen_band(void);
+void gen_bxor(void);
+void gen_bor(void);
+void emit_test_expr_nonzero(int expr_type, int true_label, int branch_when_true);
+void gen_land(void);
+void gen_lor(void);
+void gen_conditional(void);
+
+/* ---- assign ---- */
+void emit_load_float_bits(unsigned long bits);
+int parse_float_assignment_literal(unsigned long *bits);
+int try_emit_float_rvalue_dehl(void);
+void emit_global_byte_array_index_addr(struct Sym *arr, struct Sym *idx_sym, long idx_const, int has_const);
+int try_fast_global_byte_array_store(void);
+void gen_assign(void);
+void gen_expr_no_comma(void);
+void gen_expr(void);
+
+/* ---- stmt_fast ---- */
+void emit_incdec_addr(int type, int op);
+int lookahead_is_post_incdec_statement(int *op_out);
+int try_fast_local_self_add_statement(void);
+int try_gen_incdec_statement(void);
+void emit_store_a_to_sym_byte_preserve_de(struct Sym *s, int byte_off);
+void emit_load_simple_byte_to_c(struct Sym *s, long val, int is_const);
+void emit_and_mask_byte_direct(struct Sym *mask_sym, int byte_index);
+int try_fast_crc_update_byte_simple_args(struct Sym *dst);
+int try_fast_crc_update_byte_statement(void);
+void gen_expr_statement(void);
+
+/* ---- decl ---- */
+int parse_float_init_literal(unsigned long *bits);
+int type_is_const_scalar_candidate(int type);
+int try_parse_local_const_initializer(int type, unsigned long *valuep);
+void emit_load_const_sym_value(struct Sym *s);
+int try_parse_auto_const_init_value(int type, long *valuep);
+void emit_store_const_to_local_array_elem(struct Sym *s, int elem_type, int index, long v);
+void emit_store_const_to_local_offset(struct Sym *s, int off, int type, long v);
+void emit_store_expr_to_local_offset(struct Sym *s, int off, int type);
+void emit_store_expr_to_local_array_elem(struct Sym *s, int elem_type, int index);
+void emit_zero_local_bytes(struct Sym *s, int off, int count);
+void emit_init_auto_char_array_at_offset_from_string(struct Sym *s, int baseoff, int count, const char *str);
+void emit_init_auto_struct_scalar(struct Sym *s, int off, int type);
+void emit_init_auto_struct_array(struct Sym *s, int baseoff, int elem_type, int count, int elem_size);
+long parse_struct_init_const_value(void);
+unsigned int bitfield_init_part(struct FieldDef *fd, long v);
+int next_parent_field_index(int sid, int start);
+void emit_store_const_bitfield_unit_to_local(struct Sym *s, int off, unsigned int unit);
+void emit_init_auto_struct_type(struct Sym *s, int baseoff, int type);
+void emit_init_auto_struct_from_list(struct Sym *s);
+void emit_init_auto_struct_array_from_list(struct Sym *s);
+int sym_array_elems_from_level(struct Sym *s, int level);
+int sym_array_total_elems(struct Sym *s);
+void emit_init_auto_array_scalar(struct Sym *s, int elem_type, int *np);
+void emit_init_auto_array_level(struct Sym *s, int elem_type, int *np, int level);
+void emit_init_auto_array_from_list(struct Sym *s, int elem_type);
+void gen_local_decl_after_type(int base);
+
+/* ---- stmt ---- */
+void gen_compound(void);
+void gen_if(void);
+void emit_load_sym_word_to_bc(struct Sym *s);
+void emit_store_de_to_sym_word(struct Sym *s);
+void emit_store_bc_to_sym_word(struct Sym *s);
+void emit_bc_add_const_small(int n);
+int parse_while_deref_nonzero_id(char *name, int namesz, struct Sym **sp, int *elemp);
+void emit_load_bc_pointee_to_hl_or_a(int elem);
+void emit_test_loaded_pointee_zero(int elem);
+void emit_compare_loaded_pointee_to_sym(int elem, struct Sym *csym);
+int try_gen_bc_pointer_copy_while(void);
+int try_gen_bc_pointer_find_while(void);
+int try_gen_bc_pointer_rfind_while(void);
+int try_gen_bc_pointer_scan_while(void);
+void gen_while(void);
+char *copy_range(long a, long b);
+void gen_snippet_expr(const char *snippet);
+void gen_snippet_lvalue_addr(const char *snippet, int *ptype);
+void skip_expr_until_rparen(long *startp, long *endp);
+void skip_for_cond(long *startp, long *endp);
+void gen_snippet_cond_true(const char *snippet, int ltrue);
+int for_init_always_enters_loop(void);
+int try_gen_bc_byte_array_cycle_for(void);
+void gen_for(void);
+void gen_return(void);
+void gen_switch_chain(void);
+int scan_switch_cases_for_table(int *case_vals, int *case_labs, int *case_countp, int *default_labp, int *minp, int *maxp);
+int scan_switch_cases_for_chain(int *case_vals, int *case_labs, int *case_countp, int *default_labp);
+int switch_label_for_value(int value, int *case_vals, int *case_labs, int ncase, int default_lab, int lend);
+void emit_switch_jump_table(int minv, int maxv, int *case_vals, int *case_labs, int ncase, int default_lab, int lend);
+void gen_switch_table(void);
+void gen_switch(void);
+void gen_do_while(void);
+void gen_statement(void);
+
+/* ---- func ---- */
+int current_void_is_empty_param_list(void);
+void skip_prototype_array_suffixes(int *ptype);
+void skip_prototype_function_suffix(void);
+void clear_parsed_prototype(void);
+void copy_parsed_prototype_to_sym(struct Sym *s);
+void remember_proto_param_type(int type);
+int old_style_param_list_starts(void);
+void recompute_param_offsets(void);
+void parse_old_style_param_id_list(void);
+void parse_old_style_param_declarations(void);
+void parse_param_list(void);
+int current_function_param_count(void);
+int current_function_safe_to_omit_ix(int return_type, int local_bytes);
+void emit_function_prologue(const char *name, int local_bytes, int omit_ix_frame);
+void emit_function_epilogue(void);
+void skip_initializer_or_decl_tail(void);
+int local_name_address_taken_ahead(const char *name);
+void scan_local_decl_after_type(int base);
+void scan_static_local_decl_after_type(int base);
+void scan_function_body(void);
+void parse_typedef_decl(void);
+int parse_global_init_atom(long *val, char *label, int labelsz);
+void append_global_init(struct Sym *s, const char *label, long v, int bytes, int is_label);
+void append_global_zero_bytes(struct Sym *s, int bytes);
+void append_global_char_array_string(struct Sym *s, int count, const char *str);
+void parse_global_init_array(struct Sym *s, int elem_type, int count, int elem_size);
+void parse_global_init_struct(struct Sym *s, int type);
+void parse_global_init_type(struct Sym *s, int type, int size);
+void parse_global_scalar_array_init_scalar(struct Sym *s, int *np);
+void parse_global_scalar_array_zero_to(struct Sym *s, int *np, int limit);
+void parse_global_scalar_array_init_level(struct Sym *s, int *np, int level);
+void parse_global_init_list(struct Sym *s);
+void parse_function_or_global(int base_type);
+void add_predefined_extern(const char *name, int type, int storage);
+void parse_translation_unit(void);
+
+/* ---- data ---- */
+int init_label_is_number(const char *p);
+void emit_init_numeric(long v, int bytes);
+int init_label_is_string_literal_label(const char *p);
+void emit_init_label_or_number(const char *p, int bytes);
+void emit_data(void);
+
+#endif /* DCC_H */

@@ -15,5 +15,6 @@ int write( int fd, const void *buf, size_t count );
 int close( int fd );
 off_t lseek( int fd, off_t offset, int whence );
 int fsync( int fd );
+int fdatasync( int fd );
 
 #endif /* _UNISTD_H */

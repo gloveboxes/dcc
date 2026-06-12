@@ -40,4 +40,9 @@ void *calloc( size_t num, size_t size );
 void *realloc( void *ptr, size_t size );
 void free( void *ptr );
 
+/* dcc extension (not C89): direct 8-bit port I/O.  inp() runs IN A,(port)
+ * and outp() runs OUT (port),A; only the low 8 bits of port are significant. */
+int  inp( unsigned port );
+void outp( unsigned port, unsigned val );
+
 #endif

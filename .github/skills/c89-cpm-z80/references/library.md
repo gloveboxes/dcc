@@ -111,6 +111,11 @@ calling convention, not the memory layout.)
   on equal keys `bsearch` may return any matching element.
 - `atoi`/`atol` skip leading space, accept `+`/`-`, stop at first non-digit;
   overflow wraps modulo the type width.
+- `inp(port)`/`outp(port,val)` are a **dcc extension** (declared in
+  `<stdlib.h>`, not C89): direct Z80 8-bit port I/O. `inp` runs `IN A,(port)`
+  and returns the byte zero-extended to `int` (0..255); `outp` runs
+  `OUT (port),A`, sending the low byte of `val`. Only the low 8 bits of `port`
+  are used; the byte read back is device/emulator dependent. See `tportio.c`.
 
 **Not present** (neither declared in `<stdlib.h>` nor in the runtime):
 `strtol`, `strtoul`, `abort`, `atexit`, `getenv`, `system`, the multibyte

@@ -468,6 +468,53 @@ _bdos:
         ret
 
 
+; inp(port) / outp(port, val)
+; Direct 8-bit port I/O.  These are a dcc extension (not C89), declared in
+; <stdlib.h>.
+;
+; C prototypes:
+;     extern int  inp(unsigned port);
+;     extern void outp(unsigned port, unsigned val);
+;
+; The Z80 IN A,(n) / OUT (n),A instructions take the port as an 8-bit immediate
+; operand.  inp()/outp() receive the port at run time, so the port byte is
+; patched into the instruction stream just before it executes (the runtime runs
+; from RAM in the CP/M TPA).  This immediate form is the one implemented across
+; the CP/M emulators and hardware this runtime targets, whose I/O port decode is
+; 8-bit, so only the low 8 bits of the port are used.  The register-indirect
+; IN A,(C) / OUT (C),A forms are avoided: those ED-prefixed opcodes are not
+; implemented on every target.  Being self-modifying, these are not re-entrant.
+        public  _inp
+_inp:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)        ; port (low byte)
+        ld      (inp_prt),a     ; patch the IN immediate operand
+        db      0dbh            ; IN A,(n)
+inp_prt:
+        db      0               ; <- port byte, patched above
+        ld      l,a
+        ld      h,0
+        pop     ix
+        ret
+
+        public  _outp
+_outp:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)        ; port (low byte)
+        ld      (outp_prt),a    ; patch the OUT immediate operand
+        ld      a,(ix+6)        ; value (low byte)
+        db      0d3h            ; OUT (n),A
+outp_prt:
+        db      0               ; <- port byte, patched above
+        ld      hl,0            ; void return
+        pop     ix
+        ret
+
+
         public  __slen
 __slen:
         ; size_t strlen(const char *s)

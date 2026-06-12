@@ -753,6 +753,22 @@ extern int bdos(int fn, int dearg);
 result comes back in `HL`/`A`. See [tbdos.c](tbdos.c) and [crc.c](crc.c) for
 working examples.
 
+**Direct port I/O.** For talking to hardware or an emulator's virtual devices,
+the runtime also provides 8-bit port I/O. Unlike `bdos`, these are declared in
+[stdlib.h](stdlib.h):
+
+```c
+int  inp(unsigned port);                 /* IN  A,(port) -> 0..255 */
+void outp(unsigned port, unsigned val);  /* OUT (port),A           */
+```
+
+`inp` runs the Z80 `IN A,(port)` instruction and returns the byte read,
+zero-extended to `int` (so the result is always 0..255). `outp` runs
+`OUT (port),A`, sending the low byte of `val` to the port. Only the low 8 bits
+of `port` are significant (CP/M-era I/O uses an 8-bit port address), and the
+byte read back is entirely device/emulator dependent. Neither is part of C89.
+See [tportio.c](tportio.c) for the unit test.
+
 ---
 
 ## Declared but not in the runtime

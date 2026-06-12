@@ -1656,6 +1656,17 @@ __ms_done:
         pop     bc
         ret
 
+__dmval:
+        db      0
+__dmc_lhs:
+        dw      0
+__dmc_rhs:
+        dw      0
+__dmquot:
+        dw      0
+__dmrem:
+        dw      0
+
         public  _abs
 _abs:
         ; int abs(int j)
@@ -4684,19 +4695,6 @@ __mffcb:
         dw      0
 __ulfcb:
         ds      12              ; scratch FCB for _unlink
-
-__dmval:
-        db      0
-__dmc_lhs:
-        dw      0
-__dmc_rhs:
-        dw      0
-__dmquot:
-        dw      0
-__dmrem:
-        dw      0
-__dmcnt:
-        db      0
 
 ; Read sector cache: records which 128-byte file record currently resides in
 ; the shared __dma buffer, so consecutive small reads of the same record

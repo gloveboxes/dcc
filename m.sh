@@ -5,8 +5,9 @@
 set -e
 
 echo "Building dcc..."
-gcc -O2 -o dcc dcc.c -static
-# cp dcc /mnt/c/users/david/onedrive/ntvcm/dcc
+pushd src/dcc
+./build-dcc.sh
+popd
 
 echo "Building dccpeep..."
 gcc -O2 -o dccpeep dccpeep.c -static

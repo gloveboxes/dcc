@@ -21,7 +21,12 @@ set -e
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
-CC=${CC:-clang}
+if [ -z "$CC" ]; then
+    case "$(uname)" in
+        Darwin) CC=clang ;;
+        *)      CC=gcc ;;
+    esac
+fi
 CFLAGS=${CFLAGS:--std=c89 -Wall -Wextra -O2}
 OUT="$REPO_ROOT/dcc"
 

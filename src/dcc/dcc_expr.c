@@ -1315,6 +1315,68 @@ void gen_lvalue_addr(int *ptype)
             }
         }
 
+        /*
+         * Handle postfix field access after subscripted pointer-to-struct
+         * lvalues, e.g. rs[rp].kind when rs macro-expands to G->s_rs.
+         * The field loop above handles G->s_rs before the bracket; this one
+         * handles .kind after the bracket.
+         */
+        while (tok.kind == '.' || tok.kind == TOK_ARROW) {
+            arrow = tok.kind == TOK_ARROW;
+            next_token();
+
+            cur_type = ptype ? *ptype : s->type;
+            cur_type = apply_field_access_from_addr(cur_type, arrow,
+                                                    &field_is_array);
+            addr_is_array = field_is_array;
+            addr_array_index_count = 0;
+            if (ptype) {
+                ptype[0] = cur_type;
+            }
+
+            while (accept('[')) {
+                cur_type = ptype ? *ptype : s->type;
+
+                if (!addr_is_array && type_ptr_depth(cur_type) > 0)
+                    emit_load_from_hl(cur_type);
+
+                {
+                    long const_index;
+
+                    if (try_parse_const_subscript(&const_index)) {
+                        if (addr_is_array)
+                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                        else
+                            elem_size = type_index_elem_size(cur_type);
+                        emit_add_const_to_hl(const_index * elem_size);
+                    } else {
+                        emit("\tpush hl\n");
+                        gen_expr();
+                        expect(']');
+                        if (addr_is_array)
+                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                        else
+                            elem_size = type_index_elem_size(cur_type);
+                        scale_hl_by_elem_size(elem_size);
+                        emit("\tex de,hl\n");
+                        emit("\tpop hl\n");
+                        emit("\tadd hl,de\n");
+                    }
+                }
+
+                if (addr_is_array) {
+                    addr_array_index_count++;
+                    if (addr_array_index_count >= current_field_array_dim_count)
+                        addr_is_array = 0;
+                } else {
+                    cur_type = type_decay_ptr(cur_type);
+                    if (ptype) {
+                        ptype[0] = cur_type;
+                    }
+                }
+            }
+        }
+
         return;
         } /* end lva_global_ptr_preloaded block */
     }
@@ -3088,8 +3150,7 @@ void gen_primary(void)
                     elem_size = type_index_elem_size(cur_type);
                 }
 
-                if (elem_size == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
-                else if (elem_size == 2) emit("\tadd hl,hl\n");
+                scale_hl_by_elem_size(elem_size);
                 emit("\tex de,hl\n");
                 emit("\tpop hl\n");
                 emit("\tadd hl,de\n");
@@ -3102,6 +3163,78 @@ void gen_primary(void)
                     val_is_array = 0;
             } else {
                 val_type = type_decay_ptr(cur_type);
+            }
+        }
+
+        /*
+         * Handle postfix field access after a subscripted pointer-to-struct,
+         * e.g. rs[rp].kind when rs is a macro for G->s_rs.  The earlier
+         * field loop handles G->s_rs before the bracket; this one handles
+         * the .kind after the bracket.
+         */
+        while (tok.kind == '.' || tok.kind == TOK_ARROW) {
+            indexed = 1;
+            arrow = tok.kind == TOK_ARROW;
+            next_token();
+            val_type = apply_field_access_from_addr(val_type, arrow,
+                                                    &field_is_array);
+            val_is_array = field_is_array;
+            val_array_index_count = 0;
+
+            while (accept('[')) {
+                indexed = 1;
+                cur_type = val_type;
+
+                if (!val_is_array && type_ptr_depth(cur_type) > 0)
+                    emit_load_from_hl(cur_type);
+
+                {
+                    long const_index;
+
+                    if (try_parse_const_subscript(&const_index)) {
+                        if (val_is_array) {
+                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                            if (current_field_array_dim_count > 0) {
+                                for (di = val_array_index_count + 1;
+                                     di < current_field_array_dim_count;
+                                     ++di)
+                                    elem_size *= current_field_array_dims[di];
+                            }
+                        } else {
+                            elem_size = type_index_elem_size(cur_type);
+                        }
+                        emit_add_const_to_hl(const_index * elem_size);
+                    } else {
+                        emit("\tpush hl\n");
+                        gen_expr();
+                        expect(']');
+
+                        if (val_is_array) {
+                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                            if (current_field_array_dim_count > 0) {
+                                for (di = val_array_index_count + 1;
+                                     di < current_field_array_dim_count;
+                                     ++di)
+                                    elem_size *= current_field_array_dims[di];
+                            }
+                        } else {
+                            elem_size = type_index_elem_size(cur_type);
+                        }
+
+                        scale_hl_by_elem_size(elem_size);
+                        emit("\tex de,hl\n");
+                        emit("\tpop hl\n");
+                        emit("\tadd hl,de\n");
+                    }
+                }
+
+                if (val_is_array) {
+                    val_array_index_count++;
+                    if (val_array_index_count >= current_field_array_dim_count)
+                        val_is_array = 0;
+                } else {
+                    val_type = type_decay_ptr(cur_type);
+                }
             }
         }
 

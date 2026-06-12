@@ -959,6 +959,56 @@ int parse_charlit_string_value(const char *s, long *out)
 }
 
 
+/* Macro names appearing inside their own replacement text must not be
+ * expanded again.  The real C preprocessor tracks disabled macro tokens;
+ * dcc uses textual reinsertion, so keep a small set of source ranges whose
+ * tokens came from one macro replacement and suppress only that same macro
+ * name while scanning the range.  This fixes cases such as:
+ *     #define words G->words
+ * where the member name in the replacement is intentionally the macro name.
+ */
+#define MAX_DISABLED_MACRO_RANGES 64
+static long disabled_macro_start[MAX_DISABLED_MACRO_RANGES];
+static long disabled_macro_end[MAX_DISABLED_MACRO_RANGES];
+static char disabled_macro_name[MAX_DISABLED_MACRO_RANGES][64];
+static int ndisabled_macro_ranges;
+
+static int macro_disabled_here(const char *name, long at)
+{
+    int i;
+
+    for (i = ndisabled_macro_ranges - 1; i >= 0; --i) {
+        if (at >= disabled_macro_start[i] && at < disabled_macro_end[i] &&
+            !strcmp(disabled_macro_name[i], name)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void add_disabled_macro_range(long start, long end, const char *name)
+{
+    int i;
+
+    if (!name || !name[0] || end <= start)
+        return;
+
+    if (ndisabled_macro_ranges >= MAX_DISABLED_MACRO_RANGES) {
+        for (i = 1; i < ndisabled_macro_ranges; ++i) {
+            disabled_macro_start[i - 1] = disabled_macro_start[i];
+            disabled_macro_end[i - 1] = disabled_macro_end[i];
+            strcpy(disabled_macro_name[i - 1], disabled_macro_name[i]);
+        }
+        ndisabled_macro_ranges--;
+    }
+
+    i = ndisabled_macro_ranges++;
+    disabled_macro_start[i] = start;
+    disabled_macro_end[i] = end;
+    strncpy(disabled_macro_name[i], name, sizeof(disabled_macro_name[i]) - 1);
+    disabled_macro_name[i][sizeof(disabled_macro_name[i]) - 1] = 0;
+}
+
 void replace_source_range(long start, long end, const char *text)
 {
     long n;
@@ -979,6 +1029,15 @@ void replace_source_range(long start, long end, const char *text)
     src = nsrc;
     src_len = start + n + rest;
     posi = start;
+}
+
+static void replace_source_range_disabled(long start, long end, const char *text, const char *macro_name)
+{
+    long n;
+
+    n = (long)strlen(text);
+    replace_source_range(start, end, text);
+    add_disabled_macro_range(start, start + n, macro_name);
 }
 
 void trim_arg(char *s)
@@ -1373,6 +1432,32 @@ void macro_expand_argument_text(const char *in, char *out, int outsz, int depth)
                 ident[ii++] = *p++;
             ident[ii] = 0;
 
+            if (!strcmp(ident, "__LINE__")) {
+                char numbuf[32];
+                sprintf(numbuf, "%d", tok_line);
+                for (ii = 0; numbuf[ii] && oi < outsz - 1; ++ii)
+                    out[oi++] = numbuf[ii];
+                continue;
+            }
+            if (!strcmp(ident, "__FILE__")) {
+                char filebuf[320];
+                const char *fp0;
+                int fj;
+                fp0 = tok.file[0] ? tok.file : (input_name ? input_name : "<input>");
+                fj = 0;
+                filebuf[fj++] = '"';
+                while (*fp0 && fj < (int)sizeof(filebuf) - 2) {
+                    if (*fp0 == '\\' || *fp0 == '"')
+                        filebuf[fj++] = '\\';
+                    filebuf[fj++] = *fp0++;
+                }
+                filebuf[fj++] = '"';
+                filebuf[fj] = 0;
+                for (ii = 0; filebuf[ii] && oi < outsz - 1; ++ii)
+                    out[oi++] = filebuf[ii];
+                continue;
+            }
+
             di = find_define(ident);
             if (di >= 0) {
                 if (defs[di].is_func) {
@@ -1744,6 +1829,21 @@ int define_number_value(const char *name, long *out, int depth)
     return 0;
 }
 
+static int macro_suppressed_member_name_at(long at)
+{
+    long p;
+
+    p = at;
+    while (p > 0 && (src[p - 1] == ' ' || src[p - 1] == '\t' || src[p - 1] == '\r' || src[p - 1] == '\n'))
+        p--;
+
+    if (p > 0 && src[p - 1] == '.')
+        return 1;
+    if (p > 1 && src[p - 2] == '-' && src[p - 1] == '>')
+        return 1;
+    return 0;
+}
+
 void next_token(void)
 {
     int c, d, i, di;
@@ -1850,6 +1950,9 @@ void next_token(void)
         }
 
         di = find_define(tok.text);
+        if (di >= 0 && (macro_disabled_here(tok.text, tok_start_pos) ||
+                        macro_suppressed_member_name_at(tok_start_pos)))
+            di = -1;
         if (di >= 0) {
             long dv;
             const char *rv;
@@ -1914,7 +2017,7 @@ void next_token(void)
                          * chained macros and keyword-like macros go back through
                          * the normal lexer instead of becoming a dead identifier.
                          */
-                        replace_source_range(tok_start_pos, posi, rv0);
+                        replace_source_range_disabled(tok_start_pos, posi, rv0, defs[di].name);
                         next_token();
                         return;
                     }
@@ -1931,7 +2034,7 @@ void next_token(void)
                  * were left as undefined identifiers.  Reinsert the replacement
                  * text and lex it normally.
                  */
-                replace_source_range(tok_start_pos, posi, rv_base);
+                replace_source_range_disabled(tok_start_pos, posi, rv_base, defs[di].name);
                 next_token();
                 return;
             }

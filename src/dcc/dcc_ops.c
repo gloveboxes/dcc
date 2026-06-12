@@ -409,35 +409,67 @@ int peek_simple_unary_type(void)
             next_token();
             {
                 int nsubs;
+                int dim_count;
+                int base_type;
                 nsubs = 0;
-                while (tok.kind == '[') {
-                    skip_balanced_bracket('[', ']');
-                    nsubs++;
+                dim_count = s->dim_count;
+                base_type = s->type;
 
-                    if (is_arr) {
-                        /* A real array subscript consumes one array dimension.
-                         * If dimensions remain, the result is still an array
-                         * expression that decays to a pointer in value context;
-                         * otherwise it is the scalar element type. */
-                        if (s->dim_count > 0 && nsubs < s->dim_count)
-                            tt = type_add_ptr(s->type);
-                        else
-                            tt = s->type;
-                        if (s->dim_count <= 0 || nsubs >= s->dim_count)
-                            is_arr = 0;
-                    } else if (s->dim_count > 0 && type_ptr_depth(s->type) > 0) {
-                        /* Pointer-to-array declarators need one more subscript
-                         * than their stored array-dimension count to reach the
-                         * scalar element.  This lookahead is used by +/-, so a
-                         * misclassified rp[row][0] as a pointer caused integer
-                         * addition to be scaled as pointer arithmetic. */
-                        if (nsubs <= s->dim_count)
-                            tt = type_add_ptr(type_decay_ptr(s->type));
-                        else
-                            tt = type_decay_ptr(s->type);
-                    } else {
-                        tt = type_decay_ptr(tt);
+                for (;;) {
+                    if (tok.kind == '[') {
+                        skip_balanced_bracket('[', ']');
+                        nsubs++;
+
+                        if (is_arr) {
+                            /* A real array subscript consumes one array dimension.
+                             * If dimensions remain, the result is still an array
+                             * expression that decays to a pointer in value context;
+                             * otherwise it is the scalar element type. */
+                            if (dim_count > 0 && nsubs < dim_count)
+                                tt = type_add_ptr(base_type);
+                            else
+                                tt = base_type;
+                            if (dim_count <= 0 || nsubs >= dim_count)
+                                is_arr = 0;
+                            continue;
+                        } else if (dim_count > 0 && type_ptr_depth(base_type) > 0) {
+                            /* Pointer-to-array declarators need one more subscript
+                             * than their stored array-dimension count to reach the
+                             * scalar element. */
+                            if (nsubs <= dim_count)
+                                tt = type_add_ptr(type_decay_ptr(base_type));
+                            else
+                                tt = type_decay_ptr(base_type);
+                            continue;
+                        } else {
+                            tt = type_decay_ptr(tt);
+                            continue;
+                        }
                     }
+
+                    if (tok.kind == '.' || tok.kind == TOK_ARROW) {
+                        struct FieldDef *fd;
+                        int sid;
+
+                        next_token();
+                        if (tok.kind != TOK_ID)
+                            break;
+
+                        sid = base_struct_id_from_type(tt);
+                        fd = find_field_def(sid, tok.text);
+                        if (!fd)
+                            break;
+
+                        tt = fd->is_array ? fd->elem_type : fd->type;
+                        is_arr = fd->is_array;
+                        dim_count = fd->dim_count;
+                        base_type = fd->elem_type;
+                        nsubs = 0;
+                        next_token();
+                        continue;
+                    }
+
+                    break;
                 }
             }
             t = tt;

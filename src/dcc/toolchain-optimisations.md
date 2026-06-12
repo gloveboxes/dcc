@@ -15,7 +15,7 @@ The compiler was a single 18,841-line translation unit (`src/ddc.c`). It is now 
 into **18 `.c` modules plus one umbrella header**, using true separate compilation.
 
 - Root `dcc.c` on `main` is **untouched**.
-- `src/ddc.c` is retained as the pre-split reference snapshot.
+- `src/ddc.c` is retained as the pre-split reference snapshot.[^upstream-sync]
 - `src/dcc/dcc.h` is the single shared contract.
 - `src/dcc/dcc_state.c` is the single definition site for all shared globals.
 
@@ -216,3 +216,24 @@ Aggregate across the full 124-app `runall` corpus:
 
 Conclusion: the optimisations are **correct**; A and C1 deliver the value, B and D are correct
 but near-inert.
+
+---
+
+[^upstream-sync]: **Porting upstream compiler fixes after a sync.** The modules were split
+    from `src/ddc.c`, a snapshot of the monolith taken *before* upstream
+    (`davidly/dcc`) landed commit `77e5334` ("fix dcc bugs with macro name collisions with
+    struct fields and accessing arrays of structs"). After the branch was rebased onto the
+    synced `main`, the new upstream test programs `tstfield`, `tstretst`, and `fint` failed
+    under the modular compiler (crash / compile errors / miscompile) precisely because the
+    modules predated that fix; `bint` already passed. The fix delta
+    (`git diff --no-index src/ddc.c dcc.c`) was ported by hand into the relevant modules —
+    self-referential macro suppression and `__LINE__`/`__FILE__` argument expansion in
+    `dcc_preproc.c`, the postfix field-access-after-subscript loops (and the
+    `scale_hl_by_elem_size` refactor) in `dcc_expr.c`, and the subscript/field lookahead
+    rewrite in `dcc_ops.c`. All helpers the fix relied on
+    (`apply_field_access_from_addr`, `try_parse_const_subscript`, `base_struct_id_from_type`,
+    `find_field_def`, `current_field_array_*`) already existed in the modules. After the port
+    the four apps compile to **byte-identical** `.MAC` versus the upstream root `dcc.c`, and the
+    full `runall.sh` regression is green in both peephole and no-peephole modes (130/130 app
+    sections matching baseline). Reconciling these compiler fixes into the modules is
+    independent of the modularisation and peephole work described above.

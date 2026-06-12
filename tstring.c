@@ -168,10 +168,6 @@ int main( int argc, char * argv[] )
             printf( "%2d (%2d): %s\n", len, l, ac + start );
             ac[ end ] = orig;
         }
-
-        #ifdef TEST_WCHAR_T
-            test_wide();
-        #endif
     }
 
     printf( "tnarrow completed with great success\n" );

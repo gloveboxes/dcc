@@ -8307,6 +8307,16 @@ _dcls:
         ld      hl,0
         ret
 
+; Opaque DIR object, FCB, DMA buffer, and one static dirent.  This API is
+; deliberately non-reentrant, matching the tiny CP/M runtime style.
+__dirob:        db      0
+__dridx:        db      0
+__drhav:        db      0
+__drdn:         db      1
+__drfcb:        ds      36
+__drdma:        ds      128
+__drent:        ds      13
+
         public  _perror
 _perror:
         push    ix
@@ -8349,17 +8359,6 @@ __prend:
         ld      hl,0
         pop     ix
         ret
-
-
-; Opaque DIR object, FCB, DMA buffer, and one static dirent.  This API is
-; deliberately non-reentrant, matching the tiny CP/M runtime style.
-__dirob:        db      0
-__dridx:        db      0
-__drhav:        db      0
-__drdn:         db      1
-__drfcb:        ds      36
-__drdma:        ds      128
-__drent:        ds      13
 
 
 

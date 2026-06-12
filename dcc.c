@@ -1625,6 +1625,57 @@ static int parse_charlit_string_value(const char *s, long *out)
 }
 
 
+
+/* Macro names appearing inside their own replacement text must not be
+ * expanded again.  The real C preprocessor tracks disabled macro tokens;
+ * dcc uses textual reinsertion, so keep a small set of source ranges whose
+ * tokens came from one macro replacement and suppress only that same macro
+ * name while scanning the range.  This fixes cases such as:
+ *     #define words G->words
+ * where the member name in the replacement is intentionally the macro name.
+ */
+#define MAX_DISABLED_MACRO_RANGES 64
+static long disabled_macro_start[MAX_DISABLED_MACRO_RANGES];
+static long disabled_macro_end[MAX_DISABLED_MACRO_RANGES];
+static char disabled_macro_name[MAX_DISABLED_MACRO_RANGES][64];
+static int ndisabled_macro_ranges;
+
+static int macro_disabled_here(const char *name, long at)
+{
+    int i;
+
+    for (i = ndisabled_macro_ranges - 1; i >= 0; --i) {
+        if (at >= disabled_macro_start[i] && at < disabled_macro_end[i] &&
+            !strcmp(disabled_macro_name[i], name)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void add_disabled_macro_range(long start, long end, const char *name)
+{
+    int i;
+
+    if (!name || !name[0] || end <= start)
+        return;
+
+    if (ndisabled_macro_ranges >= MAX_DISABLED_MACRO_RANGES) {
+        for (i = 1; i < ndisabled_macro_ranges; ++i) {
+            disabled_macro_start[i - 1] = disabled_macro_start[i];
+            disabled_macro_end[i - 1] = disabled_macro_end[i];
+            strcpy(disabled_macro_name[i - 1], disabled_macro_name[i]);
+        }
+        ndisabled_macro_ranges--;
+    }
+
+    i = ndisabled_macro_ranges++;
+    disabled_macro_start[i] = start;
+    disabled_macro_end[i] = end;
+    strncpy(disabled_macro_name[i], name, sizeof(disabled_macro_name[i]) - 1);
+    disabled_macro_name[i][sizeof(disabled_macro_name[i]) - 1] = 0;
+}
+
 static void replace_source_range(long start, long end, const char *text)
 {
     long n;
@@ -1645,6 +1696,15 @@ static void replace_source_range(long start, long end, const char *text)
     src = nsrc;
     src_len = start + n + rest;
     posi = start;
+}
+
+static void replace_source_range_disabled(long start, long end, const char *text, const char *macro_name)
+{
+    long n;
+
+    n = (long)strlen(text);
+    replace_source_range(start, end, text);
+    add_disabled_macro_range(start, start + n, macro_name);
 }
 
 static void trim_arg(char *s)
@@ -2039,6 +2099,32 @@ static void macro_expand_argument_text(const char *in, char *out, int outsz, int
                 ident[ii++] = *p++;
             ident[ii] = 0;
 
+            if (!strcmp(ident, "__LINE__")) {
+                char numbuf[32];
+                sprintf(numbuf, "%d", tok_line);
+                for (ii = 0; numbuf[ii] && oi < outsz - 1; ++ii)
+                    out[oi++] = numbuf[ii];
+                continue;
+            }
+            if (!strcmp(ident, "__FILE__")) {
+                char filebuf[320];
+                const char *fp0;
+                int fj;
+                fp0 = tok.file[0] ? tok.file : (input_name ? input_name : "<input>");
+                fj = 0;
+                filebuf[fj++] = '"';
+                while (*fp0 && fj < (int)sizeof(filebuf) - 2) {
+                    if (*fp0 == '\\' || *fp0 == '"')
+                        filebuf[fj++] = '\\';
+                    filebuf[fj++] = *fp0++;
+                }
+                filebuf[fj++] = '"';
+                filebuf[fj] = 0;
+                for (ii = 0; filebuf[ii] && oi < outsz - 1; ++ii)
+                    out[oi++] = filebuf[ii];
+                continue;
+            }
+
             di = find_define(ident);
             if (di >= 0) {
                 if (defs[di].is_func) {
@@ -2410,6 +2496,22 @@ static int define_number_value(const char *name, long *out, int depth)
     return 0;
 }
 
+
+static int macro_suppressed_member_name_at(long at)
+{
+    long p;
+
+    p = at;
+    while (p > 0 && (src[p - 1] == ' ' || src[p - 1] == '\t' || src[p - 1] == '\r' || src[p - 1] == '\n'))
+        p--;
+
+    if (p > 0 && src[p - 1] == '.')
+        return 1;
+    if (p > 1 && src[p - 2] == '-' && src[p - 1] == '>')
+        return 1;
+    return 0;
+}
+
 static void next_token(void)
 {
     int c, d, i, di;
@@ -2503,6 +2605,9 @@ static void next_token(void)
         }
 
         di = find_define(tok.text);
+        if (di >= 0 && (macro_disabled_here(tok.text, tok_start_pos) ||
+                        macro_suppressed_member_name_at(tok_start_pos)))
+            di = -1;
         if (di >= 0) {
             long dv;
             const char *rv;
@@ -2567,7 +2672,7 @@ static void next_token(void)
                          * chained macros and keyword-like macros go back through
                          * the normal lexer instead of becoming a dead identifier.
                          */
-                        replace_source_range(tok_start_pos, posi, rv0);
+                        replace_source_range_disabled(tok_start_pos, posi, rv0, defs[di].name);
                         next_token();
                         return;
                     }
@@ -2584,7 +2689,7 @@ static void next_token(void)
                  * were left as undefined identifiers.  Reinsert the replacement
                  * text and lex it normally.
                  */
-                replace_source_range(tok_start_pos, posi, rv_base);
+                replace_source_range_disabled(tok_start_pos, posi, rv_base, defs[di].name);
                 next_token();
                 return;
             }
@@ -6633,6 +6738,68 @@ static void gen_lvalue_addr(int *ptype)
             }
         }
 
+        /*
+         * Handle postfix field access after subscripted pointer-to-struct
+         * lvalues, e.g. rs[rp].kind when rs macro-expands to G->s_rs.
+         * The field loop above handles G->s_rs before the bracket; this one
+         * handles .kind after the bracket.
+         */
+        while (tok.kind == '.' || tok.kind == TOK_ARROW) {
+            arrow = tok.kind == TOK_ARROW;
+            next_token();
+
+            cur_type = ptype ? *ptype : s->type;
+            cur_type = apply_field_access_from_addr(cur_type, arrow,
+                                                    &field_is_array);
+            addr_is_array = field_is_array;
+            addr_array_index_count = 0;
+            if (ptype) {
+                ptype[0] = cur_type;
+            }
+
+            while (accept('[')) {
+                cur_type = ptype ? *ptype : s->type;
+
+                if (!addr_is_array && type_ptr_depth(cur_type) > 0)
+                    emit_load_from_hl(cur_type);
+
+                {
+                    long const_index;
+
+                    if (try_parse_const_subscript(&const_index)) {
+                        if (addr_is_array)
+                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                        else
+                            elem_size = type_index_elem_size(cur_type);
+                        emit_add_const_to_hl(const_index * elem_size);
+                    } else {
+                        emit("\tpush hl\n");
+                        gen_expr();
+                        expect(']');
+                        if (addr_is_array)
+                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                        else
+                            elem_size = type_index_elem_size(cur_type);
+                        scale_hl_by_elem_size(elem_size);
+                        emit("\tex de,hl\n");
+                        emit("\tpop hl\n");
+                        emit("\tadd hl,de\n");
+                    }
+                }
+
+                if (addr_is_array) {
+                    addr_array_index_count++;
+                    if (addr_array_index_count >= current_field_array_dim_count)
+                        addr_is_array = 0;
+                } else {
+                    cur_type = type_decay_ptr(cur_type);
+                    if (ptype) {
+                        ptype[0] = cur_type;
+                    }
+                }
+            }
+        }
+
         return;
         } /* end lva_global_ptr_preloaded block */
     }
@@ -8406,8 +8573,7 @@ static void gen_primary(void)
                     elem_size = type_index_elem_size(cur_type);
                 }
 
-                if (elem_size == 4) { emit("\tadd hl,hl\n"); emit("\tadd hl,hl\n"); }
-                else if (elem_size == 2) emit("\tadd hl,hl\n");
+                scale_hl_by_elem_size(elem_size);
                 emit("\tex de,hl\n");
                 emit("\tpop hl\n");
                 emit("\tadd hl,de\n");
@@ -8420,6 +8586,78 @@ static void gen_primary(void)
                     val_is_array = 0;
             } else {
                 val_type = type_decay_ptr(cur_type);
+            }
+        }
+
+        /*
+         * Handle postfix field access after a subscripted pointer-to-struct,
+         * e.g. rs[rp].kind when rs is a macro for G->s_rs.  The earlier
+         * field loop handles G->s_rs before the bracket; this one handles
+         * the .kind after the bracket.
+         */
+        while (tok.kind == '.' || tok.kind == TOK_ARROW) {
+            indexed = 1;
+            arrow = tok.kind == TOK_ARROW;
+            next_token();
+            val_type = apply_field_access_from_addr(val_type, arrow,
+                                                    &field_is_array);
+            val_is_array = field_is_array;
+            val_array_index_count = 0;
+
+            while (accept('[')) {
+                indexed = 1;
+                cur_type = val_type;
+
+                if (!val_is_array && type_ptr_depth(cur_type) > 0)
+                    emit_load_from_hl(cur_type);
+
+                {
+                    long const_index;
+
+                    if (try_parse_const_subscript(&const_index)) {
+                        if (val_is_array) {
+                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                            if (current_field_array_dim_count > 0) {
+                                for (di = val_array_index_count + 1;
+                                     di < current_field_array_dim_count;
+                                     ++di)
+                                    elem_size *= current_field_array_dims[di];
+                            }
+                        } else {
+                            elem_size = type_index_elem_size(cur_type);
+                        }
+                        emit_add_const_to_hl(const_index * elem_size);
+                    } else {
+                        emit("\tpush hl\n");
+                        gen_expr();
+                        expect(']');
+
+                        if (val_is_array) {
+                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                            if (current_field_array_dim_count > 0) {
+                                for (di = val_array_index_count + 1;
+                                     di < current_field_array_dim_count;
+                                     ++di)
+                                    elem_size *= current_field_array_dims[di];
+                            }
+                        } else {
+                            elem_size = type_index_elem_size(cur_type);
+                        }
+
+                        scale_hl_by_elem_size(elem_size);
+                        emit("\tex de,hl\n");
+                        emit("\tpop hl\n");
+                        emit("\tadd hl,de\n");
+                    }
+                }
+
+                if (val_is_array) {
+                    val_array_index_count++;
+                    if (val_array_index_count >= current_field_array_dim_count)
+                        val_is_array = 0;
+                } else {
+                    val_type = type_decay_ptr(cur_type);
+                }
             }
         }
 
@@ -10539,35 +10777,67 @@ static int peek_simple_unary_type(void)
             next_token();
             {
                 int nsubs;
+                int dim_count;
+                int base_type;
                 nsubs = 0;
-                while (tok.kind == '[') {
-                    skip_balanced_bracket('[', ']');
-                    nsubs++;
+                dim_count = s->dim_count;
+                base_type = s->type;
 
-                    if (is_arr) {
-                        /* A real array subscript consumes one array dimension.
-                         * If dimensions remain, the result is still an array
-                         * expression that decays to a pointer in value context;
-                         * otherwise it is the scalar element type. */
-                        if (s->dim_count > 0 && nsubs < s->dim_count)
-                            tt = type_add_ptr(s->type);
-                        else
-                            tt = s->type;
-                        if (s->dim_count <= 0 || nsubs >= s->dim_count)
-                            is_arr = 0;
-                    } else if (s->dim_count > 0 && type_ptr_depth(s->type) > 0) {
-                        /* Pointer-to-array declarators need one more subscript
-                         * than their stored array-dimension count to reach the
-                         * scalar element.  This lookahead is used by +/-, so a
-                         * misclassified rp[row][0] as a pointer caused integer
-                         * addition to be scaled as pointer arithmetic. */
-                        if (nsubs <= s->dim_count)
-                            tt = type_add_ptr(type_decay_ptr(s->type));
-                        else
-                            tt = type_decay_ptr(s->type);
-                    } else {
-                        tt = type_decay_ptr(tt);
+                for (;;) {
+                    if (tok.kind == '[') {
+                        skip_balanced_bracket('[', ']');
+                        nsubs++;
+
+                        if (is_arr) {
+                            /* A real array subscript consumes one array dimension.
+                             * If dimensions remain, the result is still an array
+                             * expression that decays to a pointer in value context;
+                             * otherwise it is the scalar element type. */
+                            if (dim_count > 0 && nsubs < dim_count)
+                                tt = type_add_ptr(base_type);
+                            else
+                                tt = base_type;
+                            if (dim_count <= 0 || nsubs >= dim_count)
+                                is_arr = 0;
+                            continue;
+                        } else if (dim_count > 0 && type_ptr_depth(base_type) > 0) {
+                            /* Pointer-to-array declarators need one more subscript
+                             * than their stored array-dimension count to reach the
+                             * scalar element. */
+                            if (nsubs <= dim_count)
+                                tt = type_add_ptr(type_decay_ptr(base_type));
+                            else
+                                tt = type_decay_ptr(base_type);
+                            continue;
+                        } else {
+                            tt = type_decay_ptr(tt);
+                            continue;
+                        }
                     }
+
+                    if (tok.kind == '.' || tok.kind == TOK_ARROW) {
+                        struct FieldDef *fd;
+                        int sid;
+
+                        next_token();
+                        if (tok.kind != TOK_ID)
+                            break;
+
+                        sid = base_struct_id_from_type(tt);
+                        fd = find_field_def(sid, tok.text);
+                        if (!fd)
+                            break;
+
+                        tt = fd->is_array ? fd->elem_type : fd->type;
+                        is_arr = fd->is_array;
+                        dim_count = fd->dim_count;
+                        base_type = fd->elem_type;
+                        nsubs = 0;
+                        next_token();
+                        continue;
+                    }
+
+                    break;
                 }
             }
             t = tt;

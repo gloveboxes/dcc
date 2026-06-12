@@ -19,7 +19,8 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              tallocx tstdlib trw2 terrno tpostfld pint tswitch tppifcom tpostidx ^
              tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 ^
              tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom ^
-             tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp
+             tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield ^
+             bint fint tstretst
 
 echo --- optimized (ma peep) ---
 set "outputfile=test_dcc.txt"
@@ -59,7 +60,11 @@ for %%a in (%_applist%) do (
     ) else if "%%a"=="tchess" (
         %_emulator% %%a -c >>"%outfile%"
     ) else if "%%a"=="pint" (
-        %_emulator% %%a ttt.pas >>"%outfile%"
+        %_emulator% %%a e.pas >>"%outfile%"
+    ) else if "%%a"=="bint" (
+        %_emulator% %%a e.bas >>"%outfile%"
+    ) else if "%%a"=="fint" (
+        %_emulator% %%a e.f >>"%outfile%"
     ) else if "%%a"=="targs" (
         %_emulator% %%a a bb ccc dddd eeeee >>"%outfile%"
     ) else (

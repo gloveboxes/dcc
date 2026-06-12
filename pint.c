@@ -19,6 +19,7 @@
 #define MAXPARAM 8
 #define MAXSTR 16
 #define MAXVARLIST 16
+#define INT_BYTES 2   /* bytes per integer in the VM (Z80: sizeof(int)==2) */
 
 #define K_CONST 1
 #define K_VAR   2
@@ -61,17 +62,31 @@
 #define OP_WRS 32
 #define OP_WLN 33
 #define OP_ODD 34
+#define OP_LDGB  35   /* load byte from global scalar */
+#define OP_STGB  36   /* store byte to global scalar */
+#define OP_LDLB  37   /* load byte from local scalar */
+#define OP_STLB  38   /* store byte to local scalar */
+#define OP_LDGAB 39   /* load byte from global array */
+#define OP_STGAB 40   /* store byte to global array */
+#define OP_LDLAB 41   /* load byte from local array */
+#define OP_STLAB 42   /* store byte to local array */
 
 struct Ins {
     unsigned char op;
     int a;
     int b;
+    /* add filler so array access is faster power of 2. about 1% faster.
+        unsigned char f1;
+        unsigned char f2;
+        unsigned char f3;
+    */
 };
 
 struct Sym {
     char name[MAXNAME];
     unsigned char kind;
     unsigned char scope;
+    unsigned char esize;   /* element byte size: 1 or INT_BYTES */
     int val;
     int size;
     unsigned char isarr;
@@ -87,6 +102,7 @@ struct Proc {
     unsigned char ret_off;
     unsigned char isfunc;
     unsigned char pofs[MAXPARAM];
+    unsigned char pesz[MAXPARAM];  /* parameter element sizes */
     int filler_to_32;
 };
 
@@ -94,10 +110,10 @@ static struct Ins *code;
 static struct Sym *sym;
 static struct Proc *proc;
 static int *fret;
-static int *floc;
-static int *flp;
+static unsigned char *floc;
+static unsigned char *flp;
 
-static int *gmem;
+static unsigned char *gmem;
 static int *st;
 static int *stp;
 static char **strs;
@@ -117,6 +133,8 @@ static char text[MAXTOK];
 static int gtop;
 static int curproc = -1;
 static int errcnt;
+static int last_esize = INT_BYTES;  /* element byte size from last type_size() */
+static int last_isarr = 0;          /* was last type_size() call an array? */
 static int nstr;
 static int sp;
 static int fp;
@@ -189,6 +207,34 @@ static int storea_op(int scope)
     return OP_STGA;
 }
 
+static int load_op_e(int scope, int esize)
+{
+    if (esize == 1)
+        return scope ? OP_LDLB : OP_LDGB;
+    return scope ? OP_LDL : OP_LDG;
+}
+
+static int store_op_e(int scope, int esize)
+{
+    if (esize == 1)
+        return scope ? OP_STLB : OP_STGB;
+    return scope ? OP_STL : OP_STG;
+}
+
+static int loada_op_e(int scope, int esize)
+{
+    if (esize == 1)
+        return scope ? OP_LDLAB : OP_LDGAB;
+    return scope ? OP_LDLA : OP_LDGA;
+}
+
+static int storea_op_e(int scope, int esize)
+{
+    if (esize == 1)
+        return scope ? OP_STLAB : OP_STGAB;
+    return scope ? OP_STLA : OP_STGA;
+}
+
 static int func_kind(int isfunc)
 {
     if (isfunc)
@@ -198,9 +244,15 @@ static int func_kind(int isfunc)
 
 static int alloc_temp(void)
 {
-    if (curproc >= 0)
-        return proc[curproc].locals++;
-    return gtop++;
+    int off;
+    if (curproc >= 0) {
+        off = proc[curproc].locals;
+        proc[curproc].locals += INT_BYTES;
+        return off;
+    }
+    off = gtop;
+    gtop += INT_BYTES;
+    return off;
 }
 
 static void skip_brace_comment(void)
@@ -420,7 +472,8 @@ static int add_sym(const char *n, int k, int sc)
     strncpy(sym[i].name, n, MAXNAME - 1);
     sym[i].kind = k;
     sym[i].scope = sc;
-    sym[i].size = 1;
+    sym[i].size = INT_BYTES;
+    sym[i].esize = INT_BYTES;
     return i;
 }
 
@@ -460,17 +513,23 @@ static int parse_const_value(void)
 
 static int type_size(void)
 {
-    int lo;
-    int hi;
-    int sid;
+    int lo, hi, sid, esz, n;
 
-    if (isword(tok, "integer") || isword(tok, "boolean") || isword(tok, "byte")) {
+    if (isword(tok, "integer")) {
         next();
+        last_esize = INT_BYTES; last_isarr = 0;
+        return INT_BYTES;
+    }
+    if (isword(tok, "boolean") || isword(tok, "byte")) {
+        next();
+        last_esize = 1; last_isarr = 0;
         return 1;
     }
     sid = find_scope(text, 0);
     if (sid >= 0 && sym[sid].kind == K_TYPE) {
         next();
+        last_esize = sym[sid].esize;
+        last_isarr = sym[sid].isarr;
         return sym[sid].size;
     }
     if (isword(tok, "array")) {
@@ -481,11 +540,15 @@ static int type_size(void)
         hi = parse_const_value();
         need(']', 0);
         need(256, "of");
+        n = hi - lo + 1;
         type_size();
-        return hi - lo + 1;
+        esz = last_esize;
+        last_esize = esz;
+        last_isarr = 1;
+        return n * esz;
     }
     die("type expected");
-    return 1;
+    return INT_BYTES;
 }
 
 static void call_builtin(const char *name)
@@ -583,9 +646,9 @@ static void factor_call_or_var(const char *name)
     if (acc('[', 0)) {
         parse_expr();
         need(']', 0);
-        emit(loada_op(sym[si].scope), sym[si].base, 0);
+        emit(loada_op_e(sym[si].scope, sym[si].esize), sym[si].base, 0);
     } else {
-        emit(load_op(sym[si].scope), sym[si].base, 0);
+        emit(load_op_e(sym[si].scope, sym[si].esize), sym[si].base, 0);
     }
 }
 
@@ -751,9 +814,9 @@ static void assign_or_call(void)
     need(300, ":=");
     parse_expr();
     if (isarr)
-        emit(storea_op(sym[si].scope), sym[si].base, 0);
+        emit(storea_op_e(sym[si].scope, sym[si].esize), sym[si].base, 0);
     else
-        emit(store_op(sym[si].scope), sym[si].base, 0);
+        emit(store_op_e(sym[si].scope, sym[si].esize), sym[si].base, 0);
 }
 
 static void if_stmt(void)
@@ -823,22 +886,22 @@ static void for_stmt(void)
     si = find_sym(vn);
     need(300, ":=");
     parse_expr();
-    emit(store_op(sym[si].scope), sym[si].base, 0);
+    emit(store_op_e(sym[si].scope, sym[si].esize), sym[si].base, 0);
     need(256, "to");
     parse_expr();
     limit = alloc_temp();
     emit(store_op(sym[si].scope), limit, 0);
     need(256, "do");
     top = cp;
-    emit(load_op(sym[si].scope), sym[si].base, 0);
+    emit(load_op_e(sym[si].scope, sym[si].esize), sym[si].base, 0);
     emit(load_op(sym[si].scope), limit, 0);
     emit(OP_LE, 0, 0);
     jz = emit(OP_JZ, 0, 0);
     statement();
-    emit(load_op(sym[si].scope), sym[si].base, 0);
+    emit(load_op_e(sym[si].scope, sym[si].esize), sym[si].base, 0);
     emit(OP_PUSH, 1, 0);
     emit(OP_ADD, 0, 0);
-    emit(store_op(sym[si].scope), sym[si].base, 0);
+    emit(store_op_e(sym[si].scope, sym[si].esize), sym[si].base, 0);
     emit(OP_JMP, top, 0);
     patch(jz, cp);
 }
@@ -939,6 +1002,8 @@ static void types(void)
         need('=', 0);
         si = add_sym(n, K_TYPE, 0);
         sym[si].size = type_size();
+        sym[si].esize = last_esize;
+        sym[si].isarr = last_isarr;
         need(';', 0);
     }
 }
@@ -949,14 +1014,15 @@ static void add_var_name(const char *name, int sc, int sz)
 
     si = add_sym(name, K_VAR, sc);
     sym[si].size = sz;
-    sym[si].isarr = sz > 1;
+    sym[si].esize = last_esize;
+    sym[si].isarr = last_isarr;
     if (sc) {
         sym[si].base = proc[curproc].locals;
         proc[curproc].locals += sz;
     } else {
         sym[si].base = gtop;
         gtop += sz;
-        if (gtop >= MAXMEM)
+        if (gtop >= MAXMEM * INT_BYTES)
             die("global memory full");
     }
 }
@@ -992,7 +1058,7 @@ static void vars(int sc)
 static void parse_params(int pi, int sc)
 {
     char pn[MAXNAME];
-    int si;
+    int si, esz;
 
     if (acc('(', 0)) {
         if (tok != ')') {
@@ -1003,11 +1069,16 @@ static void parse_params(int pi, int sc)
                 next();
                 need(':', 0);
                 type_size();
+                esz = last_esize;
                 si = add_sym(pn, K_VAR, sc);
+                sym[si].esize = esz;
                 sym[si].base = proc[pi].locals;
                 if (proc[pi].nparam >= MAXPARAM)
                     die("too many params");
-                proc[pi].pofs[proc[pi].nparam++] = proc[pi].locals++;
+                proc[pi].pofs[proc[pi].nparam] = proc[pi].locals;
+                proc[pi].pesz[proc[pi].nparam] = esz;
+                proc[pi].nparam++;
+                proc[pi].locals += esz;
                 if (!acc(';', 0))
                     break;
             }
@@ -1023,7 +1094,9 @@ static void subprog(int isfunc)
     int old;
     int si;
     int sc;
+    int ret_esz;
 
+    ret_esz = INT_BYTES;
     next();
     if (tok != 256)
         die("proc name");
@@ -1044,9 +1117,12 @@ static void subprog(int isfunc)
     if (isfunc) {
         need(':', 0);
         type_size();
+        ret_esz = last_esize;
         si = add_sym(n, K_VAR, sc);
+        sym[si].esize = ret_esz;
         sym[si].base = proc[pi].locals;
-        proc[pi].ret_off = proc[pi].locals++;
+        proc[pi].ret_off = proc[pi].locals;
+        proc[pi].locals += ret_esz;
     }
     need(';', 0);
     consts();
@@ -1055,7 +1131,7 @@ static void subprog(int isfunc)
     proc[pi].entry = cp;
     block_stmt();
     if (isfunc)
-        emit(OP_LDL, proc[pi].ret_off, 0);
+        emit(ret_esz == 1 ? OP_LDLB : OP_LDL, proc[pi].ret_off, 0);
     emit(OP_RET, pi, 0);
     need(';', 0);
     curproc = old;
@@ -1127,11 +1203,14 @@ static void call_proc(int pi, int pc)
         exit(1);
     }
     fp++;
-    flp += MAXLOC;
-    memset(flp, 0, sizeof(int) * MAXLOC);
+    flp += MAXLOC * INT_BYTES;
+    memset(flp, 0, MAXLOC * INT_BYTES);
     fret[fp] = pc;
     for (i = proc[pi].nparam - 1; i >= 0; i--)
-        flp[proc[pi].pofs[i]] = popv();
+        if (proc[pi].pesz[i] == 1)
+            flp[proc[pi].pofs[i]] = (unsigned char)popv();
+        else
+            *(short *)(flp + proc[pi].pofs[i]) = (short)popv();
 }
 
 static void run(void)
@@ -1149,7 +1228,7 @@ static void run(void)
     stp = st;
     flp = floc;
     memset(fret, 0, sizeof(int) * MAXFRAME);
-    memset(floc, 0, sizeof(int) * MAXFRAME * MAXLOC);
+    memset(floc, 0, MAXFRAME * MAXLOC * INT_BYTES);
     for (;;) {
         in = &code[pc++];
         switch (in->op) {
@@ -1159,34 +1238,64 @@ static void run(void)
             pushv(in->a);
             break;
         case OP_LDG:
-            pushv(gmem[in->a]);
+            pushv(*(short *)(gmem + in->a));
             break;
         case OP_STG:
-            gmem[in->a] = popv();
+            *(short *)(gmem + in->a) = (short)popv();
             break;
         case OP_LDL:
-            pushv(flp[in->a]);
+            pushv(*(short *)(flp + in->a));
             break;
         case OP_STL:
-            flp[in->a] = popv();
+            *(short *)(flp + in->a) = (short)popv();
             break;
         case OP_LDGA:
             a = popv();
-            pushv(gmem[in->a + a]);
+            pushv(*(short *)(gmem + in->a + a * INT_BYTES));
             break;
         case OP_STGA:
             v = popv();
             a = popv();
-            gmem[in->a + a] = v;
+            *(short *)(gmem + in->a + a * INT_BYTES) = (short)v;
             break;
         case OP_LDLA:
             a = popv();
-            pushv(flp[in->a + a]);
+            pushv(*(short *)(flp + in->a + a * INT_BYTES));
             break;
         case OP_STLA:
             v = popv();
             a = popv();
-            flp[in->a + a] = v;
+            *(short *)(flp + in->a + a * INT_BYTES) = (short)v;
+            break;
+        case OP_LDGB:
+            pushv(gmem[in->a]);
+            break;
+        case OP_STGB:
+            gmem[in->a] = (unsigned char)popv();
+            break;
+        case OP_LDLB:
+            pushv(flp[in->a]);
+            break;
+        case OP_STLB:
+            flp[in->a] = (unsigned char)popv();
+            break;
+        case OP_LDGAB:
+            a = popv();
+            pushv(gmem[in->a + a]);
+            break;
+        case OP_STGAB:
+            v = popv();
+            a = popv();
+            gmem[in->a + a] = (unsigned char)v;
+            break;
+        case OP_LDLAB:
+            a = popv();
+            pushv(flp[in->a + a]);
+            break;
+        case OP_STLAB:
+            v = popv();
+            a = popv();
+            flp[in->a + a] = (unsigned char)v;
             break;
         case OP_ADD:
             b = popv();
@@ -1297,7 +1406,7 @@ static void run(void)
                 v = popv();
             pc = fret[fp];
             fp--;
-            flp -= MAXLOC;
+            flp -= MAXLOC * INT_BYTES;
             if (proc[pi].isfunc)
                 pushv(v);
             break;
@@ -1355,8 +1464,8 @@ static void init_compile_storage(void)
 static void init_run_storage(void)
 {
     fret = (int *)xcalloc(MAXFRAME, sizeof(int));
-    floc = (int *)xcalloc(MAXFRAME * MAXLOC, sizeof(int));
-    gmem = (int *)xcalloc(MAXMEM, sizeof(int));
+    floc = (unsigned char *)xcalloc(MAXFRAME * MAXLOC * INT_BYTES, 1);
+    gmem = (unsigned char *)xcalloc(MAXMEM * INT_BYTES, 1);
     st = (int *)xcalloc(MAXSTACK, sizeof(int));
     stp = st;
 }
@@ -1380,7 +1489,7 @@ static void print_stats(void)
     fprintf(stderr, "  Symbols:                  %d / %d\n", nsym, MAXSYM);
     fprintf(stderr, "  Procedures/functions:     %d / %d\n", nproc, MAXPROC);
     fprintf(stderr, "  Pascal strings:           %d / %d\n", nstr, MAXSTR);
-    fprintf(stderr, "  Global memory cells used: %d / %d\n", gtop, MAXMEM);
+    fprintf(stderr, "  Global memory bytes used: %d / %d\n", gtop, MAXMEM * INT_BYTES);
     fprintf(stderr, "  VM stack cells limit:     %d\n", MAXSTACK);
     fprintf(stderr, "  VM call frames limit:     %d\n", MAXFRAME);
     fprintf(stderr, "  VM locals per frame:      %d\n", MAXLOC);

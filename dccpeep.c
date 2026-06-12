@@ -3741,6 +3741,129 @@ static int pass_bool_from_cmp(void)
     return changed;
 }
 
+/* Return 1 if the flags set by inc (ix+d) — Z, S, H, PV but NOT C — are
+ * guaranteed dead at `start` (i.e. overwritten before any conditional branch
+ * that reads them).  Returns 0 when uncertain (conservative). */
+static int flags_dead_from(int start)
+{
+    int j;
+    char tmp[MAX_LINE];
+    for (j = start; j < start + 20 && j < nlines; j++) {
+        strip_peep_comment_copy(tmp, lines[j]);
+        /* Label: flags may arrive from a different path — stop scanning */
+        if (starts_label(tmp)) return 0;
+        /* Instructions that clobber Z/S/H/PV before any branch can read them */
+        if (strncmp(tmp, "or ",   3) == 0) return 1;
+        if (strcmp (tmp, "or a")    == 0)  return 1;
+        if (strncmp(tmp, "and ",  4) == 0) return 1;
+        if (strncmp(tmp, "xor ",  4) == 0) return 1;
+        if (strncmp(tmp, "cp ",   3) == 0) return 1;
+        if (strncmp(tmp, "add a,",6) == 0) return 1;
+        if (strncmp(tmp, "sub ",  4) == 0) return 1;
+        if (strncmp(tmp, "sbc a,",6) == 0) return 1;
+        if (strncmp(tmp, "adc a,",6) == 0) return 1;
+        if (strncmp(tmp, "sbc hl,",7)== 0) return 1;
+        if (strncmp(tmp, "call ", 5) == 0) return 1;  /* callee overwrites flags */
+        /* Conditional branches that read the flags inc modifies */
+        if (strncmp(tmp, "jp z,",  5) == 0) return 0;
+        if (strncmp(tmp, "jp nz,", 6) == 0) return 0;
+        if (strncmp(tmp, "jp m,",  5) == 0) return 0;
+        if (strncmp(tmp, "jp p,",  5) == 0) return 0;
+        if (strncmp(tmp, "jp pe,", 6) == 0) return 0;
+        if (strncmp(tmp, "jp po,", 6) == 0) return 0;
+        if (strncmp(tmp, "jr z,",  5) == 0) return 0;
+        if (strncmp(tmp, "jr nz,", 6) == 0) return 0;
+        if (strncmp(tmp, "call z,",  7) == 0) return 0;
+        if (strncmp(tmp, "call nz,", 8) == 0) return 0;
+        if (strncmp(tmp, "ret z",  5) == 0) return 0;
+        if (strncmp(tmp, "ret nz", 6) == 0) return 0;
+        if (strncmp(tmp, "ret m",  5) == 0) return 0;
+        if (strncmp(tmp, "ret p",  5) == 0) return 0;
+        if (strncmp(tmp, "ret pe", 6) == 0) return 0;
+        if (strncmp(tmp, "ret po", 6) == 0) return 0;
+    }
+    return 0;  /* conservative: scan limit exceeded or unknown */
+}
+
+/* Replace the 16-bit post-increment-through-stack pattern:
+ *   push hl / ld l,(ix+N) / ld h,(ix+N+1) /
+ *   push hl / inc hl / ld (ix+N),l / ld (ix+N+1),h / pop hl
+ * with:
+ *   push hl / ld l,(ix+N) / ld h,(ix+N+1) /
+ *   inc (ix+N) / jr nz,Lskip / inc (ix+N+1) / Lskip:
+ *
+ * After the pattern HL still holds the old (pre-increment) value of (ix+N),
+ * as required by the callers (e.g. "in = &code[pc++]").
+ * Saves 35T in the common (no-carry) case.  Only applied when the flags
+ * set by inc (ix+N) are dead before any conditional branch (flags_dead_from). */
+static int pass_postinc_ix_word(void)
+{
+    int i, off, off_store, changed = 0;
+    char inc_lo[64], inc_hi[64], jr_skip[96], skip_label[64], skip_def[72];
+
+    for (i = 0; i + 7 < nlines; i++) {
+        if (!eq(i, "push hl")) continue;
+        if (!peep_parse_ld_ix_pair(lines[i + 1], lines[i + 2], &off)) continue;
+        if (!eq(i + 3, "push hl")) continue;
+        if (!eq(i + 4, "inc hl")) continue;
+        if (!peep_parse_st_ix_pair(lines[i + 5], lines[i + 6], &off_store)) continue;
+        if (off_store != off) continue;
+        if (!eq(i + 7, "pop hl")) continue;
+        if (!flags_dead_from(i + 8)) continue;
+
+        sprintf(skip_label, "Lpeep_incw_%d", i);
+        sprintf(inc_lo,    "inc (ix%+d)", off);
+        sprintf(inc_hi,    "inc (ix%+d)", off + 1);
+        sprintf(jr_skip,   "jr nz, %s",   skip_label);
+        sprintf(skip_def,  "%s:",          skip_label);
+
+        replace1_tagged(i + 3, inc_lo, "postinc_ix_word");
+        replace1(i + 4, jr_skip);
+        replace1(i + 5, inc_hi);
+        replace1(i + 6, skip_def);
+        delete_n(i + 7, 1);
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+    return changed;
+}
+
+/* Fold `cp N; jp z, L1; jp nc, L2; L1:` into `cp N+1; jp nc, L2; L1:`.
+ * Both forms mean "if A <= N, fall through to L1; else goto L2".
+ * Eliminates one branch on the hot path; saves 10T.
+ * Valid when N < 255 so N+1 stays in the byte range. */
+static int pass_cp_jz_jpnc(void)
+{
+    int i, n, changed = 0;
+    char cond1[16], cond2[16], label1[128], label2[128];
+    char tmp[MAX_LINE], new_cp[32];
+    char *endp;
+
+    for (i = 0; i + 3 < nlines; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strncmp(tmp, "cp ", 3) != 0) continue;
+        n = (int)strtol(tmp + 3, &endp, 10);
+        if (*endp != 0 || n < 0 || n > 254) continue;
+
+        if (!peep_parse_any_cond_jump(lines[i + 1], cond1, label1)) continue;
+        if (strcmp(cond1, "z") != 0) continue;
+
+        if (!peep_parse_any_cond_jump(lines[i + 2], cond2, label2)) continue;
+        if (strcmp(cond2, "nc") != 0) continue;
+
+        if (!line_is_label_name(i + 3, label1)) continue;
+
+        sprintf(new_cp, "cp %d", n + 1);
+        replace1_tagged(i, new_cp, "cp_jz_jpnc");
+        delete_n(i + 1, 1);
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+    return changed;
+}
+
 /*
  * General signed 16-bit compare against a constant: fold the constant's half
  * of the sign bias at compile time.
@@ -9183,6 +9306,8 @@ int main(int argc, char **argv)
         if (pass_reg_bc_deref_byte_cmp()) changed = 1;
         if (pass_ix_pair_load_to_de()) changed = 1;
         if (pass_remove_ix_store_reload_hl()) changed = 1;
+        if (pass_postinc_ix_word()) changed = 1;
+        if (pass_cp_jz_jpnc()) changed = 1;
         if (pass_bool_from_cmp()) changed = 1;
         if (pass_elim_dead_ix_stores()) changed = 1;
         if (pass_remove_ix_store_reload_a()) changed = 1;

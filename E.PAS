@@ -7,7 +7,7 @@ type
     arrayType = array[ 0..DIGITS ] of byte;
 
 var
-    high, n, x, d, val : integer;
+    high, n, x : integer;
     a : arrayType;
 
 begin
@@ -27,11 +27,9 @@ begin
         high := high - 1;
         n := high;
         repeat
-            d := x DIV n;
-            a[ n ] := x - ( d * n );
+            a[ n ] := x MOD n;
+            x := 10 * a[ n - 1 ] + x DIV n;
             n := n - 1;
-            x := a[ n ] shl 1;
-            x := x + ( x shl 2 ) + d;
         until n = 0;
 
         Write( x );
@@ -41,4 +39,3 @@ begin
     writeln( 'done' );
 end.
 
-

@@ -98,9 +98,10 @@
 #define P_EMIT 26
 
 struct Ins { int op; int a; };
-struct Word { char name[MAXNAME]; int kind; int val; };
+struct Word { char name[MAXNAME]; int kind; int val; int end; };
 struct Ctl { int kind; int a; int b; };
-struct REnt { int kind; int a; int b; }; /* kind 1=return pc, 2=loop index/limit */
+struct REnt { int kind; int a; int b; int c; };
+/* kind 1=return pc, 2=loop index/limit, c=previous loop frame */
 
 struct State {
     char *s_src;
@@ -128,6 +129,7 @@ struct State {
     int s_verbose;
     int s_curword;
     int s_halt;
+    int s_loop_top;
 };
 static struct State *G;
 
@@ -156,6 +158,7 @@ static struct State *G;
 #define opt_verbose G->s_verbose
 #define curword G->s_curword
 #define halted G->s_halt
+#define loop_top G->s_loop_top
 
 static void die(const char *s)
 {
@@ -211,6 +214,50 @@ static void fold_last_lit_to(int op)
     struct Ins *ip;
     ip = code + cp - 1;
     ip->op = op;
+}
+
+static int op_has_local_target(int op)
+{
+    return op == OP_JMP || op == OP_JZ || op == OP_DO || op == OP_LOOP;
+}
+
+static int can_inline_word(int wi)
+{
+    int i, start, end, len, op;
+    struct Ins *ip;
+
+    if ((words + wi)->kind != W_COLON)
+        return 0;
+    start = (words + wi)->val;
+    end = (words + wi)->end;
+    if (end <= start)
+        return 0;
+    len = end - start;
+    if (len > 12)
+        return 0;
+    if ((code + end - 1)->op != OP_RET)
+        return 0;
+    for (i = start; i < end - 1; ++i) {
+        ip = code + i;
+        op = ip->op;
+        if (op == OP_RET || op_has_local_target(op) || op == OP_PSTR)
+            return 0;
+    }
+    return 1;
+}
+
+static int inline_word(int wi)
+{
+    int i, start, end;
+
+    if (!can_inline_word(wi))
+        return 0;
+    start = (words + wi)->val;
+    end = (words + wi)->end;
+    for (i = start; i < end - 1; ++i) {
+        emit((code + i)->op, (code + i)->a);
+    }
+    return 1;
 }
 
 #if 1
@@ -429,6 +476,20 @@ static void rpush(int kind, int a, int b)
     re->kind = kind;
     re->a = a;
     re->b = b;
+    re->c = 0;
+    rp++;
+}
+
+static void rpush_loop(int a, int b)
+{
+    struct REnt *re;
+    if (rp >= MAXRSTACK) die("return stack full");
+    re = rs + rp;
+    re->kind = 2;
+    re->a = a;
+    re->b = b;
+    re->c = loop_top;
+    loop_top = rp;
     rp++;
 }
 
@@ -443,11 +504,8 @@ static struct REnt rpop_kind(int kind)
 
 static int current_i(void)
 {
-    int i;
-    for (i = rp - 1; i >= 0; i--)
-        if ((rs + i)->kind == 2) return (rs + i)->a;
-    die("I outside loop");
-    return 0;
+    if (loop_top < 0) die("I outside loop");
+    return (rs + loop_top)->a;
 }
 
 static void run_at(int pc)
@@ -485,7 +543,7 @@ static void run_at(int pc)
             break;
         case OP_CALL:
             rpush(1, pc, 0);
-            pc = (words + in->a)->val;
+            pc = in->a;
             break;
         case OP_RET:
             if (rp <= 0) return;
@@ -496,7 +554,7 @@ static void run_at(int pc)
         case OP_JZ: a = pop(); if (!a) pc = in->a; break;
         case OP_DO:
             a = pop(); b = pop();
-            rpush(2, a, b);
+            rpush_loop(a, b);
             break; /* start, limit */
         case OP_LOOP:
             {
@@ -506,7 +564,7 @@ static void run_at(int pc)
                 if (re->kind != 2) die("LOOP without DO");
                 re->a = re->a + 1;
                 if (re->a < re->b) pc = in->a;
-                else rp--;
+                else { loop_top = re->c; rp--; }
             }
             break;
         case OP_I: push(current_i()); break;
@@ -580,7 +638,8 @@ static void compile_word(int wi)
     } else if ((words + wi)->kind == W_CONST || (words + wi)->kind == W_VAR) {
         emit(OP_LIT, (words + wi)->val);
     } else {
-        emit(OP_CALL, wi);
+        if (!inline_word(wi))
+            emit(OP_CALL, (words + wi)->val);
     }
 }
 
@@ -608,14 +667,16 @@ static void compile_definition(const char *name)
 {
     int wi, w, j;
     struct Ctl c;
+    struct Word *cwp;
     wi = add_word(name, W_COLON, cp);
+    cwp = words + wi;
     curword = wi;
     for (;;) {
         next();
         if (tok == 0) die("missing ;");
         if (tok == 258) { emit(OP_PSTR, add_string(text)); continue; }
         if (tok == 257) { emit(OP_LIT, ival); continue; }
-        if (!strcmp(text, ";")) { emit(OP_RET, 0); break; }
+        if (!strcmp(text, ";")) { emit(OP_RET, 0); cwp->end = cp; break; }
         if (!strcmp(text, "IF")) { j = emit(OP_JZ, 0); ctl_push(1, j, 0); continue; }
         if (!strcmp(text, "ELSE")) { c = ctl_pop(1); j = emit(OP_JMP, 0); patch(c.a, cp); ctl_push(2, j, 0); continue; }
         if (!strcmp(text, "THEN")) { if (nc && (ctl + nc - 1)->kind == 2) c=ctl_pop(2); else c=ctl_pop(1); patch(c.a, cp); continue; }
@@ -626,7 +687,7 @@ static void compile_definition(const char *name)
         if (!strcmp(text, "LOOP")) { c = ctl_pop(5); emit(OP_LOOP, c.a); continue; }
         if (!strcmp(text, "I")) { emit(OP_I, 0); continue; }
         if (!strcmp(text, "EXIT")) { emit(OP_RET, 0); continue; }
-        if (!strcmp(text, "RECURSE")) { emit(OP_CALL, curword); continue; }
+        if (!strcmp(text, "RECURSE")) { emit(OP_CALL, (words + curword)->val); continue; }
         w = find_word(text);
         if (w < 0) die("unknown word");
         compile_word(w);
@@ -682,6 +743,7 @@ static void init_state(void)
     if (!G) { fprintf(stderr, "out of memory\n"); exit(1); }
     G->s_line = 1;
     G->s_curword = -1;
+    G->s_loop_top = -1;
     code = (struct Ins *)xcalloc(MAXCODE, sizeof(struct Ins));
     words = (struct Word *)xcalloc(MAXWORDS, sizeof(struct Word));
     ctl = (struct Ctl *)xcalloc(MAXPATCH, sizeof(struct Ctl));

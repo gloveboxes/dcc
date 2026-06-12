@@ -854,11 +854,11 @@ int snippet_simple_type(const char *s, int *typep)
     }
 
     if (isdigit((unsigned char)*s)) {
-        typep[0] = TYPE_INT;
-        while (isxdigit((unsigned char)*s) || *s == 'x' || *s == 'X')
-            s++;
-        if (*s == 'l' || *s == 'L')
-            typep[0] = TYPE_LONG;
+        struct ConstVal cv;
+
+        if (!snippet_const_expr_value(s, &cv))
+            return 0;
+        typep[0] = promote_int_type(cv.type);
         return 1;
     }
 
@@ -927,6 +927,87 @@ void emit_branch_on_bool_hl(int label, int branch_when_true)
         emit_jp_label("jp z,", label);
 }
 
+/*
+ * Inline a 32-bit ordered comparison of a long value against a compile-time
+ * constant, branching to `label`, instead of calling the __lts/__lgs/...
+ * runtime helpers.  The long value must already be in DE:HL (DE = high word,
+ * HL = low word); `rhs_code` is the constant operand's source text.
+ *
+ * Returns 1 if it emitted the comparison+branch, 0 if it declined (RHS not a
+ * constant, a non-ordered relop, or a constant at the domain maximum where the
+ * C+1 normalization below would wrap) so the caller can fall back to the
+ * runtime path.  On the 0 path nothing is emitted here, but the caller has
+ * already emitted the LHS into DE:HL (needed by both paths).
+ *
+ * Technique:
+ *   1. Normalize `>` to `>= C+1` and `<=` to `< C+1`.  Because C is an integer
+ *      constant, this makes the boundary exact and leaves only `<` / `>=`,
+ *      neither of which needs to detect full 32-bit equality.
+ *   2. For signed comparisons, flip bit 31 of both operands (the value via
+ *      `ld a,d / xor 80h / ld d,a` at run time, the constant at compile time)
+ *      so signed ordering becomes unsigned ordering.
+ *   3. Compute value - C as an unsigned 32-bit subtract; the borrow (carry)
+ *      out of the high word is set exactly when value < C.
+ */
+int try_emit_long_cmp_const_branch(int op, const char *rhs_code, int common_type,
+                                   int label, int branch_when_true)
+{
+    struct ConstVal rcv;
+    unsigned long cbits;
+    int is_unsigned;
+    int op_eff;
+    int branch_on_carry;
+    unsigned long clo;
+    unsigned long chi;
+
+    if (op != '<' && op != '>' && op != TOK_LE && op != TOK_GE)
+        return 0;
+    if (!snippet_const_expr_value(rhs_code, &rcv))
+        return 0;
+
+    is_unsigned = (common_type & TYPE_UNSIGNED) != 0;
+    cf_convert_to_type(&rcv, common_type);
+    cbits = rcv.u & 0xffffffffUL;
+
+    op_eff = op;
+    if (op == '>' || op == TOK_LE) {
+        /* value > C  <=>  value >= C+1 ;  value <= C  <=>  value < C+1 */
+        if (is_unsigned) {
+            if (cbits == 0xffffffffUL)
+                return 0;               /* C+1 wraps past UINT32_MAX */
+        } else if (cbits == 0x7fffffffUL) {
+            return 0;                   /* C+1 wraps past INT32_MAX */
+        }
+        cbits = (cbits + 1UL) & 0xffffffffUL;
+        op_eff = (op == '>') ? TOK_GE : '<';
+    }
+
+    if (!is_unsigned) {
+        emit("\tld a,d\n\txor 80h\n\tld d,a\n");
+        cbits ^= 0x80000000UL;
+    }
+
+    clo = cbits & 0xffffUL;
+    chi = (cbits >> 16) & 0xffffUL;
+
+    /* value - C (unsigned 32-bit): carry set out of the high word <=> value < C */
+    if (!scan_mode)
+        fprintf(outf, "\tld bc,%lu\n", clo);
+    emit("\tor a\n\tsbc hl,bc\n");
+    emit("\tex de,hl\n");               /* HL = value high word, DE = low result (dead) */
+    if (!scan_mode)
+        fprintf(outf, "\tld bc,%lu\n", chi);
+    emit("\tsbc hl,bc\n");
+
+    /* op_eff is '<' or TOK_GE.  value < C  <=>  carry set. */
+    branch_on_carry = (op_eff == '<') == (branch_when_true != 0);
+    if (branch_on_carry)
+        emit_jp_label("jp c,", label);
+    else
+        emit_jp_label("jp nc,", label);
+    return 1;
+}
+
 void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
                                         int stop_kind)
 {
@@ -987,6 +1068,7 @@ void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
         }
     } else {
         int lhs_type;
+        int rhs_type;
         int ptr_cmp;
         int common_type;
 
@@ -994,25 +1076,67 @@ void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
             gen_snippet_expr(lhs_code);
             lhs_type = g_expr_type;
             emit_cast_16_to_common(lhs_type, common_type);
-            emit("\tpush de\n\tpush hl\n");
-            gen_snippet_expr(rhs_code);
-            emit_cast_16_to_common(g_expr_type, common_type);
-            gen_cmp32(op, common_type);
-            emit_branch_on_bool_hl(label, branch_when_true);
+            /* Prefer an inline compare against a constant RHS; the LHS is now
+             * in DE:HL, which both that path and the runtime fallback need. */
+            if (!try_emit_long_cmp_const_branch(op, rhs_code, common_type,
+                                                label, branch_when_true)) {
+                emit("\tpush de\n\tpush hl\n");
+                gen_snippet_expr(rhs_code);
+                emit_cast_16_to_common(g_expr_type, common_type);
+                gen_cmp32(op, common_type);
+                emit_branch_on_bool_hl(label, branch_when_true);
+            }
         } else {
             ptr_cmp = snippet_is_single_pointer_id(lhs_code) ||
                       snippet_is_single_pointer_id(rhs_code);
             gen_snippet_expr(lhs_code);
             lhs_type = g_expr_type;
-            emit("\tpush hl\n");
-            gen_snippet_expr(rhs_code);
-            emit("\tex de,hl\n\tpop hl\n");
-            if ((lhs_type & TYPE_UNSIGNED) || ptr_cmp) {
-                if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
-                else emit_cmp_branch_false_unsigned(op, label);
+
+            if (type_is_long(lhs_type)) {
+                /*
+                 * The LHS turned out to be a long expression that the snippet
+                 * pre-analysis (snippet_simple_type) could not classify, e.g.
+                 * a compound "a + b".  Compare as 32-bit so the high word is
+                 * not silently dropped; the RHS is widened to the common type.
+                 */
+                emit("\tpush de\n\tpush hl\n");
+                gen_snippet_expr(rhs_code);
+                rhs_type = g_expr_type;
+                common_type = common_arith_type(lhs_type, rhs_type);
+                emit_cast_16_to_common(rhs_type, common_type);
+                gen_cmp32(op, common_type);
+                emit_branch_on_bool_hl(label, branch_when_true);
             } else {
-                if (branch_when_true) emit_cmp_branch_true(op, label);
-                else emit_cmp_branch_false(op, label);
+                emit("\tpush hl\n");
+                gen_snippet_expr(rhs_code);
+                rhs_type = g_expr_type;
+                common_type = common_arith_type(lhs_type, rhs_type);
+
+                if (type_is_long(rhs_type)) {
+                    /*
+                     * The RHS is long but the LHS was generated as a 16-bit
+                     * value (only HL was pushed).  Reclaim the 16-bit LHS,
+                     * widen it to 32 bits, and compare as long with the
+                     * operands swapped (the RHS is already in DE:HL, so it
+                     * becomes gen_cmp32's stacked left operand and the relop
+                     * is inverted).
+                     */
+                    emit("\tpop bc\n");              /* BC = 16-bit LHS */
+                    emit("\tpush de\n\tpush hl\n");  /* stack = RHS (cmp32 LHS slot) */
+                    emit("\tld h,b\n\tld l,c\n");    /* HL = 16-bit LHS */
+                    emit_cast_16_to_common(lhs_type, common_type);
+                    gen_cmp32(invert_relop_for_swap(op), common_type);
+                    emit_branch_on_bool_hl(label, branch_when_true);
+                } else {
+                    emit("\tex de,hl\n\tpop hl\n");
+                    if ((common_type & TYPE_UNSIGNED) || ptr_cmp) {
+                        if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
+                        else emit_cmp_branch_false_unsigned(op, label);
+                    } else {
+                        if (branch_when_true) emit_cmp_branch_true(op, label);
+                        else emit_cmp_branch_false(op, label);
+                    }
+                }
             }
         }
     }

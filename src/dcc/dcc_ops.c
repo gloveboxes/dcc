@@ -85,6 +85,7 @@ void emit_extend_to_long_typed(int source_type)
     emit_promote_byte_to_int(source_type);
     if ((source_type & TYPE_UNSIGNED) || type_ptr_depth(source_type)) {
         emit("\tld de,0\n");
+        g_long_from16 = 2; /* zero-extended: low word is an unsigned 16-bit value */
     } else {
         /* Sign-extend signed 16-bit HL into DE:HL.  This is also correct
          * when the target type is unsigned long: C converts the negative
@@ -94,6 +95,7 @@ void emit_extend_to_long_typed(int source_type)
         emit("\tsbc a,a\n");
         emit("\tld d,a\n");
         emit("\tld e,a\n");
+        g_long_from16 = 1; /* sign-extended: low word is a signed 16-bit value */
     }
 }
 
@@ -157,6 +159,7 @@ void gen_binop32(int op, int lhs_type)
         emit("\tpop bc\n\tpop bc\n"); /* balance stack */
         break;
     }
+    g_long_from16 = 0;
 }
 
 /*
@@ -252,11 +255,15 @@ void emit_mul_hl_const(long v)
 int try_gen_const_times(void)
 {
     long v;
+    int const_is_wide;          /* constant does not fit a 16-bit int */
     long save_pos;
     long save_tok_start;
     int save_line;
     int save_tok_line;
+    int save_long_suffix;
+    int save_unsigned_suffix;
     struct Token save_tok;
+    int const_type;
 
     if (tok.kind != TOK_NUM && tok.kind != TOK_CHARLIT)
         return 0;
@@ -266,10 +273,23 @@ int try_gen_const_times(void)
           int_log2_pow2((int)v) >= 0))
         return 0;
 
+    /*
+     * Whether the literal is wider than a 16-bit int: a long suffix, or a
+     * magnitude outside the signed-16/unsigned-16 range.  The masked low word
+     * `v` may still be a qualifying small value (e.g. 65536 -> 0, 65541 -> 5),
+     * so this flag must be checked before using the 16-bit fast path.
+     */
+    const_is_wide = (tok.val > 0xffffL || tok.val < -32768L || g_tok_long_suffix);
+    const_type = const_is_wide ? TYPE_LONG : TYPE_INT;
+    if (g_tok_unsigned_suffix)
+        const_type |= TYPE_UNSIGNED;
+
     save_pos = posi;
     save_tok_start = tok_start_pos;
     save_line = line_no;
     save_tok_line = tok_line;
+    save_long_suffix = g_tok_long_suffix;
+    save_unsigned_suffix = g_tok_unsigned_suffix;
     save_tok = tok;
 
     next_token();
@@ -278,13 +298,72 @@ int try_gen_const_times(void)
         tok_start_pos = save_tok_start;
         line_no = save_line;
         tok_line = save_tok_line;
+        g_tok_long_suffix = save_long_suffix;
+        g_tok_unsigned_suffix = save_unsigned_suffix;
         tok = save_tok;
         return 0;
     }
 
     gen_unary();
-    emit_mul_hl_const(v);
-    return 1;
+
+    /*
+     * emit_mul_hl_const multiplies only the low 16 bits in HL.  Use it only
+     * when both the constant and the operand are plain 16-bit values.  If the
+     * constant is wide, or the operand turned out to be long or float, that
+     * fast path would silently drop the high word (or corrupt the float), so
+     * fall back to a correct full-width multiply with the constant as the
+     * second factor.  gen_mul's right-operand const fast path is already
+     * guarded by !type_is_long(common_type); this mirrors that for the
+     * left-operand prefix case.  g_expr_type after gen_unary is the reliable
+     * operand type (peek_simple_unary_type cannot see through parenthesized,
+     * dereferenced, or unary-prefixed operands).
+     */
+    if (!const_is_wide &&
+        !type_is_long(g_expr_type) && !type_is_float(g_expr_type)) {
+        int common;
+        common = common_arith_type(g_expr_type, const_type);
+        emit_mul_hl_const(v);
+        g_expr_type = common;
+        g_long_from16 = 0;
+        return 1;
+    }
+
+    if (type_is_float(g_expr_type)) {
+        /* operand (float) is in DE:HL; build (float)constant and multiply
+         * (multiplication is commutative, so operand-as-LHS is fine). */
+        emit("\tpush de\n\tpush hl\n");
+        if (!scan_mode) {
+            fprintf(outf, "\tld hl,%ld\n", save_tok.val & 0xffffL);
+            fprintf(outf, "\tld de,%ld\n", (save_tok.val >> 16) & 0xffffL);
+        }
+        emit_convert_int_to_float(save_unsigned_suffix ?
+                                  (TYPE_LONG | TYPE_UNSIGNED) : TYPE_LONG);
+        emit("\tpush de\n\tpush hl\n");
+        emit_runtime_call("__fmul");
+        emit("\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n");
+        g_expr_type = TYPE_FLOAT;
+        g_long_from16 = 0;
+        return 1;
+    }
+
+    /* Long operand, or a wide constant: do a correct full 32-bit multiply.
+     * The operand becomes the LHS on the stack and the full constant value is
+     * the RHS in DE:HL. */
+    {
+        int common;
+
+        common = common_arith_type(g_expr_type, const_type);
+        emit_cast_16_to_common(g_expr_type, common);
+        emit("\tpush de\n\tpush hl\n");
+        if (!scan_mode) {
+            fprintf(outf, "\tld hl,%ld\n", save_tok.val & 0xffffL);
+            fprintf(outf, "\tld de,%ld\n", (save_tok.val >> 16) & 0xffffL);
+        }
+        gen_binop32('*', common);
+        g_expr_type = common;
+        g_long_from16 = 0;
+        return 1;
+    }
 }
 
 
@@ -599,6 +678,53 @@ int int_log2_pow2(int v);
 void emit_logical_shift_right_hl_const(int count);
 void emit_and_hl_const(unsigned int mask);
 
+/*
+ * Choose a 16x16->32 multiply helper when both operands of a long multiply
+ * are values that were just widened from 16-bit (so their high words are pure
+ * sign/zero extension and carry no information).  This replaces the full
+ * 32x32 __lmul (a 16-iteration base loop plus two cross-product __mulu calls)
+ * with a single 16-iteration register loop.  Mixed signedness has no single
+ * correct 16x16 form, so fall back to __lmul there.
+ *   widen kind: 0 = not a widened 16-bit value, 1 = signed, 2 = unsigned.
+ */
+static const char *long_mul_widen_helper(int lhs_w, int rhs_w)
+{
+    /* 5-char names: L80 only treats the first 6 characters of a public symbol
+     * as significant, so __lmuls/__lmulu would alias __lmul.  __m16s/__m16u
+     * stay distinct. */
+    if (lhs_w == 1 && rhs_w == 1) return "__m16s";
+    if (lhs_w == 2 && rhs_w == 2) return "__m16u";
+    return 0;
+}
+
+/*
+ * Slow-path fix-up: a binary operator's LHS was emitted as a 16-bit value
+ * (only HL was pushed) but the RHS turned out to be a long that
+ * peek_simple_unary_type could not predict -- typically a parenthesized or
+ * otherwise compound expression such as  x + (a + b)  with long a, b.
+ *
+ * On entry: the 16-bit LHS is on top of the stack (one word) and the long
+ * RHS is in DE:HL.  Widen the LHS to common_type and run gen_binop32 so the
+ * result is the correct LHS op RHS with operand order preserved (which
+ * matters for '-', '/', '%').  Result left in DE:HL; the stack is balanced.
+ */
+static void gen_binop32_promote_16lhs(int op, int lhs_type, int common_type)
+{
+    emit("\tpop bc\n");                 /* BC = 16-bit LHS */
+    emit("\tpush de\n\tpush hl\n");     /* spill the long RHS (high, low) */
+    emit("\tld h,b\n\tld l,c\n");       /* HL = 16-bit LHS */
+    emit_cast_16_to_common(lhs_type, common_type);  /* DE:HL = LHS widened */
+    emit("\tpush de\n\tpush hl\n");     /* push LHS as gen_binop32's left operand */
+    emit("\tld hl,4\n\tadd hl,sp\n");   /* skip the pushed LHS to reach the RHS spill */
+    emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n");  /* DE = RHS low word */
+    emit("\tinc hl\n");
+    emit("\tld a,(hl)\n\tinc hl\n\tld h,(hl)\n\tld l,a\n");  /* HL = RHS high word */
+    emit("\tex de,hl\n");               /* DE:HL = RHS */
+    gen_binop32(op, common_type);       /* LHS op RHS -> DE:HL; pops the stacked LHS */
+    emit("\tpop bc\n\tpop bc\n");       /* discard the RHS spill */
+    g_long_from16 = 0;
+}
+
 void gen_mul(void)
 {
     int op;
@@ -733,19 +859,45 @@ void gen_mul(void)
         }
 
         if (type_is_long(common_type)) {
+            int lhs_w;
+            int rhs_w;
+            const char *mulhelp;
+
             emit_cast_16_to_common(lhs_type, common_type);
+            lhs_w = g_long_from16;      /* widen kind of the LHS operand */
             emit("\tpush de\n\tpush hl\n");
             gen_unary();
             emit_cast_16_to_common(g_expr_type, common_type);
-            gen_binop32(op, common_type);
+            rhs_w = g_long_from16;      /* widen kind of the RHS operand */
+
+            mulhelp = (op == '*') ? long_mul_widen_helper(lhs_w, rhs_w) : 0;
+            if (mulhelp) {
+                /* Same 8-byte stack convention as gen_binop32's l32call, but
+                 * the 16x16 helper reads only the two pushed low words. */
+                emit("\tpush de\n\tpush hl\n");
+                emit_runtime_call(mulhelp);
+                emit("\tld b,d\n\tld c,e\n\tex de,hl\n");
+                emit("\tld hl,8\n\tadd hl,sp\n\tld sp,hl\n");
+                emit("\tex de,hl\n\tld d,b\n\tld e,c\n");
+            } else {
+                gen_binop32(op, common_type);
+            }
         } else {
             emit("\tpush hl\n");
             gen_unary();
-            emit("\tex de,hl\n\tpop hl\n");
-            gen_binop_typed(op, common_type);
+            if (type_is_long(g_expr_type)) {
+                common_type = common_arith_type(lhs_type, g_expr_type);
+                gen_binop32_promote_16lhs(op, lhs_type, common_type);
+            } else {
+                emit("\tex de,hl\n\tpop hl\n");
+                gen_binop_typed(op, common_type);
+            }
         }
         lhs_type = common_type;
         g_expr_type = common_type;
+        /* The operator's result is a computed value, not a freshly widened
+         * 16-bit one, so a following multiply must not treat it as such. */
+        g_long_from16 = 0;
     }
 }
 
@@ -909,11 +1061,17 @@ void gen_add(void)
         } else {
             emit("\tpush hl\n");
             gen_mul();
-            emit("\tex de,hl\n\tpop hl\n");
-            gen_binop_typed(op, common_type);
+            if (type_is_long(g_expr_type)) {
+                common_type = common_arith_type(lhs_type, g_expr_type);
+                gen_binop32_promote_16lhs(op, lhs_type, common_type);
+            } else {
+                emit("\tex de,hl\n\tpop hl\n");
+                gen_binop_typed(op, common_type);
+            }
         }
         lhs_type = common_type;
         g_expr_type = common_type;
+        g_long_from16 = 0;
     }
 }
 
@@ -928,25 +1086,54 @@ int emit_shift_const_long(int op, int lhs_type, long count)
     is_left = (op == TOK_SHL || op == TOK_SHLEQ);
     is_unsigned = (lhs_type & TYPE_UNSIGNED) != 0;
 
-    if (count <= 0)
+    if (count <= 0) {
+        g_long_from16 = 0;
         return 1;
+    }
 
     if (count >= 32) {
         if (is_left || is_unsigned)
             emit("\tld hl,0\n\tld de,0\n");
         else
             emit("\tld a,d\n\trla\n\tsbc a,a\n\tld h,a\n\tld l,a\n\tld d,a\n\tld e,a\n");
+        g_long_from16 = 0;
         return 1;
     }
 
     if (is_left) {
-        if (count == 8) { emit("\tld d,e\n\tld e,h\n\tld h,l\n\tld l,0\n"); return 1; }
-        if (count == 16) { emit("\tld e,l\n\tld d,h\n\tld hl,0\n"); return 1; }
-        if (count == 24) { emit("\tld d,l\n\tld e,0\n\tld hl,0\n"); return 1; }
+        if (count == 8) { emit("\tld d,e\n\tld e,h\n\tld h,l\n\tld l,0\n"); g_long_from16 = 0; return 1; }
+        if (count == 16) { emit("\tld e,l\n\tld d,h\n\tld hl,0\n"); g_long_from16 = 0; return 1; }
+        if (count == 24) { emit("\tld d,l\n\tld e,0\n\tld hl,0\n"); g_long_from16 = 0; return 1; }
     } else if (is_unsigned) {
-        if (count == 8) { emit("\tld l,h\n\tld h,e\n\tld e,d\n\tld d,0\n"); return 1; }
-        if (count == 16) { emit("\tld l,e\n\tld h,d\n\tld de,0\n"); return 1; }
-        if (count == 24) { emit("\tld l,d\n\tld h,0\n\tld de,0\n"); return 1; }
+        if (count == 8) { emit("\tld l,h\n\tld h,e\n\tld e,d\n\tld d,0\n"); g_long_from16 = 0; return 1; }
+        if (count == 16) { emit("\tld l,e\n\tld h,d\n\tld de,0\n"); g_long_from16 = 0; return 1; }
+        if (count == 24) { emit("\tld l,d\n\tld h,0\n\tld de,0\n"); g_long_from16 = 0; return 1; }
+    } else {
+        /*
+         * Signed right shift by a whole number of bytes: the same byte
+         * moves as the unsigned case, but the vacated high bytes are filled
+         * with the replicated sign byte (0x00 or 0xFF) computed in A rather
+         * than zero.  DE:HL holds the value (D = MSB, L = LSB).
+         *   ld a,d / rla / sbc a,a  ->  A = 0x00 if non-negative, 0xFF if negative.
+         */
+        if (count == 8) {
+            emit("\tld a,d\n\trla\n\tsbc a,a\n");
+            emit("\tld l,h\n\tld h,e\n\tld e,d\n\tld d,a\n");
+            g_long_from16 = 0;
+            return 1;
+        }
+        if (count == 16) {
+            emit("\tld a,d\n\trla\n\tsbc a,a\n");
+            emit("\tld l,e\n\tld h,d\n\tld e,a\n\tld d,a\n");
+            g_long_from16 = 0;
+            return 1;
+        }
+        if (count == 24) {
+            emit("\tld a,d\n\trla\n\tsbc a,a\n");
+            emit("\tld l,d\n\tld h,a\n\tld e,a\n\tld d,a\n");
+            g_long_from16 = 0;
+            return 1;
+        }
     }
 
     return 0;
@@ -982,6 +1169,8 @@ void emit_shift_loop(int op, int lhs_type)
     emit("\tdec b\n");
     emit_jp_label("jp", ltop);
     emit_label(ldone);
+    if (type_is_long(lhs_type))
+        g_long_from16 = 0;
 }
 
 void gen_shift(void)
@@ -1025,6 +1214,7 @@ void gen_shift(void)
         }
 
         g_expr_type = lhs_type;
+        g_long_from16 = 0;
     }
 }
 
@@ -1084,8 +1274,25 @@ void gen_rel(void)
         } else {
             emit("\tpush hl\n");
             gen_shift();
-            emit("\tex de,hl\n\tpop hl\n");
-            gen_binop_typed(op, common_type);
+            if (type_is_long(g_expr_type)) {
+                /*
+                 * peek_simple_unary_type only sees the first term of the RHS,
+                 * so a compound RHS such as "y + la" (long) was mis-predicted
+                 * as 16-bit.  The RHS is actually long in DE:HL while only the
+                 * 16-bit LHS was pushed; widen the LHS and compare as 32-bit
+                 * with the operands swapped (the RHS becomes gen_cmp32's
+                 * stacked left operand, so the relop is inverted).
+                 */
+                int ct = common_arith_type(lhs_type, g_expr_type);
+                emit("\tpop bc\n");
+                emit("\tpush de\n\tpush hl\n");
+                emit("\tld h,b\n\tld l,c\n");
+                emit_cast_16_to_common(lhs_type, ct);
+                gen_cmp32(invert_relop_for_swap(op), ct);
+            } else {
+                emit("\tex de,hl\n\tpop hl\n");
+                gen_binop_typed(op, common_type);
+            }
         }
         g_expr_type = TYPE_INT;
         lhs_type = TYPE_INT;
@@ -1125,8 +1332,23 @@ void gen_eq(void)
         } else {
             emit("\tpush hl\n");
             gen_rel();
-            emit("\tex de,hl\n\tpop hl\n");
-            gen_binop_typed(op, common_type);
+            if (type_is_long(g_expr_type)) {
+                /*
+                 * Equality with a compound long RHS (e.g. "y + la") that
+                 * peek_simple_unary_type mis-predicted as 16-bit.  Widen the
+                 * 16-bit LHS and compare as 32-bit; == / != are commutative,
+                 * so the swapped-operand form is equivalent.
+                 */
+                int ct = common_arith_type(lhs_type, g_expr_type);
+                emit("\tpop bc\n");
+                emit("\tpush de\n\tpush hl\n");
+                emit("\tld h,b\n\tld l,c\n");
+                emit_cast_16_to_common(lhs_type, ct);
+                gen_cmp32(invert_relop_for_swap(op), ct);
+            } else {
+                emit("\tex de,hl\n\tpop hl\n");
+                gen_binop_typed(op, common_type);
+            }
         }
         g_expr_type = TYPE_INT;
         lhs_type = TYPE_INT;
@@ -1153,11 +1375,17 @@ void gen_band(void)
         } else {
             emit("\tpush hl\n");
             gen_eq();
-            emit("\tex de,hl\n\tpop hl\n");
-            gen_binop('&');
+            if (type_is_long(g_expr_type)) {
+                common_type = common_arith_type(lhs_type, g_expr_type);
+                gen_binop32_promote_16lhs('&', lhs_type, common_type);
+            } else {
+                emit("\tex de,hl\n\tpop hl\n");
+                gen_binop('&');
+            }
         }
         lhs_type = common_type;
         g_expr_type = common_type;
+        g_long_from16 = 0;
     }
 }
 
@@ -1181,11 +1409,17 @@ void gen_bxor(void)
         } else {
             emit("\tpush hl\n");
             gen_band();
-            emit("\tex de,hl\n\tpop hl\n");
-            gen_binop('^');
+            if (type_is_long(g_expr_type)) {
+                common_type = common_arith_type(lhs_type, g_expr_type);
+                gen_binop32_promote_16lhs('^', lhs_type, common_type);
+            } else {
+                emit("\tex de,hl\n\tpop hl\n");
+                gen_binop('^');
+            }
         }
         lhs_type = common_type;
         g_expr_type = common_type;
+        g_long_from16 = 0;
     }
 }
 
@@ -1209,11 +1443,17 @@ void gen_bor(void)
         } else {
             emit("\tpush hl\n");
             gen_bxor();
-            emit("\tex de,hl\n\tpop hl\n");
-            gen_binop('|');
+            if (type_is_long(g_expr_type)) {
+                common_type = common_arith_type(lhs_type, g_expr_type);
+                gen_binop32_promote_16lhs('|', lhs_type, common_type);
+            } else {
+                emit("\tex de,hl\n\tpop hl\n");
+                gen_binop('|');
+            }
         }
         lhs_type = common_type;
         g_expr_type = common_type;
+        g_long_from16 = 0;
     }
 }
 
@@ -1375,6 +1615,7 @@ void gen_conditional(void)
              */
             g_expr_type = common_arith_type(true_type, false_type);
         }
+        g_long_from16 = 0;
     }
 }
 

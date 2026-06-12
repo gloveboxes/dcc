@@ -9216,6 +9216,394 @@ static int pass_jp_to_plain_ret(void)
     return changed;
 }
 
+/* ------------------------------------------------------------------------- *
+ * jp -> jr relaxation.
+ *
+ * The compiler only ever emits 3-byte absolute jumps (jp).  Where the target
+ * is within the signed 8-bit relative range, a 2-byte jr is both smaller and
+ * (on the not-taken path) faster.  This pass converts
+ *
+ *     jp LABEL            -> jr LABEL
+ *     jp z,LABEL          -> jr z,LABEL      (and nz / c / nc)
+ *
+ * It is deliberately conservative:
+ *   - Only the four conditions jr can encode (z, nz, c, nc) plus the
+ *     unconditional form are touched.  `jp m,` (no jr form) and the indirect
+ *     `jp (hl)` are left alone (their targets are not plain labels).
+ *   - Byte addresses are modelled with an *upper bound* per line (see
+ *     instr_size_upper).  Over-estimating sizes can only make the pass decide
+ *     a branch is out of range when it is actually in range; it can never
+ *     turn a truly-out-of-range branch into an emitted jr.  So every jr this
+ *     pass produces is guaranteed assemblable by M80.
+ *   - A fixpoint loop re-runs the scan: shrinking one jp to jr reduces
+ *     addresses, which may bring further branches into range.  Shrinking never
+ *     grows anything, so the loop is monotonic and terminates.
+ * ------------------------------------------------------------------------- */
+
+/* Upper bound on the encoded byte size of one (already-trimmed) line. */
+static int instr_size_upper(const char *s)
+{
+    /* Labels, comments, blank lines and assembler directives emit no code. */
+    if (s[0] == 0 || s[0] == ';' || starts_label(s))
+        return 0;
+    if (strncmp(s, "cseg", 4) == 0 || strncmp(s, "dseg", 4) == 0 ||
+        strncmp(s, "public", 6) == 0 || strncmp(s, "extrn", 5) == 0 ||
+        strncmp(s, "end", 3) == 0 || strchr(s, '='))   /* "X equ N", "_x equ" */
+        return 0;
+
+    /* db N,N,...  -> one byte per comma-separated item. */
+    if (strncmp(s, "db ", 3) == 0 || strncmp(s, "dw ", 3) == 0) {
+        int items = 1;
+        const char *p;
+        int per = (s[1] == 'w') ? 2 : 1;
+        for (p = s; *p; ++p)
+            if (*p == ',')
+                items++;
+        return items * per;
+    }
+
+    /* jr/djnz are 2 bytes; a jr we have already produced must stay sized 2. */
+    if (strncmp(s, "jr ", 3) == 0 || strncmp(s, "djnz", 4) == 0)
+        return 2;
+
+    /* Any IX/IY-relative instruction is at most 4 bytes (DD/FD prefix). */
+    if (strstr(s, "ix") || strstr(s, "iy"))
+        return 4;
+
+    /* Everything else dcc emits (jp/call/ld rr,nn/arith/stack/ret/...) is at
+     * most 3 bytes.  Using 3 as the universal upper bound is safe. */
+    return 3;
+}
+
+/* If line i is a jp that jr can encode, copy its label to out and return the
+ * length of the mnemonic+condition prefix kept before the label
+ * (3 for "jp ", or the comma form length).  Returns 0 if not convertible. */
+static int jr_convertible(int i, char *labelout)
+{
+    const char *s = lines[i];
+    char lab[128];
+
+    if (strncmp(s, "jp ", 3) != 0)
+        return 0;
+    /* Reject indirect jp (hl) / jp (ix) etc. and the m condition. */
+    if (strchr(s, '('))
+        return 0;
+    if (parse_jp_z_label(s, lab) || parse_jp_nz_label(s, lab) ||
+        parse_jp_c_label(s, lab) || parse_jp_nc_label(s, lab)) {
+        /* parse_jp_cond_label copies the remainder of the line, which may
+         * include a trailing "; peep: ..." comment or whitespace.  Trim the
+         * label to its first token. */
+        int k = 0;
+        while (lab[k] && lab[k] != ' ' && lab[k] != '\t' && lab[k] != ';')
+            k++;
+        lab[k] = 0;
+        if (lab[0] == 0)
+            return 0;
+        strcpy(labelout, lab);
+        return 1;
+    }
+    /* Unconditional jp LABEL: no comma, target is a bare label. */
+    if (!strchr(s, ',')) {
+        if (jump_target(s, lab) && lab[0] != '(') {
+            strcpy(labelout, lab);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Rewrite a convertible jp at line i into the equivalent jr. */
+static void make_jr(int i)
+{
+    const char *s = lines[i];
+    char lab[128];
+    char out[160];
+    int k;
+
+    if (parse_jp_z_label(s, lab))
+        sprintf(out, "jr z,%s", lab);
+    else if (parse_jp_nz_label(s, lab))
+        sprintf(out, "jr nz,%s", lab);
+    else if (parse_jp_c_label(s, lab))
+        sprintf(out, "jr c,%s", lab);
+    else if (parse_jp_nc_label(s, lab))
+        sprintf(out, "jr nc,%s", lab);
+    else {
+        jump_target(s, lab);
+        sprintf(out, "jr %s", lab);
+        replace1_tagged(i, out, "jp_to_jr");
+        return;
+    }
+    /* Conditional parse may have captured a trailing comment; trim it. */
+    k = 0;
+    while (out[k])
+        k++;
+    while (k > 0 && (out[k - 1] == ' ' || out[k - 1] == '\t'))
+        k--;
+    out[k] = 0;
+    {
+        char *semi = strchr(out, ';');
+        if (semi) {
+            while (semi > out && (semi[-1] == ' ' || semi[-1] == '\t'))
+                semi--;
+            *semi = 0;
+        }
+    }
+    replace1_tagged(i, out, "jp_to_jr");
+}
+
+static int pass_jp_to_jr(void)
+{
+    static int addr[MAX_LINES];   /* upper-bound byte address of each line */
+    int i;
+    int any = 0;
+    int changed;
+
+    do {
+        int pc = 0;
+        changed = 0;
+
+        /* Assign an upper-bound address to every line. */
+        for (i = 0; i < nlines; i++) {
+            addr[i] = pc;
+            pc += instr_size_upper(lines[i]);
+        }
+
+        for (i = 0; i < nlines; i++) {
+            char lab[128];
+            char def[130];
+            int j;
+            int target = -1;
+            int from, to, disp;
+
+            if (!jr_convertible(i, lab))
+                continue;
+
+            /* Find the target label's line. */
+            sprintf(def, "%s:", lab);
+            for (j = 0; j < nlines; j++) {
+                if (starts_label(lines[j]) && strcmp(lines[j], def) == 0) {
+                    target = j;
+                    break;
+                }
+            }
+            if (target < 0)
+                continue;
+
+            /* Displacement is measured from the address *after* the 2-byte jr
+             * to the target address.  Using the current (jp, size<=3) address
+             * for line i is safe: the real jr is shorter, so the real
+             * displacement magnitude is no larger than what we compute when
+             * the branch points forward, and for backward branches the +2
+             * end-of-instruction offset is exact for jr.  We bound both ways
+             * by the conservative window below. */
+            from = addr[i] + 2;     /* end of the would-be jr */
+            to   = addr[target];
+            disp = to - from;
+
+            if (disp >= -128 && disp <= 127) {
+                make_jr(i);
+                changed = 1;
+                any = 1;
+            }
+        }
+    } while (changed);
+
+    return any;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Replace a redundant DE reload with register copies from HL.
+ *
+ *     ld l,(ix+N)          ld l,(ix+N)
+ *     ld h,(ix+N+1)   ->   ld h,(ix+N+1)
+ *     ld e,(ix+N)          ld e,l
+ *     ld d,(ix+N+1)        ld d,h
+ *
+ * When DE is loaded from exactly the same frame slot that HL was just loaded
+ * from (the canonical "x + x" / "x op x" shape, e.g. sieve's i + i), the two
+ * 3-byte indexed loads become two 1-byte register copies.  DE ends up holding
+ * the identical value, so this is safe no matter how DE is used afterwards
+ * (unlike folding straight to add hl,hl, which would require DE to be dead).
+ * Saves 4 bytes and two (ix+d) memory accesses per occurrence.
+ * ------------------------------------------------------------------------- */
+static int pass_dup_ix_load_to_reg_copy(void)
+{
+    int i;
+    int changed = 0;
+
+    for (i = 0; i + 3 < nlines; ++i) {
+        int hl_off, de_off;
+
+        if (!peep_parse_ld_ix_pair(lines[i], lines[i + 1], &hl_off))
+            continue;
+        if (!peep_parse_ld_ix_pair(lines[i + 2], lines[i + 3], &de_off)) {
+            /* lines[i+2]/[i+3] are ld e,(ix)/ld d,(ix), not ld l/ld h, so the
+             * generic pair parser does not match; check the e/d forms. */
+            char eoff[32], doff[32];
+            char *endp;
+            int elo, dhi;
+
+            if (!peep_parse_ld_e_ix(lines[i + 2], eoff))
+                continue;
+            if (!peep_parse_ld_d_ix(lines[i + 3], doff))
+                continue;
+            elo = (int)strtol(eoff, &endp, 10);
+            if (*endp != 0)
+                continue;
+            dhi = (int)strtol(doff, &endp, 10);
+            if (*endp != 0)
+                continue;
+            if (dhi != elo + 1)
+                continue;
+            if (elo != hl_off)
+                continue;   /* DE must come from the same slot as HL */
+
+            replace1_tagged(i + 2, "ld e,l", "dup_ix_load_reg_copy");
+            replace1(i + 3, "ld d,h");
+            changed = 1;
+        }
+    }
+
+    return changed;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Fold the runtime sign-extension of a 16-bit CONSTANT into a direct load.
+ *
+ *     ld hl,CONST          ld hl,CONST
+ *     ld a,h          ->   ld de,0       (when CONST's bit 15 is clear)
+ *     rlca                 ld de,65535   (when CONST's bit 15 is set)
+ *     sbc a,a
+ *     ld d,a
+ *     ld e,a
+ *
+ * The five-instruction tail computes DE = (HL < 0) ? 0FFFFh : 0 and destroys
+ * A.  When HL was just loaded with a compile-time *numeric* constant the
+ * result is known, so we emit it directly: 5 bytes -> 3 bytes, and A is left
+ * intact (strictly safer than the original, which clobbered it).  Only plain
+ * decimal constants are folded; symbol/address loads (ld hl,_x) have unknown
+ * high bits and are skipped.
+ * ------------------------------------------------------------------------- */
+
+/* Parse a pure decimal (optionally negative) "ld hl,N" immediate.  Returns 1
+ * and stores the 16-bit-reduced value's high bit (1 = set) when the operand is
+ * a bare integer; returns 0 for symbols or any non-decimal operand. */
+static int ld_hl_const_high_bit_set(const char *s, int *bit15)
+{
+    char val[MAX_LINE];
+    const char *p;
+    long n;
+    int neg = 0;
+
+    if (!parse_ld_hl_imm(s, val))
+        return 0;
+
+    p = val;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    if (*p == '-') { neg = 1; p++; }
+    else if (*p == '+') { p++; }
+    if (*p == 0 || !isdigit((unsigned char)*p))
+        return 0;                 /* not a bare decimal integer */
+    n = 0;
+    while (isdigit((unsigned char)*p)) {
+        n = n * 10 + (*p - '0');
+        p++;
+    }
+    while (*p == ' ' || *p == '\t')
+        p++;
+    if (*p != 0)
+        return 0;                 /* trailing garbage / symbol arithmetic */
+
+    if (neg)
+        n = -n;
+    *bit15 = ((n & 0x8000L) != 0) ? 1 : 0;
+    return 1;
+}
+
+static int pass_fold_const_sign_extend(void)
+{
+    int i;
+    int changed = 0;
+    int bit15;
+
+    for (i = 0; i + 5 < nlines; ++i) {
+        if (!ld_hl_const_high_bit_set(lines[i], &bit15))
+            continue;
+        if (!eq(i + 1, "ld a,h") || !eq(i + 2, "rlca") ||
+            !eq(i + 3, "sbc a,a") || !eq(i + 4, "ld d,a") ||
+            !eq(i + 5, "ld e,a"))
+            continue;
+
+        /* Replace the 5-instruction extend with one immediate DE load. */
+        delete_n(i + 1, 5);
+        insert_line_tagged(i + 1, bit15 ? "ld de,65535" : "ld de,0",
+                           "fold_const_sxt");
+        changed = 1;
+    }
+
+    return changed;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Dead 16-bit register reload elimination.
+ *
+ * Two adjacent full-width loads to the same 16-bit register pair, e.g.
+ *
+ *     ld hl,0
+ *     ld hl,_flags
+ *
+ * make the first load dead: the second overwrites the whole pair and none of
+ * the `ld rr,nn` / `ld rr,(nn)` forms the compiler emits read the old value.
+ * Such leftovers are produced by other rewrites (e.g. the ldir_memset idiom).
+ * Only hl/de/bc are considered; the loads must be exactly adjacent so nothing
+ * can read the register in between.
+ * ------------------------------------------------------------------------- */
+
+/* If s is "ld RR,..." with RR one of hl/de/bc, write RR to out[3] and ret 1. */
+static int parse_ld_reg16_dest(const char *s, char *out)
+{
+    const char *p;
+
+    if (strncmp(s, "ld ", 3) != 0)
+        return 0;
+    p = s + 3;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    if (((p[0] == 'h' && p[1] == 'l') ||
+         (p[0] == 'd' && p[1] == 'e') ||
+         (p[0] == 'b' && p[1] == 'c')) &&
+        p[2] == ',') {
+        out[0] = p[0];
+        out[1] = p[1];
+        out[2] = 0;
+        return 1;
+    }
+    return 0;
+}
+
+static int pass_elim_dead_reg16_reload(void)
+{
+    int i;
+    int changed = 0;
+    char r1[4];
+    char r2[4];
+
+    for (i = 0; i + 1 < nlines; ++i) {
+        if (parse_ld_reg16_dest(lines[i], r1) &&
+            parse_ld_reg16_dest(lines[i + 1], r2) &&
+            strcmp(r1, r2) == 0) {
+            delete_n(i, 1);   /* the first load is dead */
+            changed = 1;
+            if (i > 0)
+                --i;          /* re-check against the new predecessor */
+        }
+    }
+
+    return changed;
+}
+
 int main(int argc, char **argv)
 {
     int changed;
@@ -9418,6 +9806,15 @@ int main(int argc, char **argv)
 
     pass_fix_divmod_extrns();
     pass_fix_mulu_extrn();
+
+    /* Final cleanup: drop dead 16-bit reloads, then relax in-range absolute
+     * jumps to relative jumps.  Both run after every structural pass so they
+     * only tidy the settled instruction stream; dead-load removal first since
+     * it shrinks code and can bring more branches into jr range. */
+    pass_dup_ix_load_to_reg_copy();
+    pass_fold_const_sign_extend();
+    pass_elim_dead_reg16_reload();
+    pass_jp_to_jr();
 
     write_file(outfile);
     return 0;

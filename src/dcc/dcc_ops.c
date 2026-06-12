@@ -1,0 +1,1349 @@
+/*
+ * dcc_ops.c - binary-operator and arithmetic code generation.
+ *
+ * Lowering for +, -, *, /, %, shifts and bitwise operators across 16- and
+ * 32-bit and unsigned variants, integer promotion to the common type, the
+ * element-size scaling used by pointer arithmetic, and power-of-two float
+ * scaling fast paths.
+ *
+ * MODULE: compiled as its own translation unit; shared declarations are in dcc.h.
+ * Source provenance: monolith src/ddc.c lines 10185-11520.
+ */
+
+#include "dcc.h"
+void gen_signed_divmod16(int op)
+{
+    /*
+     * Entry: HL = signed lhs, DE = signed rhs.
+     * The RTL wrappers use unsigned division on absolute values and then
+     * fix the sign.  Keeping this in the runtime avoids emitting the same
+     * 40+ instruction sequence at every signed 16-bit / or % site.
+     */
+    if (op == '/')
+        emit_runtime_call("__divs");
+    else
+        emit_runtime_call("__mods");
+}
+
+void gen_binop(int op)
+{
+    switch (op) {
+    case '+':
+        emit("\tadd hl,de\n");
+        break;
+    case '-':
+        emit("\tor a\n\tsbc hl,de\n");
+        break;
+    case '&':
+        emit("\tld a,h\n\tand d\n\tld h,a\n\tld a,l\n\tand e\n\tld l,a\n");
+        break;
+    case '|':
+        emit("\tld a,h\n\tor d\n\tld h,a\n\tld a,l\n\tor e\n\tld l,a\n");
+        break;
+    case '^':
+        emit("\tld a,h\n\txor d\n\tld h,a\n\tld a,l\n\txor e\n\tld l,a\n");
+        break;
+    case '*':
+        emit_runtime_call("__mulu");
+        break;
+    case '/':
+        emit_runtime_call("__divu");
+        break;
+    case '%':
+        emit_runtime_call("__modu");
+        break;
+    case TOK_EQ:
+    case TOK_NE:
+    case '<':
+    case '>':
+    case TOK_LE:
+    case TOK_GE:
+        gen_cmp(op);
+        break;
+    default:
+        emit("\t; unsupported binary op\n");
+        break;
+    }
+}
+
+void gen_binop_typed(int op, int lhs_type)
+{
+    if (op == TOK_EQ || op == TOK_NE ||
+        op == '<' || op == '>' || op == TOK_LE || op == TOK_GE) {
+        gen_cmp_typed(op, lhs_type);
+    } else if ((op == '/' || op == '%') && !(lhs_type & TYPE_UNSIGNED)) {
+        gen_signed_divmod16(op);
+    } else {
+        gen_binop(op);
+    }
+}
+
+/* Zero-extend HL to DE:HL for implicit int-to-long promotion.
+ * Explicit signed literals use the L suffix and are always emitted TYPE_LONG. */
+void emit_extend_to_long_typed(int source_type)
+{
+    emit_promote_byte_to_int(source_type);
+    if ((source_type & TYPE_UNSIGNED) || type_ptr_depth(source_type)) {
+        emit("\tld de,0\n");
+    } else {
+        /* Sign-extend signed 16-bit HL into DE:HL.  This is also correct
+         * when the target type is unsigned long: C converts the negative
+         * value modulo 2^32, yielding the same bit pattern. */
+        emit("\tld a,h\n");
+        emit("\trlca\n");
+        emit("\tsbc a,a\n");
+        emit("\tld d,a\n");
+        emit("\tld e,a\n");
+    }
+}
+
+void emit_extend_to_long(int source_is_unsigned)
+{
+    emit_extend_to_long_typed(source_is_unsigned ? (TYPE_INT | TYPE_UNSIGNED) : TYPE_INT);
+}
+
+/*
+ * 32-bit binary op: LHS on stack as push de;push hl, RHS in DE:HL.
+ * Inline for +,-,&,|,^; runtime call for *,/,%.
+ * Result left in DE:HL (DE=high word, HL=low word).
+ */
+void gen_binop32(int op, int lhs_type)
+{
+    const char *rname;
+    switch (op) {
+    case '+':
+        emit("\tpop bc\n\tor a\n\tadd hl,bc\n");
+        emit("\tex de,hl\n\tpop bc\n\tadc hl,bc\n\tex de,hl\n");
+        break;
+    case '-':
+        emit("\tld b,h\n\tld c,l\n\tpop hl\n\tor a\n\tsbc hl,bc\n");
+        emit("\tld b,h\n\tld c,l\n\tpop hl\n\tsbc hl,de\n");
+        emit("\tld d,b\n\tld e,c\n\tex de,hl\n");
+        break;
+    case '&':
+        emit("\tpop bc\n");
+        emit("\tld a,l\n\tand c\n\tld l,a\n\tld a,h\n\tand b\n\tld h,a\n");
+        emit("\tex de,hl\n\tpop bc\n");
+        emit("\tld a,l\n\tand c\n\tld l,a\n\tld a,h\n\tand b\n\tld h,a\n");
+        emit("\tex de,hl\n");
+        break;
+    case '|':
+        emit("\tpop bc\n");
+        emit("\tld a,l\n\tor c\n\tld l,a\n\tld a,h\n\tor b\n\tld h,a\n");
+        emit("\tex de,hl\n\tpop bc\n");
+        emit("\tld a,l\n\tor c\n\tld l,a\n\tld a,h\n\tor b\n\tld h,a\n");
+        emit("\tex de,hl\n");
+        break;
+    case '^':
+        emit("\tpop bc\n");
+        emit("\tld a,l\n\txor c\n\tld l,a\n\tld a,h\n\txor b\n\tld h,a\n");
+        emit("\tex de,hl\n\tpop bc\n");
+        emit("\tld a,l\n\txor c\n\tld l,a\n\tld a,h\n\txor b\n\tld h,a\n");
+        emit("\tex de,hl\n");
+        break;
+    case '*': rname = "__lmul";  goto l32call;
+    case '/': rname = (lhs_type & TYPE_UNSIGNED) ? "__ldu" : "__lds"; goto l32call;
+    case '%': rname = (lhs_type & TYPE_UNSIGNED) ? "__lmu" : "__lms"; goto l32call;
+    l32call:
+        /* push RHS (4 bytes) then call; runtime returns DE:HL; caller cleans 8 bytes */
+        emit("\tpush de\n\tpush hl\n");
+        emit_runtime_call(rname);
+        emit("\tld b,d\n\tld c,e\n\tex de,hl\n");
+        emit("\tld hl,8\n\tadd hl,sp\n\tld sp,hl\n");
+        emit("\tex de,hl\n\tld d,b\n\tld e,c\n");
+        break;
+    default:
+        emit("\t; unsupported 32-bit binary op\n");
+        emit("\tpop bc\n\tpop bc\n"); /* balance stack */
+        break;
+    }
+}
+
+/*
+ * 32-bit comparison: LHS on stack as push de;push hl, RHS in DE:HL.
+ * Inline for ==,!=; runtime call for ordered comparisons.
+ * Result left in HL (0 or 1). Stack cleaned (8 bytes).
+ */
+void gen_cmp32(int op, int lhs_type)
+{
+    const char *rname;
+    int lt, le;
+    int is_unsigned = (lhs_type & TYPE_UNSIGNED) != 0;
+
+    if (op == TOK_EQ || op == TOK_NE) {
+        /* XOR all bytes together; A=0 iff equal */
+        lt = new_label();
+        le = new_label();
+        emit("\tpop bc\n");  /* BC=LHS_L */
+        emit("\tld a,c\n\txor l\n\tld l,a\n\tld a,b\n\txor h\n\tor l\n\tld l,a\n");
+        emit("\tpop bc\n");  /* BC=LHS_H */
+        emit("\tld a,c\n\txor e\n\tor l\n\tld l,a\n\tld a,b\n\txor d\n\tor l\n");
+        if (op == TOK_EQ) emit_jp_label("jp z,", lt);
+        else              emit_jp_label("jp nz,", lt);
+        emit("\tld hl,0\n");
+        emit_jp_label("jp", le);
+        emit_label(lt);
+        emit("\tld hl,1\n");
+        emit_label(le);
+        return;
+    }
+
+    /* ordered: push RHS onto stack, call runtime, clean 8 bytes */
+    if (op == '<')      rname = is_unsigned ? "__ltu" : "__lts";
+    else if (op == TOK_LE) rname = is_unsigned ? "__leu" : "__les";
+    else if (op == '>')      rname = is_unsigned ? "__lgu" : "__lgs";
+    else                rname = is_unsigned ? "__lku" : "__lks"; /* >= */
+    emit("\tpush de\n\tpush hl\n");
+    emit_runtime_call(rname);
+    emit("\tex de,hl\n\tld hl,8\n\tadd hl,sp\n\tld sp,hl\n\tex de,hl\n");
+}
+
+void gen_binop32_typed(int op, int lhs_type)
+{
+    if (op == TOK_EQ || op == TOK_NE ||
+        op == '<' || op == '>' || op == TOK_LE || op == TOK_GE) {
+        gen_cmp32(op, lhs_type);
+    } else {
+        gen_binop32(op, lhs_type);
+    }
+}
+
+
+void emit_mul_hl_const(long v)
+{
+    /*
+     * HL = HL * small/power-of-two constant.
+     * Power-of-two constants become repeated left shifts.
+     */
+    if (v == 0) {
+        emit("\tld hl,0\n");
+    } else if (v == 1) {
+        /* no-op */
+    } else if (int_log2_pow2((int)(v & 0xffffL)) >= 0) {
+        int n;
+        n = int_log2_pow2((int)(v & 0xffffL));
+        while (n-- > 0)
+            emit("\tadd hl,hl\n");
+    } else if (v == 3) {
+        emit("\tpush hl\n");
+        emit("\tadd hl,hl\n");
+        emit("\tpop de\n");
+        emit("\tadd hl,de\n");
+    } else if (v == 5) {
+        emit("\tpush hl\n");
+        emit("\tadd hl,hl\n");
+        emit("\tadd hl,hl\n");
+        emit("\tpop de\n");
+        emit("\tadd hl,de\n");
+    } else if (v == 10) {
+        emit("\tpush hl\n");     /* save x */
+        emit("\tadd hl,hl\n");   /* 2x */
+        emit("\tadd hl,hl\n");   /* 4x */
+        emit("\tadd hl,hl\n");   /* 8x */
+        emit("\tpop de\n");      /* x */
+        emit("\tadd hl,de\n");   /* 9x */
+        emit("\tadd hl,de\n");   /* 10x */
+    } else {
+        emit_ld_de_const(v);
+        emit_runtime_call("__mulu");
+    }
+}
+
+int try_gen_const_times(void)
+{
+    long v;
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+
+    if (tok.kind != TOK_NUM && tok.kind != TOK_CHARLIT)
+        return 0;
+
+    v = tok.val & 0xffffL;
+    if (!(v == 0 || v == 1 || v == 3 || v == 5 || v == 10 ||
+          int_log2_pow2((int)v) >= 0))
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    next_token();
+    if (!accept('*')) {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        tok = save_tok;
+        return 0;
+    }
+
+    gen_unary();
+    emit_mul_hl_const(v);
+    return 1;
+}
+
+
+
+/* C89 integer promotion / usual arithmetic conversion helpers.
+ * This compiler only has 16-bit int and 32-bit long.  Plain char and
+ * unsigned char both promote to signed int because 16-bit int represents
+ * all unsigned-char values.  For long vs unsigned-int, signed long wins
+ * because it represents every 16-bit unsigned int value. */
+int type_is_unsigned(int t)
+{
+    return (t & TYPE_UNSIGNED) != 0;
+}
+
+int type_is_arith(int t)
+{
+    if (t & (TYPE_PTR | TYPE_PTR2 | TYPE_STRUCT)) return 0;
+    return 1;
+}
+
+int promote_int_type(int t)
+{
+    if (!type_is_arith(t)) return t;
+    if (type_is_float(t)) return t;
+    if (type_is_long(t)) return t;
+    if ((t & 15) == TYPE_CHAR) return TYPE_INT;
+    return (t & TYPE_UNSIGNED) ? (TYPE_INT | TYPE_UNSIGNED) : TYPE_INT;
+}
+
+int common_arith_type(int a, int b)
+{
+    a = promote_int_type(a);
+    b = promote_int_type(b);
+
+    if (type_is_float(a) || type_is_float(b))
+        return TYPE_FLOAT;
+
+    if (type_is_long(a) || type_is_long(b)) {
+        /* unsigned long dominates; otherwise signed long can hold all
+         * 16-bit unsigned values on this target. */
+        if ((type_is_long(a) && type_is_unsigned(a)) ||
+            (type_is_long(b) && type_is_unsigned(b)))
+            return TYPE_LONG | TYPE_UNSIGNED;
+        return TYPE_LONG;
+    }
+
+    if (type_is_unsigned(a) || type_is_unsigned(b))
+        return TYPE_INT | TYPE_UNSIGNED;
+    return TYPE_INT;
+}
+
+void emit_cast_16_to_common(int from_type, int common_type)
+{
+    if (type_is_long(common_type) && !type_is_long(from_type))
+        emit_extend_to_long_typed(from_type);
+}
+
+int peek_simple_unary_type(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    int save_long_suffix;
+    int save_unsigned_suffix;
+    struct Token save_tok;
+    int t;
+    struct Sym *s;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_long_suffix = g_tok_long_suffix;
+    save_unsigned_suffix = g_tok_unsigned_suffix;
+    save_tok = tok;
+
+    t = TYPE_INT;
+
+    if (tok.kind == '(') {
+        next_token();
+        if (starts_type()) {
+            t = parse_type();
+            if (tok.kind == ')') {
+                posi = save_pos; tok_start_pos = save_tok_start;
+                line_no = save_line; tok_line = save_tok_line;
+                g_tok_long_suffix = save_long_suffix; g_tok_unsigned_suffix = save_unsigned_suffix; tok = save_tok;
+                return promote_int_type(t);
+            }
+        }
+    } else if (tok.kind == TOK_FLOATLIT) {
+        t = TYPE_FLOAT;
+    } else if (tok.kind == TOK_NUM) {
+        if (tok.val > 0xffffL || tok.val < -32768L || g_tok_long_suffix)
+            t = TYPE_LONG;
+        else
+            t = TYPE_INT;
+        if (g_tok_unsigned_suffix)
+            t |= TYPE_UNSIGNED;
+    } else if (tok.kind == TOK_CHARLIT) {
+        t = TYPE_INT;
+    } else if (tok.kind == TOK_ID) {
+        s = find_sym(tok.text);
+        if (s) {
+            int is_arr;
+            int tt;
+            t = s->type;
+
+            /* For lookahead purposes, recognize calls through function
+             * pointers and function-pointer arrays as returning int.
+             * Without this, an expression like:
+             *
+             *     tab[0](30) + tab[1](40)
+             *
+             * is misclassified as integer + pointer before the RHS is
+             * generated, so gen_add() applies pointer scaling to the left
+             * call result.  This compiler only tracks int-returning
+             * function pointers today, which matches the supported
+             * declarator forms. */
+            tt = t;
+            is_arr = s->is_array;
+            next_token();
+            {
+                int nsubs;
+                nsubs = 0;
+                while (tok.kind == '[') {
+                    skip_balanced_bracket('[', ']');
+                    nsubs++;
+
+                    if (is_arr) {
+                        /* A real array subscript consumes one array dimension.
+                         * If dimensions remain, the result is still an array
+                         * expression that decays to a pointer in value context;
+                         * otherwise it is the scalar element type. */
+                        if (s->dim_count > 0 && nsubs < s->dim_count)
+                            tt = type_add_ptr(s->type);
+                        else
+                            tt = s->type;
+                        if (s->dim_count <= 0 || nsubs >= s->dim_count)
+                            is_arr = 0;
+                    } else if (s->dim_count > 0 && type_ptr_depth(s->type) > 0) {
+                        /* Pointer-to-array declarators need one more subscript
+                         * than their stored array-dimension count to reach the
+                         * scalar element.  This lookahead is used by +/-, so a
+                         * misclassified rp[row][0] as a pointer caused integer
+                         * addition to be scaled as pointer arithmetic. */
+                        if (nsubs <= s->dim_count)
+                            tt = type_add_ptr(type_decay_ptr(s->type));
+                        else
+                            tt = type_decay_ptr(s->type);
+                    } else {
+                        tt = type_decay_ptr(tt);
+                    }
+                }
+            }
+            t = tt;
+            if (tok.kind == '(' && type_ptr_depth(tt) > 0)
+                t = TYPE_INT;
+        }
+    }
+
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    g_tok_long_suffix = save_long_suffix;
+    g_tok_unsigned_suffix = save_unsigned_suffix;
+    tok = save_tok;
+    return promote_int_type(t);
+}
+
+
+int float_literal_pow2_exp(const char *s, int *exp_out)
+{
+    double d;
+    int e;
+
+    d = atof(s);
+    if (d <= 0.0)
+        return 0;
+
+    e = 0;
+    while (d > 1.0 && e < 30) {
+        d = d / 2.0;
+        e++;
+    }
+    while (d < 1.0 && e > -30) {
+        d = d * 2.0;
+        e--;
+    }
+
+    if (d != 1.0)
+        return 0;
+
+    exp_out[0] = e;
+    return 1;
+}
+
+void emit_fscale_pow2(int exp_delta)
+{
+    if (exp_delta == 0) {
+        g_expr_type = TYPE_FLOAT;
+        return;
+    }
+
+    if (exp_delta < -128 || exp_delta > 127) {
+        /* Out of helper range; this should not happen for normal literals. */
+        emit_runtime_call(exp_delta < 0 ? "__fdiv" : "__fmul");
+        return;
+    }
+
+    if (!scan_mode)
+        fprintf(outf, "\tld b,%d\n", exp_delta);
+    emit_runtime_call("__fscale_pow2");
+    g_expr_type = TYPE_FLOAT;
+}
+
+int try_consume_float_pow2_compound_scale(int op)
+{
+    int pow2_exp;
+
+    if ((op != TOK_MULEQ && op != TOK_DIVEQ) || tok.kind != TOK_FLOATLIT)
+        return 0;
+
+    if (!float_literal_pow2_exp(tok.text, &pow2_exp))
+        return 0;
+
+    next_token();
+    if (op == TOK_DIVEQ)
+        pow2_exp = -pow2_exp;
+    emit_fscale_pow2(pow2_exp);
+    return 1;
+}
+
+int try_gen_float_pow2_times(void)
+{
+    int pow2_exp;
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    int save_long_suffix;
+    int save_unsigned_suffix;
+    struct Token save_tok;
+
+    if (tok.kind != TOK_FLOATLIT)
+        return 0;
+    if (!float_literal_pow2_exp(tok.text, &pow2_exp))
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_long_suffix = g_tok_long_suffix;
+    save_unsigned_suffix = g_tok_unsigned_suffix;
+    save_tok = tok;
+
+    next_token();
+    if (!accept('*')) {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        g_tok_long_suffix = save_long_suffix;
+        g_tok_unsigned_suffix = save_unsigned_suffix;
+        tok = save_tok;
+        return 0;
+    }
+
+    gen_unary();
+    if (!type_is_float(g_expr_type))
+        emit_convert_int_to_float(g_expr_type);
+    emit_fscale_pow2(pow2_exp);
+    g_expr_type = TYPE_FLOAT;
+    return 1;
+}
+
+int int_log2_pow2(int v);
+void emit_logical_shift_right_hl_const(int count);
+void emit_and_hl_const(unsigned int mask);
+
+void gen_mul(void)
+{
+    int op;
+    int lhs_type;
+    int rhs_type;
+    int common_type;
+
+    if (!try_gen_float_pow2_times() && !try_gen_const_times())
+        gen_unary();
+    lhs_type = promote_int_type(g_expr_type);
+
+    while (tok.kind == '*' || tok.kind == '/' || tok.kind == '%') {
+        op = tok.kind;
+        next_token();
+
+        rhs_type = peek_simple_unary_type();
+        common_type = common_arith_type(lhs_type, rhs_type);
+
+        if (type_is_float(common_type)) {
+            if (op == '%') {
+                error_float_unsupported("float modulo not supported");
+                gen_unary();
+                lhs_type = TYPE_INT;
+                g_expr_type = TYPE_INT;
+                continue;
+            }
+
+            /*
+             * Exact power-of-two scale fast path:
+             *     x * 16.0f   => __fscale_pow2(x, +4)
+             *     x / 16.0f   => __fscale_pow2(x, -4)
+             *
+             * This avoids generic __fmul/__fdiv while preserving the operation
+             * as exponent scaling in the RTL.
+             */
+            if ((op == '*' || op == '/') && tok.kind == TOK_FLOATLIT) {
+                int pow2_exp;
+                if (float_literal_pow2_exp(tok.text, &pow2_exp)) {
+                    next_token();
+                    if (!type_is_float(lhs_type))
+                        emit_convert_int_to_float(lhs_type);
+                    if (op == '/')
+                        pow2_exp = -pow2_exp;
+                    emit_fscale_pow2(pow2_exp);
+                    lhs_type = TYPE_FLOAT;
+                    g_expr_type = TYPE_FLOAT;
+                    continue;
+                }
+            }
+
+            if (!type_is_float(lhs_type))
+                emit_convert_int_to_float(lhs_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_unary();
+            if (!type_is_float(g_expr_type))
+                emit_convert_int_to_float(g_expr_type);
+            emit("\tpush de\n\tpush hl\n");
+            emit_runtime_call(op == '*' ? "__fmul" : "__fdiv");
+            emit("\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n");
+            lhs_type = TYPE_FLOAT;
+            g_expr_type = TYPE_FLOAT;
+            continue;
+        }
+
+        if (!type_is_long(common_type) && op == '*' &&
+            (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) {
+            long rhs_val = tok.val & 0xffffL;
+            if (rhs_val == 0 || rhs_val == 1 || rhs_val == 3 ||
+                rhs_val == 5 || rhs_val == 10 ||
+                int_log2_pow2((int)rhs_val) >= 0) {
+                next_token();
+                emit_mul_hl_const(rhs_val);
+                lhs_type = common_type;
+                g_expr_type = common_type;
+                continue;
+            }
+        }
+
+        if (!type_is_long(common_type) && (common_type & TYPE_UNSIGNED) &&
+            (op == '/' || op == '%') &&
+            (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) {
+            unsigned int rhs_val;
+            int shift;
+
+            rhs_val = (unsigned int)(tok.val & 0xffffL);
+            shift = int_log2_pow2((int)rhs_val);
+            if (shift >= 0) {
+                next_token();
+                if (op == '/')
+                    emit_logical_shift_right_hl_const(shift);
+                else
+                    emit_and_hl_const(rhs_val - 1U);
+                lhs_type = common_type;
+                g_expr_type = common_type;
+                continue;
+            }
+
+            /*
+             * x % C with unsigned 16-bit x and an 8-bit non-power-of-two
+             * constant C can use a smaller remainder-only helper.  The full
+             * fixed divider maintains a quotient and compares/subtracts a
+             * 16-bit divisor; __r1u keeps only an 8-bit divisor/remainder.
+             */
+            if (op == '%' && rhs_val > 1U && rhs_val <= 255U) {
+                next_token();
+                fprintf(outf, "\tld e,%u\n", rhs_val);
+                emit_runtime_call("__r1u");
+                lhs_type = common_type;
+                g_expr_type = common_type;
+                continue;
+            }
+        }
+
+        /*
+         * Signed x % C, where C is a small positive int constant, is also
+         * common in simple loop setup code such as i % 26.  Use a 16/8
+         * signed remainder helper instead of the full 16/16 fixed divider.
+         * This preserves C's usual remainder sign convention as implemented
+         * by the existing signed modulo helpers.
+         */
+        if (!type_is_long(common_type) && !(common_type & TYPE_UNSIGNED) &&
+            op == '%' && (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) &&
+            tok.val > 1 && tok.val <= 255) {
+            long rhs_sval;
+            rhs_sval = tok.val;
+            next_token();
+            fprintf(outf, "\tld e,%ld\n", rhs_sval);
+            emit_runtime_call("__r1s");
+            lhs_type = common_type;
+            g_expr_type = common_type;
+            continue;
+        }
+
+        if (type_is_long(common_type)) {
+            emit_cast_16_to_common(lhs_type, common_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_unary();
+            emit_cast_16_to_common(g_expr_type, common_type);
+            gen_binop32(op, common_type);
+        } else {
+            emit("\tpush hl\n");
+            gen_unary();
+            emit("\tex de,hl\n\tpop hl\n");
+            gen_binop_typed(op, common_type);
+        }
+        lhs_type = common_type;
+        g_expr_type = common_type;
+    }
+}
+
+void scale_hl_by_elem_size(int elem)
+{
+    int shift;
+
+    if (elem <= 1)
+        return;
+
+    shift = int_log2_pow2(elem);
+    if (shift >= 0) {
+        while (shift-- > 0)
+            emit("\tadd hl,hl\n");
+        return;
+    }
+
+    fprintf(outf, "\tld de,%d\n", elem);
+    emit_runtime_call("__mulu");
+}
+
+int int_log2_pow2(int v)
+{
+    int n;
+
+    if (v <= 0 || (v & (v - 1)) != 0)
+        return -1;
+
+    n = 0;
+    while (v > 1) {
+        v >>= 1;
+        n++;
+    }
+    return n;
+}
+
+void emit_arith_shift_right_hl_const(int count)
+{
+    while (count-- > 0)
+        emit("\tsra h\n\trr l\n");
+}
+
+void emit_logical_shift_right_hl_const(int count)
+{
+    while (count-- > 0)
+        emit("\tsrl h\n\trr l\n");
+}
+
+void emit_and_hl_const(unsigned int mask)
+{
+    fprintf(outf, "\tld de,%u\n", mask & 0xffffU);
+    gen_binop('&');
+}
+
+void divide_hl_by_elem_size(int elem)
+{
+    int shift;
+
+    if (elem <= 1)
+        return;
+
+    shift = int_log2_pow2(elem);
+    if (shift >= 0) {
+        emit_arith_shift_right_hl_const(shift);
+        return;
+    }
+
+    fprintf(outf, "\tld de,%d\n", elem);
+    emit_runtime_call("__divs");
+}
+
+void gen_add(void)
+{
+    int op;
+    int lhs_type;
+    int rhs_type;
+    int common_type;
+
+    gen_mul();
+    lhs_type = promote_int_type(g_expr_type);
+
+    while (tok.kind == '+' || tok.kind == '-') {
+        op = tok.kind;
+        next_token();
+        rhs_type = peek_simple_unary_type();
+
+        /* Pointer arithmetic is not an arithmetic conversion case.
+         *
+         * Supported C89 forms:
+         *   ptr + n       -> byte address plus n * sizeof(*ptr)
+         *   ptr - n       -> byte address minus n * sizeof(*ptr)
+         *   n + ptr       -> n * sizeof(*ptr) plus byte address
+         *   ptr2 - ptr1   -> signed element distance
+         */
+        if ((lhs_type & (TYPE_PTR | TYPE_PTR2))) {
+            int elem = type_index_elem_size(lhs_type);
+
+            emit("\tpush hl\n");
+            gen_mul();
+
+            if (g_expr_type & (TYPE_PTR | TYPE_PTR2)) {
+                if (op == '-') {
+                    emit("\tex de,hl\n\tpop hl\n");
+                    gen_binop('-');
+                    divide_hl_by_elem_size(elem);
+                    lhs_type = TYPE_INT;
+                    g_expr_type = TYPE_INT;
+                    continue;
+                }
+
+                error_here("invalid pointer arithmetic");
+                emit("\tpop de\n");
+                lhs_type = TYPE_INT;
+                g_expr_type = TYPE_INT;
+                continue;
+            }
+
+            scale_hl_by_elem_size(elem);
+            emit("\tex de,hl\n\tpop hl\n");
+            gen_binop(op);
+            g_expr_type = lhs_type;
+            continue;
+        }
+
+        if ((rhs_type & (TYPE_PTR | TYPE_PTR2)) && op == '+') {
+            int elem = type_index_elem_size(rhs_type);
+
+            scale_hl_by_elem_size(elem);
+            emit("\tpush hl\n");
+            gen_mul();
+            emit("\tex de,hl\n\tpop hl\n");
+            gen_binop('+');
+            lhs_type = rhs_type;
+            g_expr_type = rhs_type;
+            continue;
+        }
+
+        common_type = common_arith_type(lhs_type, rhs_type);
+
+        if (type_is_float(common_type)) {
+            if (!type_is_float(lhs_type))
+                emit_convert_int_to_float(lhs_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_mul();
+            if (!type_is_float(g_expr_type))
+                emit_convert_int_to_float(g_expr_type);
+            emit("\tpush de\n\tpush hl\n");
+            emit_runtime_call(op == '+' ? "__fadd" : "__fsub");
+            emit("\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n");
+            lhs_type = TYPE_FLOAT;
+            g_expr_type = TYPE_FLOAT;
+            continue;
+        }
+
+        if (type_is_long(common_type)) {
+            emit_cast_16_to_common(lhs_type, common_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_mul();
+            emit_cast_16_to_common(g_expr_type, common_type);
+            gen_binop32(op, common_type);
+        } else {
+            emit("\tpush hl\n");
+            gen_mul();
+            emit("\tex de,hl\n\tpop hl\n");
+            gen_binop_typed(op, common_type);
+        }
+        lhs_type = common_type;
+        g_expr_type = common_type;
+    }
+}
+
+int emit_shift_const_long(int op, int lhs_type, long count)
+{
+    int is_left;
+    int is_unsigned;
+
+    if (!type_is_long(lhs_type))
+        return 0;
+
+    is_left = (op == TOK_SHL || op == TOK_SHLEQ);
+    is_unsigned = (lhs_type & TYPE_UNSIGNED) != 0;
+
+    if (count <= 0)
+        return 1;
+
+    if (count >= 32) {
+        if (is_left || is_unsigned)
+            emit("\tld hl,0\n\tld de,0\n");
+        else
+            emit("\tld a,d\n\trla\n\tsbc a,a\n\tld h,a\n\tld l,a\n\tld d,a\n\tld e,a\n");
+        return 1;
+    }
+
+    if (is_left) {
+        if (count == 8) { emit("\tld d,e\n\tld e,h\n\tld h,l\n\tld l,0\n"); return 1; }
+        if (count == 16) { emit("\tld e,l\n\tld d,h\n\tld hl,0\n"); return 1; }
+        if (count == 24) { emit("\tld d,l\n\tld e,0\n\tld hl,0\n"); return 1; }
+    } else if (is_unsigned) {
+        if (count == 8) { emit("\tld l,h\n\tld h,e\n\tld e,d\n\tld d,0\n"); return 1; }
+        if (count == 16) { emit("\tld l,e\n\tld h,d\n\tld de,0\n"); return 1; }
+        if (count == 24) { emit("\tld l,d\n\tld h,0\n\tld de,0\n"); return 1; }
+    }
+
+    return 0;
+}
+
+void emit_shift_loop(int op, int lhs_type)
+{
+    int ltop = new_label();
+    int ldone = new_label();
+
+    emit_label(ltop);
+    emit("\tld a,b\n\tor a\n");
+    emit_jp_label("jp z,", ldone);
+
+    if (type_is_long(lhs_type)) {
+        if (op == TOK_SHL || op == TOK_SHLEQ) {
+            emit("\tadd hl,hl\n\trl e\n\trl d\n");
+        } else if (lhs_type & TYPE_UNSIGNED) {
+            emit("\tsrl d\n\trr e\n\trr h\n\trr l\n");
+        } else {
+            emit("\tsra d\n\trr e\n\trr h\n\trr l\n");
+        }
+    } else if (op == TOK_SHL || op == TOK_SHLEQ) {
+        emit("\tadd hl,hl\n");
+    } else if (lhs_type & TYPE_UNSIGNED) {
+        emit("\tsrl h\n\trr l\n");
+    } else if (type_size(lhs_type) == 1) {
+        emit("\tsra l\n");
+    } else {
+        emit("\tsra h\n\trr l\n");
+    }
+
+    emit("\tdec b\n");
+    emit_jp_label("jp", ltop);
+    emit_label(ldone);
+}
+
+void gen_shift(void)
+{
+    int op;
+    int lhs_type;
+
+    gen_add();
+    /*
+     * C89: the left operand of a shift undergoes integer promotion, but
+     * the right operand does not participate in the usual arithmetic
+     * conversions.  This matters for uint8_t: b << 1 is an int expression
+     * on DCC's 16-bit-int target, so 200 << 1 is 400, not 8-bit 144.
+     */
+    lhs_type = promote_int_type(g_expr_type);
+
+    while (tok.kind == TOK_SHL || tok.kind == TOK_SHR) {
+        op = tok.kind;
+        next_token();
+
+        if (type_is_long(lhs_type) && (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) {
+            long scount;
+            scount = tok.val;
+            next_token();
+            if (!emit_shift_const_long(op, lhs_type, scount)) {
+                fprintf(outf, "\tld b,%ld\n", scount & 255L);
+                emit_shift_loop(op, lhs_type);
+            }
+        } else if (type_is_long(lhs_type)) {
+            emit("\tpush de\n\tpush hl\n");
+            gen_add();
+            emit("\tld b,l\n");
+            emit("\tpop hl\n\tpop de\n");
+            emit_shift_loop(op, lhs_type);
+        } else {
+            emit("\tpush hl\n");
+            gen_add();
+            emit("\tld b,l\n");
+            emit("\tpop hl\n");
+            emit_shift_loop(op, lhs_type);
+        }
+
+        g_expr_type = lhs_type;
+    }
+}
+
+void emit_float_compare_call(int op)
+{
+    const char *helper;
+    int k;
+
+    /* The evaluation sequence pushes the left operand first, computes and
+     * pushes the right operand second.  That means the C-style helper sees
+     * arguments in reversed order: arg1=right, arg2=left.  Use the inverse
+     * ordered helper where necessary.
+     */
+    if (op == TOK_EQ) helper = "__feq";
+    else if (op == TOK_NE) helper = "__fneq";
+    else if (op == '<') helper = "__fgt";      /* rhs > lhs */
+    else if (op == '>') helper = "__flt";      /* rhs < lhs */
+    else if (op == TOK_LE) helper = "__fge";   /* rhs >= lhs */
+    else helper = "__fle";                     /* rhs <= lhs */
+
+    emit_runtime_call(helper);
+    for (k = 0; k < 4; ++k)
+        emit("\tpop bc\n");
+    g_expr_type = TYPE_INT;
+}
+
+void gen_rel(void)
+{
+    int op;
+    int lhs_type;
+    int rhs_type;
+    int common_type;
+    gen_shift();
+    lhs_type = promote_int_type(g_expr_type);
+
+    while (tok.kind == '<' || tok.kind == '>' || tok.kind == TOK_LE || tok.kind == TOK_GE) {
+        op = tok.kind;
+        next_token();
+        rhs_type = peek_simple_unary_type();
+        common_type = common_arith_type(lhs_type, rhs_type);
+
+        if (type_is_float(common_type)) {
+            if (!type_is_float(lhs_type))
+                emit_convert_int_to_float(lhs_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_shift();
+            if (!type_is_float(g_expr_type))
+                emit_convert_int_to_float(g_expr_type);
+            emit("\tpush de\n\tpush hl\n");
+            emit_float_compare_call(op);
+        } else if (type_is_long(common_type)) {
+            emit_cast_16_to_common(lhs_type, common_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_shift();
+            emit_cast_16_to_common(g_expr_type, common_type);
+            gen_binop32_typed(op, common_type);
+        } else {
+            emit("\tpush hl\n");
+            gen_shift();
+            emit("\tex de,hl\n\tpop hl\n");
+            gen_binop_typed(op, common_type);
+        }
+        g_expr_type = TYPE_INT;
+        lhs_type = TYPE_INT;
+    }
+}
+
+void gen_eq(void)
+{
+    int op;
+    int lhs_type;
+    int rhs_type;
+    int common_type;
+    gen_rel();
+    lhs_type = promote_int_type(g_expr_type);
+
+    while (tok.kind == TOK_EQ || tok.kind == TOK_NE) {
+        op = tok.kind;
+        next_token();
+        rhs_type = peek_simple_unary_type();
+        common_type = common_arith_type(lhs_type, rhs_type);
+
+        if (type_is_float(common_type)) {
+            if (!type_is_float(lhs_type))
+                emit_convert_int_to_float(lhs_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_rel();
+            if (!type_is_float(g_expr_type))
+                emit_convert_int_to_float(g_expr_type);
+            emit("\tpush de\n\tpush hl\n");
+            emit_float_compare_call(op);
+        } else if (type_is_long(common_type)) {
+            emit_cast_16_to_common(lhs_type, common_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_rel();
+            emit_cast_16_to_common(g_expr_type, common_type);
+            gen_binop32_typed(op, common_type);
+        } else {
+            emit("\tpush hl\n");
+            gen_rel();
+            emit("\tex de,hl\n\tpop hl\n");
+            gen_binop_typed(op, common_type);
+        }
+        g_expr_type = TYPE_INT;
+        lhs_type = TYPE_INT;
+    }
+}
+
+void gen_band(void)
+{
+    int lhs_type;
+    int rhs_type;
+    int common_type;
+    gen_eq();
+    lhs_type = promote_int_type(g_expr_type);
+
+    while (accept('&')) {
+        rhs_type = peek_simple_unary_type();
+        common_type = common_arith_type(lhs_type, rhs_type);
+        if (type_is_long(common_type)) {
+            emit_cast_16_to_common(lhs_type, common_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_eq();
+            emit_cast_16_to_common(g_expr_type, common_type);
+            gen_binop32('&', common_type);
+        } else {
+            emit("\tpush hl\n");
+            gen_eq();
+            emit("\tex de,hl\n\tpop hl\n");
+            gen_binop('&');
+        }
+        lhs_type = common_type;
+        g_expr_type = common_type;
+    }
+}
+
+void gen_bxor(void)
+{
+    int lhs_type;
+    int rhs_type;
+    int common_type;
+    gen_band();
+    lhs_type = promote_int_type(g_expr_type);
+
+    while (accept('^')) {
+        rhs_type = peek_simple_unary_type();
+        common_type = common_arith_type(lhs_type, rhs_type);
+        if (type_is_long(common_type)) {
+            emit_cast_16_to_common(lhs_type, common_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_band();
+            emit_cast_16_to_common(g_expr_type, common_type);
+            gen_binop32('^', common_type);
+        } else {
+            emit("\tpush hl\n");
+            gen_band();
+            emit("\tex de,hl\n\tpop hl\n");
+            gen_binop('^');
+        }
+        lhs_type = common_type;
+        g_expr_type = common_type;
+    }
+}
+
+void gen_bor(void)
+{
+    int lhs_type;
+    int rhs_type;
+    int common_type;
+    gen_bxor();
+    lhs_type = promote_int_type(g_expr_type);
+
+    while (accept('|')) {
+        rhs_type = peek_simple_unary_type();
+        common_type = common_arith_type(lhs_type, rhs_type);
+        if (type_is_long(common_type)) {
+            emit_cast_16_to_common(lhs_type, common_type);
+            emit("\tpush de\n\tpush hl\n");
+            gen_bxor();
+            emit_cast_16_to_common(g_expr_type, common_type);
+            gen_binop32('|', common_type);
+        } else {
+            emit("\tpush hl\n");
+            gen_bxor();
+            emit("\tex de,hl\n\tpop hl\n");
+            gen_binop('|');
+        }
+        lhs_type = common_type;
+        g_expr_type = common_type;
+    }
+}
+
+
+void emit_test_expr_nonzero(int expr_type, int true_label, int branch_when_true)
+{
+    if (type_is_long(expr_type))
+        emit("\tld a,h\n\tor l\n\tor d\n\tor e\n");
+    else
+        emit("\tld a,h\n\tor l\n");
+
+    if (branch_when_true)
+        emit_jp_label("jp nz,", true_label);
+    else
+        emit_jp_label("jp z,", true_label);
+}
+
+void gen_land(void)
+{
+    int lf, le;
+    int lhs_type;
+
+    gen_bor();
+    lhs_type = g_expr_type;
+
+    while (accept(TOK_ANDAND)) {
+        lf = new_label();
+        le = new_label();
+
+        emit_test_expr_nonzero(lhs_type, lf, 0);
+
+        gen_bor();
+
+        emit_test_expr_nonzero(g_expr_type, lf, 0);
+
+        emit("\tld hl,1\n");
+        emit_jp_label("jp", le);
+        emit_label(lf);
+        emit("\tld hl,0\n");
+        emit_label(le);
+
+        g_expr_type = TYPE_INT;
+        lhs_type = TYPE_INT;
+    }
+}
+
+void gen_lor(void)
+{
+    int lt, le;
+    int lhs_type;
+
+    gen_land();
+    lhs_type = g_expr_type;
+
+    while (accept(TOK_OROR)) {
+        lt = new_label();
+        le = new_label();
+
+        emit_test_expr_nonzero(lhs_type, lt, 1);
+
+        gen_land();
+
+        emit_test_expr_nonzero(g_expr_type, lt, 1);
+
+        emit("\tld hl,0\n");
+        emit_jp_label("jp", le);
+        emit_label(lt);
+        emit("\tld hl,1\n");
+        emit_label(le);
+
+        g_expr_type = TYPE_INT;
+        lhs_type = TYPE_INT;
+    }
+}
+
+void gen_conditional(void)
+{
+    int lfalse;
+    int lend;
+    int true_type;
+    int false_type;
+    int need_long_result;
+
+    gen_lor();
+
+    if (accept('?')) {
+        lfalse = new_label();
+        lend = new_label();
+
+        if (type_is_long(g_expr_type))
+            emit("\tld a,h\n\tor l\n\tor d\n\tor e\n");
+        else
+            emit("\tld a,h\n\tor l\n");
+        emit_jp_label("jp z,", lfalse);
+
+        gen_expr();
+        true_type = g_expr_type;
+        if (type_is_struct_object(true_type))
+            error_here("unsupported struct conditional expression");
+
+        /*
+         * C's conditional operator applies the usual conversions between the
+         * second and third operands.  DCC does not have a full typed IR, so a
+         * narrow true arm used with a long false arm could leave DE stale.
+         *
+         * Example from tarray.c:
+         *     int32_t cap = (end_of_row > beyond) ? beyond : end_of_row;
+         *
+         * beyond is 16-bit size_t, end_of_row is 32-bit int32_t.  Without
+         * extending the true arm, selecting beyond stores a garbage high word.
+         *
+         * Extending a 16-bit true arm here is safe when the whole expression is
+         * ultimately 16-bit: callers/stores that want int use HL and ignore DE.
+         */
+        need_long_result = type_is_long(true_type);
+        if (!type_is_long(true_type) && !type_is_float(true_type)) {
+            emit_extend_to_long((true_type & TYPE_UNSIGNED) ||
+                                (true_type & (TYPE_PTR | TYPE_PTR2)));
+        }
+
+        emit_jp_label("jp", lend);
+
+        expect(':');
+        emit_label(lfalse);
+
+        gen_conditional();
+        false_type = g_expr_type;
+        if (type_is_struct_object(false_type))
+            error_here("unsupported struct conditional expression");
+
+        if (type_is_long(false_type))
+            need_long_result = 1;
+
+        if (need_long_result && !type_is_long(false_type) && !type_is_float(false_type)) {
+            emit_extend_to_long((false_type & TYPE_UNSIGNED) ||
+                                (false_type & (TYPE_PTR | TYPE_PTR2)));
+            false_type = (false_type & TYPE_UNSIGNED) ? (TYPE_LONG | TYPE_UNSIGNED) : TYPE_LONG;
+        }
+
+        emit_label(lend);
+
+        if (need_long_result) {
+            if ((true_type & TYPE_UNSIGNED) || (false_type & TYPE_UNSIGNED))
+                g_expr_type = TYPE_LONG | TYPE_UNSIGNED;
+            else
+                g_expr_type = TYPE_LONG;
+        } else {
+            /*
+             * C89 conditional operator balancing still matters when both
+             * result arms are 16-bit or narrower.  Without this, the type of
+             * the whole expression accidentally remained the false arm type.
+             *
+             * Example:
+             *     (long)(1 ? (uint16_t)50000 : (int8_t)-10)
+             *
+             * If the expression type is left as int8_t, the later cast to
+             * long widens only the low byte (0x50 -> 80).  The balanced type
+             * is unsigned int, so the cast must widen the full 16-bit HL value.
+             */
+            g_expr_type = common_arith_type(true_type, false_type);
+        }
+    }
+}
+
+

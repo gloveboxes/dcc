@@ -3715,7 +3715,7 @@ static int count_jumps_to_label(const char *label)
 static int pass_bool_from_cmp(void)
 {
     int i, changed = 0;
-    char ltrue[128], lexit[128], cond[16], new_jp[128];
+    char ltrue[128], lexit[128], cond[16], new_jp[256];
     const char *inv_cond;
 
     for (i = 0; i + 5 < nlines; i++) {

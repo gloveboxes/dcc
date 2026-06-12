@@ -711,9 +711,9 @@ static int peep_parse_jp_uncond_label(const char *s, char *lab)
     return i > 0;
 }
 
-static void peep_make_cond_jump(char *out, const char *cond, const char *lab)
+static void peep_make_cond_jump(char *out, size_t size, const char *cond, const char *lab)
 {
-    sprintf(out, "jp %s, %s", cond, lab);
+    snprintf(out, size, "jp %s, %s", cond, lab);
 }
 
 static int peep_parse_any_cond_jump(const char *s, char *cond, char *lab)
@@ -3730,7 +3730,7 @@ static int pass_bool_from_cmp(void)
         if (count_jumps_to_label(ltrue) != 1) continue;
         inv_cond = peep_inverse_cond(cond);
         if (!inv_cond) continue;
-        peep_make_cond_jump(new_jp, inv_cond, lexit);
+        peep_make_cond_jump(new_jp, sizeof(new_jp), inv_cond, lexit);
         replace1_tagged(i, "ld hl,0", "bool_from_cmp");
         replace1(i + 1, new_jp);
         replace1(i + 2, "inc l");
@@ -5599,9 +5599,9 @@ static int pass_once(void)
                 final_is_z = strncmp(lines[i + 9], "jp z,", 5) == 0;
 
                 if (final_is_z) {
-                    peep_make_cond_jump(newline, first_is_z ? "nz" : "z", ldest);
+                    peep_make_cond_jump(newline, sizeof(newline), first_is_z ? "nz" : "z", ldest);
                 } else {
-                    peep_make_cond_jump(newline, first_is_z ? "z" : "nz", ldest);
+                    peep_make_cond_jump(newline, sizeof(newline), first_is_z ? "z" : "nz", ldest);
                 }
 
                 replace1_tagged(i + 1, newline, "cp_hl_bool");
@@ -5897,9 +5897,9 @@ static int pass_once(void)
                 final_is_z = strncmp(lines[i + 10], "jp z,", 5) == 0;
 
                 if (final_is_z) {
-                    peep_make_cond_jump(newline, first_is_z ? "nz" : "z", ldest);
+                    peep_make_cond_jump(newline, sizeof(newline), first_is_z ? "nz" : "z", ldest);
                 } else {
-                    peep_make_cond_jump(newline, first_is_z ? "z" : "nz", ldest);
+                    peep_make_cond_jump(newline, sizeof(newline), first_is_z ? "z" : "nz", ldest);
                 }
 
                 /*
@@ -6322,7 +6322,7 @@ static int pass_cond_skip_shortcut(void)
         if (strcmp(lskip, ldest) == 0)
             continue;
 
-        peep_make_cond_jump(new_jp, cond, ldest);
+        peep_make_cond_jump(new_jp, sizeof(new_jp), cond, ldest);
         replace1(i, new_jp);
         changed = 1;
         if (i > 0) i--;

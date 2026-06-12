@@ -40,8 +40,15 @@ void *calloc( size_t num, size_t size );
 void *realloc( void *ptr, size_t size );
 void free( void *ptr );
 
-/* dcc extension (not C89): direct 8-bit port I/O.  inp() runs IN A,(port)
- * and outp() runs OUT (port),A; only the low 8 bits of port are significant. */
+/* dcc extensions (not C89) for talking to CP/M and hardware directly:
+ *   bdos()      calls the CP/M BDOS entry point (fn -> C, dearg -> DE); the
+ *               byte result is returned in the low byte of the int.  Calls
+ *               whose useful result is an FCB/DMA region return it through the
+ *               memory that dearg points at, not in the return value.
+ *   inp()/outp() do direct Z80 8-bit port I/O.  inp() runs IN A,(port) and
+ *               returns the byte zero-extended to int (0..255); outp() runs
+ *               OUT (port),A.  Only the low 8 bits of port are significant. */
+int  bdos( int fn, int dearg );
 int  inp( unsigned port );
 void outp( unsigned port, unsigned val );
 

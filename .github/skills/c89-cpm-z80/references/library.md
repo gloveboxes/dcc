@@ -5,9 +5,9 @@ entry points (e.g. `memcpy`→`__mcpy`). Because C89 lets you call an undeclared
 function (implicit `int`), referencing something the runtime doesn't provide
 fails at **link** time (`unresolved external`), not compile time. The shipped
 headers are a hand-written minimal subset, so an entry point can exist in the
-runtime without a prototype (the `bdos()` escape hatch is the deliberate case) —
-declare those yourself. This file lists what the runtime actually provides, plus
-the `printf`/`scanf` conversion subset.
+runtime without a prototype (the heap symbols `_brk`/`_hlimit` are the deliberate
+case) — declare those yourself. This file lists what the runtime actually
+provides, plus the `printf`/`scanf` conversion subset.
 
 > Inside the dcc repo, `dcc-c89-reference-guide.md` at the repo root is the
 > exhaustive source; this file is the portable summary for use anywhere.
@@ -116,6 +116,11 @@ calling convention, not the memory layout.)
   and returns the byte zero-extended to `int` (0..255); `outp` runs
   `OUT (port),A`, sending the low byte of `val`. Only the low 8 bits of `port`
   are used; the byte read back is device/emulator dependent. See `tportio.c`.
+- `bdos(fn, dearg)` is a **dcc/CP/M extension** (declared in `<stdlib.h>`, not
+  C89): calls the CP/M BDOS entry point directly (`fn` -> C, `dearg` -> DE; the
+  byte result is in the low byte). FCB/DMA-style calls return their data through
+  the memory `dearg` points at, not the return value. See the escape-hatch note
+  below and `tbdos.c`/`crc.c`.
 
 **Not present** (neither declared in `<stdlib.h>` nor in the runtime):
 `strtol`, `strtoul`, `abort`, `atexit`, `getenv`, `system`, the multibyte
@@ -210,13 +215,16 @@ Flags from `<fcntl.h>`: `O_RDONLY` (0), `O_WRONLY` (1), `O_RDWR` (2),
 
 ## CP/M BDOS escape hatch
 
-Not in any header — declare it yourself for raw BDOS calls:
+Declared in `<stdlib.h>` (a dcc/CP/M extension) for raw BDOS calls:
 
 ```c
-extern int bdos(int fn, int dearg);   /* fn = BDOS function, dearg -> DE; result in HL/A */
+int bdos(int fn, int dearg);   /* fn -> C, dearg -> DE; byte result in low byte */
 ```
 
-See `tbdos.c`, `crc.c` in the dcc repo.
+FCB/DMA-style calls (directory/file ops) return their data through the memory
+`dearg` points at, not the return value. Old CP/M C that declares its own
+`extern int bdos();` still compiles — the K&R declaration is compatible with the
+prototype. See `tbdos.c`, `crc.c` in the dcc repo.
 
 ## C89 standard headers that DO NOT exist in dcc
 

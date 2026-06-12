@@ -742,19 +742,23 @@ assert(ptr != NULL);
 ## CP/M extensions
 
 The runtime exposes the raw CP/M BDOS entry point for things the standard
-library doesn't cover (console status, direct disk calls, and so on). It is not
-declared in a header, so declare it yourself:
+library doesn't cover (console status, direct disk calls, and so on). It is
+declared in [stdlib.h](stdlib.h):
 
 ```c
-extern int bdos(int fn, int dearg);
+int bdos(int fn, int dearg);
 ```
 
 `fn` is the BDOS function number and `dearg` is the value passed in `DE`; the
-result comes back in `HL`/`A`. See [tbdos.c](tbdos.c) and [crc.c](crc.c) for
-working examples.
+byte result comes back in the low byte of the returned `int`. Calls whose useful
+result is an FCB/DMA region (directory and file operations) return their data
+through the memory `dearg` points at, not in the return value. See
+[tbdos.c](tbdos.c) and [crc.c](crc.c) for working examples. (Older CP/M C code
+often declares its own `extern int bdos();`; that K&R declaration stays
+compatible with the prototype, so existing sources keep compiling.)
 
 **Direct port I/O.** For talking to hardware or an emulator's virtual devices,
-the runtime also provides 8-bit port I/O. Unlike `bdos`, these are declared in
+the runtime also provides 8-bit port I/O, declared alongside `bdos` in
 [stdlib.h](stdlib.h):
 
 ```c

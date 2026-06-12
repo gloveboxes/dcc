@@ -52,6 +52,12 @@ At a glance: `char` 8-bit (signed), `short`/`int` 16-bit, `long` 32-bit,
 - **K&R function definitions are accepted** (dcc's typing is lenient), but
   prefer prototypes for new code. Mixed decls/statements and block-local
   variables are fine (real C89).
+- **Full C89 operator set**, including bitwise `&` `|` `^` `~` `<<` `>>` and
+  their compound forms (`&=` `|=` `^=` `<<=` `>>=`). `>>` is **arithmetic**
+  (sign-extending) on signed operands and **logical** (zero-fill) on unsigned —
+  use `unsigned`/`unsigned long` when you need a guaranteed zero-fill shift.
+  Shifts act at the operand width (16-bit for `int`; cast/promote to `long`
+  for wider shifts).
 - No other C99/C11 features (`restrict`, `_Bool`, `//`-only assumptions about
   runtime, VLAs, compound literals, designated initializers).
 

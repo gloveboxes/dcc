@@ -22,6 +22,7 @@ get surprised by a link error.
   - [C89 keywords (reserved words)](#c89-keywords-reserved-words)
     - [Not supported](#not-supported)
     - [Semantics of the accepted-but-inert qualifiers](#semantics-of-the-accepted-but-inert-qualifiers)
+    - [Operators](#operators)
     - [Beyond C89](#beyond-c89)
   - [stdio.h — console and file I/O](#stdioh--console-and-file-io)
     - [Formatted output](#formatted-output)
@@ -187,6 +188,30 @@ generation:
 - `register` — accepted as a hint only; it does not force register allocation.
 - `auto` — accepted; since it is already the default storage for locals, it is a
   no-op.
+
+### Operators
+
+dcc supports the full C89 operator set:
+
+- Arithmetic: `+` `-` `*` `/` `%` (and unary `+`/`-`).
+- Bitwise: `&` `|` `^` `~` `<<` `>>`.
+- Logical / relational: `&&` `||` `!`, `==` `!=` `<` `<=` `>` `>=`.
+- Assignment: `=` and the compound forms `+=` `-=` `*=` `/=` `%=` `&=` `|=`
+  `^=` `<<=` `>>=`.
+- Increment / decrement: `++` `--` (prefix and postfix).
+- Other: `?:`, the comma operator, `sizeof`, casts `(type)`, address-of `&`,
+  dereference `*`, member `.` and `->`, and subscript `[]`.
+
+Notes specific to the 16-bit model:
+
+- `>>` is an **arithmetic** (sign-extending) shift on signed operands and a
+  **logical** (zero-fill) shift on unsigned operands — use `unsigned` /
+  `unsigned long` when you need a guaranteed zero-fill shift.
+- Shifts and bitwise operators act at the operand's width: 16-bit for `int`,
+  32-bit for `long`. Cast or promote to `long` before shifting if you need
+  more than 16 bits (for example `(long)x << 20`).
+- The optimizer rewrites multiply/divide by a power-of-two constant into the
+  equivalent shift.
 
 ### Beyond C89
 

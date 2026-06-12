@@ -453,6 +453,22 @@ int peek_simple_unary_type(void)
                 g_tok_long_suffix = save_long_suffix; g_tok_unsigned_suffix = save_unsigned_suffix; tok = save_tok;
                 return promote_int_type(t);
             }
+        } else {
+            /*
+             * Parenthesized expression (not a cast): peek the type of its
+             * first operand so a compound RHS such as (fa * fb) or (la + lb)
+             * is predicted as float / long instead of defaulting to int.
+             * Without this, gen_add/gen_mul/gen_rel/gen_eq pick the 16-bit
+             * branch for  x + (fa * fb)  and truncate the float (or long)
+             * result.  The recursion is bounded by paren nesting and only
+             * refines the lookahead; it returns the inner operand's promoted
+             * type.
+             */
+            int inner = peek_simple_unary_type();
+            posi = save_pos; tok_start_pos = save_tok_start;
+            line_no = save_line; tok_line = save_tok_line;
+            g_tok_long_suffix = save_long_suffix; g_tok_unsigned_suffix = save_unsigned_suffix; tok = save_tok;
+            return inner;
         }
     } else if (tok.kind == TOK_FLOATLIT) {
         t = TYPE_FLOAT;

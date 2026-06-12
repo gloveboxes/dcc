@@ -3638,6 +3638,8 @@ test tlongreg
 tlongreg: all tests passed with great success
 test tlongopt
 tlongopt passed with great success
+test tctxops
+tctxops passed with great success
 test tppreg
 tppreg: all tests passed
 test tinitreg

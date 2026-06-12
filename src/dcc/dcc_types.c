@@ -328,8 +328,7 @@ void parse_struct_definition(int struct_id)
                 }
 
                 memset(&field_defs[nfield_defs], 0, sizeof(field_defs[nfield_defs]));
-                strncpy(field_defs[nfield_defs].name, fname,
-                        sizeof(field_defs[nfield_defs].name) - 1);
+                snprintf(field_defs[nfield_defs].name, sizeof(field_defs[nfield_defs].name), "%s", fname);
                 if ((ftype & 15) != TYPE_INT || type_ptr_depth(ftype) != 0)
                     error_here("bitfield type must be int or unsigned int");
                 field_defs[nfield_defs].type = (ftype & TYPE_UNSIGNED) ?
@@ -357,8 +356,7 @@ void parse_struct_definition(int struct_id)
             bytes = type_size(ftype);
 
             memset(&field_defs[nfield_defs], 0, sizeof(field_defs[nfield_defs]));
-            strncpy(field_defs[nfield_defs].name, fname,
-                    sizeof(field_defs[nfield_defs].name) - 1);
+            snprintf(field_defs[nfield_defs].name, sizeof(field_defs[nfield_defs].name), "%s", fname);
             field_defs[nfield_defs].type = ftype;
             field_defs[nfield_defs].parent_struct_id = struct_id;
             /* union: all fields at offset 0; struct: cumulative */
@@ -534,9 +532,7 @@ int parse_base_type(void)
                         }
                     }
                     if (!dup && nenum_consts < MAX_ENUM_CONSTS) {
-                        strncpy(enum_const_names[nenum_consts], ename,
-                                sizeof(enum_const_names[nenum_consts]) - 1);
-                        enum_const_names[nenum_consts][sizeof(enum_const_names[nenum_consts]) - 1] = 0;
+                        snprintf(enum_const_names[nenum_consts], sizeof(enum_const_names[nenum_consts]), "%s", ename);
                         enum_const_values[nenum_consts] = cur_val;
                         nenum_consts++;
                     }

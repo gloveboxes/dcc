@@ -3469,7 +3469,7 @@ first implementation...
 second implementation...
   at           10 iterations: 1.666667
   at          100 iterations: 1.190476
-  at         1000 iterations: 1.206273
+  at         1000 iterations: 1.193317
 done
 test cpmenumd
 finding COM files
@@ -3636,6 +3636,8 @@ test tlongaud
 tlongaud: all tests passed with great success
 test tlongreg
 tlongreg: all tests passed with great success
+test tlongopt
+tlongopt passed with great success
 test tppreg
 tppreg: all tests passed
 test tinitreg

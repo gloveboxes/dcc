@@ -424,6 +424,7 @@ void gen_assign(void)
                 }
 
                 emit_store_hl_to_sym_direct(direct_sym);
+                g_long_from16 = 0;
                 return;
             }
 
@@ -459,6 +460,7 @@ void gen_assign(void)
                         fprintf(outf, "\tld a,(ix%+d)\n", bs->offset);
                         fprintf(outf, "\tld (ix%+d),a\n", direct_sym->offset);
                         g_expr_type = direct_sym->type;
+                        g_long_from16 = 0;
                         return;
                     }
                 }
@@ -488,6 +490,7 @@ void gen_assign(void)
                 if (tok.kind == ';' || tok.kind == ',' || tok.kind == ')' || tok.kind == ']') {
                     fprintf(outf, "\tld (ix%+d),%ld\n", direct_sym->offset, rhs_byte_val & 255);
                     g_expr_type = direct_sym->type;
+                    g_long_from16 = 0;
                     return;
                 }
 
@@ -505,6 +508,7 @@ void gen_assign(void)
                 if (!type_is_float(g_expr_type))
                     emit_convert_int_to_float(g_expr_type);
                 emit_store_hl_to_sym_direct(direct_sym);
+                g_long_from16 = 0;
                 return;
             }
 
@@ -520,6 +524,7 @@ void gen_assign(void)
             else if (type_size(direct_sym->type) > 1 && !type_is_long(g_expr_type))
                 emit_promote_byte_to_int(g_expr_type);
             emit_store_hl_to_sym_direct(direct_sym);
+            g_long_from16 = 0;
             return;
         }
 
@@ -557,6 +562,7 @@ void gen_assign(void)
 
                 /* Convert back to the non-long LHS by storing the low word. */
                 emit_store_hl_to_sym_direct(direct_sym);
+                g_long_from16 = 0;
                 return;
             }
         }
@@ -572,6 +578,7 @@ void gen_assign(void)
                 emit_shift_loop(op, direct_sym->type);
             }
             emit_store_hl_to_sym_direct(direct_sym);
+            g_long_from16 = 0;
             return;
         }
 
@@ -580,6 +587,7 @@ void gen_assign(void)
             try_consume_float_pow2_compound_scale(op)) {
             emit_store_hl_to_sym_direct(direct_sym);
             g_expr_type = direct_sym->type;
+            g_long_from16 = 0;
             return;
         }
 
@@ -600,6 +608,7 @@ void gen_assign(void)
             }
             emit_shift_loop(op, direct_sym->type);
             emit_store_hl_to_sym_direct(direct_sym);
+            g_long_from16 = 0;
             return;
         }
 
@@ -610,6 +619,7 @@ void gen_assign(void)
             emit_runtime_call(op == TOK_MULEQ ? "__fmul" : (op == TOK_DIVEQ ? "__fdiv" : (op == TOK_ADDEQ ? "__fadd" : "__fsub")));
             emit("\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n");
             emit_store_hl_to_sym_direct(direct_sym);
+            g_long_from16 = 0;
             return;
         }
 
@@ -642,6 +652,7 @@ void gen_assign(void)
         }
 
         emit_store_hl_to_sym_direct(direct_sym);
+        g_long_from16 = 0;
         return;
     }
 
@@ -669,6 +680,7 @@ normal_assign:
                 emit("\tpop hl\n");   /* HL = destination */
                 emit_copy_de_to_hl_bytes(type_size(t));
                 g_expr_type = t;
+                g_long_from16 = 0;
                 return;
             }
 
@@ -677,6 +689,7 @@ normal_assign:
             if (type_is_float(t)) {
                 if (try_emit_float_rvalue_dehl()) {
                     emit_store_de_to_addr_hl(t);  /* pops address */
+                    g_long_from16 = 0;
                     return;
                 }
                 expr_result_dead = 0;
@@ -685,6 +698,7 @@ normal_assign:
                 if (!type_is_float(g_expr_type))
                     emit_convert_int_to_float(g_expr_type);
                 emit_store_de_to_addr_hl(t);  /* pops address */
+                g_long_from16 = 0;
                 return;
             }
 
@@ -716,6 +730,7 @@ normal_assign:
                 if (!want_dead)
                     emit("\tex de,hl\n");
             }
+            g_long_from16 = 0;
             return;
         }
 
@@ -741,6 +756,7 @@ normal_assign:
                 emit("\tld d,b\n\tld e,c\n");
             }
             g_expr_type = t;
+            g_long_from16 = 0;
             return;
         }
 
@@ -776,6 +792,7 @@ normal_assign:
                 emit_store_de_to_addr_hl(t);
                 if (!want_dead)
                     emit("\tex de,hl\n");
+                g_long_from16 = 0;
                 return;
             }
         }
@@ -787,6 +804,7 @@ normal_assign:
             try_consume_float_pow2_compound_scale(op)) {
             emit_store_de_to_addr_hl(t); /* pops saved lvalue address */
             g_expr_type = t;
+            g_long_from16 = 0;
             return;
         }
 
@@ -827,6 +845,7 @@ normal_assign:
                     emit("\tex de,hl\n");
             }
             g_expr_type = t;
+            g_long_from16 = 0;
             return;
         }
 
@@ -870,6 +889,7 @@ normal_assign:
             if (!want_dead)
                 emit("\tex de,hl\n");
         }
+        g_long_from16 = 0;
         return;
     }
 

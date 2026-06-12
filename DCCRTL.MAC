@@ -4908,6 +4908,126 @@ lmul_bs:
         pop     ix
         ret
 
+; __m16u: unsigned 16x16 -> 32 multiply.
+;   The caller pushes both operands in the 32-bit convention (push de;push hl
+;   each), but these are sign/zero-extended 16-bit values, so only the LOW
+;   words carry information.  This helper reads just those low words
+;   (LHS_L at ix+8, RHS_L at ix+4) and ignores the high zero-extension words,
+;   producing the same DE:HL result the full 32x32 __lmul would for two
+;   zero-extended operands -- at a fraction of the cost (one 16-iteration
+;   register loop, no cross products).  Caller still cleans 8 bytes.
+;   NB: name kept to <=6 significant chars and distinct from __lmul/__m16s,
+;   because L80 only treats the first 6 characters of a public as significant.
+        public  __m16u
+__m16u:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      c,(ix+8)                ; BC = LHS low word (multiplicand)
+        ld      b,(ix+9)
+        ld      e,(ix+4)                ; DE = RHS low word (multiplier/low acc)
+        ld      d,(ix+5)
+        ld      hl,0                    ; HL = high accumulator
+        ld      a,16
+lmulu_b:
+        bit     0,e                     ; multiplier LSB
+        jr      z,lmulu_bn
+        add     hl,bc                   ; HL += multiplicand; CF = carry out
+        jr      lmulu_bs
+lmulu_bn:
+        or      a                       ; CF = 0 for a clean shift
+lmulu_bs:
+        rr      h                       ; shift CF:HL:DE right by one (33-bit)
+        rr      l
+        rr      d
+        rr      e
+        dec     a
+        jr      nz,lmulu_b
+        ex      de,hl                   ; DE = high, HL = low
+        ld      sp,ix
+        pop     ix
+        ret
+
+; __m16s: signed 16x16 -> 32 multiply.
+;   Like __m16u, but the two low words are signed.  Compute the result sign
+;   from the operand signs, multiply the magnitudes with the same unsigned
+;   16-iteration core, then negate the 32-bit product if the signs differ.
+;   Matches (mod 2^32) what __lmul produces for two SIGN-extended operands.
+        public  __m16s
+__m16s:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+8)                ; HL = LHS low word
+        ld      h,(ix+9)
+        ld      e,(ix+4)                ; DE = RHS low word
+        ld      d,(ix+5)
+        ld      a,h
+        xor     d
+        ld      (lmuls_sg),a            ; bit7 = sign of product
+        bit     7,h                     ; HL = |LHS|
+        jr      z,lmuls_ap
+        xor     a
+        sub     l
+        ld      l,a
+        sbc     a,a
+        sub     h
+        ld      h,a
+lmuls_ap:
+        bit     7,d                     ; DE = |RHS|
+        jr      z,lmuls_bp
+        xor     a
+        sub     e
+        ld      e,a
+        sbc     a,a
+        sub     d
+        ld      d,a
+lmuls_bp:
+        ld      b,h                     ; BC = |LHS| (multiplicand)
+        ld      c,l
+        ld      hl,0                    ; HL = high accumulator
+        ld      a,16
+lmuls_b:
+        bit     0,e                     ; multiplier LSB
+        jr      z,lmuls_bn
+        add     hl,bc
+        jr      lmuls_bs
+lmuls_bn:
+        or      a
+lmuls_bs:
+        rr      h                       ; shift CF:HL:DE right by one
+        rr      l
+        rr      d
+        rr      e
+        dec     a
+        jr      nz,lmuls_b
+        ex      de,hl                   ; HL = low, DE = high
+        ld      a,(lmuls_sg)
+        bit     7,a
+        jr      z,lmuls_done
+        ld      a,l                     ; negate 32-bit DE:HL (HL=low, DE=high)
+        cpl
+        ld      l,a
+        ld      a,h
+        cpl
+        ld      h,a
+        ld      a,e
+        cpl
+        ld      e,a
+        ld      a,d
+        cpl
+        ld      d,a
+        inc     hl
+        ld      a,h
+        or      l
+        jr      nz,lmuls_done
+        inc     de
+lmuls_done:
+        ld      sp,ix
+        pop     ix
+        ret
+lmuls_sg:       db      0
+
 ; __ldivu: unsigned 32-bit divide.  Returns DE:HL = LHS / RHS.
         public  __ldu
 __ldu:

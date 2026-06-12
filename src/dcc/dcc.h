@@ -375,6 +375,7 @@ extern int expr_result_dead;
 extern int g_expr_type;
 extern int g_tok_long_suffix; /* set by lexer when L/l suffix seen on integer literal */
 extern int g_tok_unsigned_suffix; /* set for U/u suffix or non-decimal unsigned-int literal */
+extern int g_long_from16; /* the long value in DE:HL was just widened from 16-bit: 0 no, 1 signed, 2 unsigned */
 
 /* user-defined goto labels (function-scoped) */
 extern char ulabel_names[MAX_USER_LABELS][64];
@@ -690,6 +691,8 @@ const char *skip_snippet_ws_and_lines(const char *s);
 int snippet_simple_type(const char *s, int *typep);
 int snippet_needs_long_compare(const char *lhs, const char *rhs, int *commonp);
 void emit_branch_on_bool_hl(int label, int branch_when_true);
+int try_emit_long_cmp_const_branch(int op, const char *rhs_code, int common_type,
+                                   int label, int branch_when_true);
 void gen_direct_rel_branch_until(int op, int label, int branch_when_true, int stop_kind);
 int gen_direct_byte_bitand_branch_until(int label, int branch_when_true, int stop_kind);
 int gen_const_and_byte_condition_branch_until(int label, int branch_when_true, int stop_kind);

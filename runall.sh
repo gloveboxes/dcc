@@ -13,7 +13,7 @@ APPLIST="sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong \
          tc89fcnv tc89fadd tc89fmul tc89fdiv tc89ffio tc89flng tc89fmat \
          ttrig tlog tphi tap cpmenumd tbits tfo pihex tstrify tlcont primes \
          tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 \
-         tlongaud tlongreg tppreg tinitreg ttypesr ttype2 tdecinit tmalloch \
+         tlongaud tlongreg tlongopt tppreg tinitreg ttypesr ttype2 tdecinit tmalloch \
          tallocx tstdlib tioerr tqsort tbsearch trw2 terrno tpostfld pint tswitch tppifcom tpostidx \
          tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 \
          tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom \

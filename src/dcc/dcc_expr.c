@@ -2071,6 +2071,7 @@ int try_emit_struct_return_call_assignment(int lhs_type)
     emit_cleanup_stack_bytes(arg_bytes + 2);
     emit("\tpop bc\n");          /* discard saved destination pointer */
     g_expr_type = lhs_type;
+    g_long_from16 = 0;
     return 1;
 }
 
@@ -2180,6 +2181,7 @@ int try_emit_push_struct_return_call_arg(const char *snippet, int want_type)
                 fprintf(outf, "\tcall %s\n", asm_name_for(name));
                 emit_cleanup_stack_bytes(arg_bytes + 2);
                 emit("\tpop bc\n");
+                g_long_from16 = 0;
                 ok = 1;
             }
         }
@@ -2729,6 +2731,7 @@ void gen_primary(void)
         emit_call_hl_from_stack_offset(fp_arg_bytes);
         emit_cleanup_stack_bytes(fp_arg_bytes + 2);
         g_expr_type = TYPE_INT;
+        g_long_from16 = 0;
         return;
     }
 
@@ -2781,6 +2784,7 @@ void gen_primary(void)
             emit_call_hl_from_stack_offset(fp_arg_bytes);
             emit_cleanup_stack_bytes(fp_arg_bytes + 2);
             g_expr_type = type_decay_ptr(g_expr_type);
+            g_long_from16 = 0;
         }
         return;
     }
@@ -2938,6 +2942,7 @@ void gen_primary(void)
                     fprintf(outf, "\tcall %s\n", asm_name_for(name));
                     g_expr_type = fn_sym ? fn_sym->type : TYPE_INT;
                 }
+                g_long_from16 = 0;
 
                 emit_cleanup_stack_bytes(arg_bytes);
             }
@@ -3450,6 +3455,12 @@ void gen_unary(void)
     int t;
     int sz;
 
+    /* Each gen_unary call produces exactly one operand value.  Clear the
+     * "freshly widened from 16-bit" marker on entry; only an explicit
+     * widening (emit_extend_to_long_typed) below sets it again.  This lets
+     * gen_mul recognize (long)int * int and use the cheap 16x16->32 helper. */
+    g_long_from16 = 0;
+
     if (paren_starts_cast()) {
         expect('(');
         parse_type_name_decl(&t, &sz);
@@ -3533,6 +3544,12 @@ void gen_unary(void)
             emit_jp_label("jp nz,", lneg_skip);
             emit("\tinc de\n");
             emit_label(lneg_skip);
+            /* The negated long is a computed value, not a faithful
+             * sign/zero-extension of a 16-bit operand: e.g. -(long)(-32768)
+             * is 0x00008000 (low word 0x8000 is not a signed 16-bit -32768),
+             * and -(unsigned long)x has a 0xffff high word.  Clear the marker
+             * so a following multiply does not use the 16x16 helper. */
+            g_long_from16 = 0;
         } else {
             emit("\txor a\n\tsub l\n\tld l,a\n\tld a,0\n\tsbc a,h\n\tld h,a\n");
             /* C89 integer promotions apply to unary -. */
@@ -3568,6 +3585,10 @@ void gen_unary(void)
         if (type_is_long(g_expr_type)) {
             emit("\tld a,h\n\tcpl\n\tld h,a\n\tld a,l\n\tcpl\n\tld l,a\n");
             emit("\tld a,d\n\tcpl\n\tld d,a\n\tld a,e\n\tcpl\n\tld e,a\n");
+            /* ~ of a zero-extended unsigned long sets the high word to 0xffff,
+             * so the result is no longer a faithful widening of a 16-bit
+             * value; clear the marker before any following multiply. */
+            g_long_from16 = 0;
         } else {
             emit("\tld a,h\n\tcpl\n\tld h,a\n\tld a,l\n\tcpl\n\tld l,a\n");
             /* C89 integer promotions apply before unary ~.  Without this,

@@ -67,8 +67,7 @@ written in Z80 assembly (M80/L80 syntax) for size and speed and provides:
 - 16-/32-bit integer and 32-bit float arithmetic helpers the compiler calls
   implicitly.
 
-Most library names in the standard headers are ordinary C identifiers. Because
-L80/M80 only preserve a short, significant prefix of external symbols, the
+Most library names in the standard headers are ordinary C identifiers. The
 compiler maps well-known library calls to short internal assembler labels (for
 example `memcpy` becomes `__mcpy`, `strlen` becomes `__slen`). You never write
 those short names yourself — just call the standard C functions and include the
@@ -141,6 +140,11 @@ Include the standard headers as usual:
 | pointer        | 16 bits | flat CP/M address space                       |
 | `size_t`       | 16 bits | unsigned `int`                                |
 | `FILE`         | 16 bits | `typedef int FILE`; streams are small handles |
+
+Identifier significance is C89-conformant: internal identifiers are
+distinguished by at least their first 31 characters and external (global and
+function) names by at least their first 6, so you never need to abbreviate
+identifiers for the toolchain.
 
 Useful constants from the headers:
 

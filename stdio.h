@@ -39,8 +39,17 @@ void perror(const char *s);
 int getchar(void);
 int scanf(const char *format, ...);
 
+/* Single-character stream I/O.  The compiler maps these C names to runtime
+ * entry points (getc->__getc, putc->__putc, fputc->__fpc), so calls link
+ * regardless; these prototypes add type-checking and editor/IntelliSense
+ * resolution.  Note: there is no fgetc in this runtime. */
+int getc(FILE *stream);
+int putc(int c, FILE *stream);
+int fputc(int c, FILE *stream);
+
 /* Buffered file I/O (FILE *) */
 FILE  *fopen(const char *filename, const char *mode);
+int    remove(const char *filename);
 int    fclose(FILE *stream);
 int    fflush(FILE *stream);
 char  *fgets(char *s, int n, FILE *stream);
@@ -55,6 +64,7 @@ void   rewind(FILE *stream);
 int    feof(FILE *stream);
 int    ferror(FILE *stream);
 void   clearerr(FILE *stream);
+void   setbuf(FILE *stream, char *buf);
 
 /* Formatted-string helpers */
 int sprintf(char *s, const char *format, ...);

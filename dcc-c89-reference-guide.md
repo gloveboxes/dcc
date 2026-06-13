@@ -212,6 +212,13 @@ Notes specific to the 16-bit model:
   more than 16 bits (for example `(long)x << 20`).
 - The optimizer rewrites multiply/divide by a power-of-two constant into the
   equivalent shift.
+- `%` requires integer operands. For a floating-point remainder use `fmodf`
+  from [math.h](math.h); `floatx % floaty` is rejected at compile time.
+- Mixed-type expressions follow the usual arithmetic conversions: **`float`
+  outranks `long`, which outranks 16-bit `int`/`short`.** So `longv + 1.0f`,
+  `intv < floatv`, and `cond ? 2 : 3.5f` are all computed in `float`, and the
+  result stays `float` until you cast it back. Mind the single-precision limit
+  noted under [math.h](math.h) whenever a wide `long` meets a `float`.
 
 ### Beyond C89
 
@@ -606,6 +613,25 @@ float r = sqrtf(2.0f);
 printf("%f\n", r);          /* needs -ffloatio */
 ```
 
+### Float precision and mixed-type gotchas
+
+- **`float` carries about 7 decimal digits (a 24-bit significand).** Integers up
+  to 2^24 (16,777,216) are exact; beyond that only some integers are
+  representable, so converting a larger `long` to `float` rounds to the nearest
+  single. `(long)(float)16777217L` is `16777216`, not `16777217`. The same
+  rounding applies in constant expressions, `case` labels, and array bounds.
+- **Comparing a wide integer against a `float` happens in `float`.** The integer
+  side converts to `float` first, losing any value below the 2^24 boundary, so
+  `16777216L < (float)16777217L` is **false** (the cast rounded down to
+  `16777216.0f`). Compare as integers when you need full 32-bit precision.
+- **Any `float` arm makes a `?:` a `float` expression.** `cond ? 2 : 3.5f`
+  yields a `float` (`2.0f` or `3.5f`), not an `int`; cast the result if you need
+  an integer. This holds even when the `float` is hidden behind a cast, a struct
+  member, or a nested `?:` arm.
+- **A `float` is "true" when its magnitude is nonzero.** `if (f)`, `f ? a : b`,
+  `!f`, `f && g`, and `while (f)` test against zero, and both `+0.0f` and
+  `-0.0f` count as false.
+
 ---
 
 ## setjmp.h — non-local jumps
@@ -831,6 +857,12 @@ either `#include` its `.c` from your main file, or compile it separately with
 ## Limitations to keep in mind
 
 - **No `double`.** Only 32-bit `float` exists; all math is single precision.
+- **`float` precision is ~24 bits.** Integers past ±2^24 (16,777,216) are not all
+  representable, so converting a large `long` to `float` — or comparing a `long`
+  against a `float` — rounds to the nearest single. Keep values as integers when
+  you need full 32-bit precision.
+- **`%` is integer-only.** Use `fmodf` for a floating-point remainder;
+  `float % float` is a compile error.
 - **`int` is 16-bit.** Use `long` (and `%ld`) when you need more than ±32767.
 - **`scanf` is integer/string only.** Floating input, scansets, `%n`, and `%p`
   are not implemented.

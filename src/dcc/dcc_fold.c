@@ -221,6 +221,16 @@ int cf_parse_primary(struct ConstVal *out)
             expect(')');
             if (!cf_parse_primary(out))
                 return 0;
+            /*
+             * The cf_* engine is integer-only: it has no IEEE-754 rounding,
+             * so it cannot represent a cast to float faithfully.  Folding
+             * (float)16777217L as the integer 16777217 is wrong, because the
+             * single-precision value rounds to 16777216.0f.  Decline so the
+             * expression falls through to the runtime float code path, which
+             * converts and compares with correct single-precision semantics.
+             */
+            if (type_is_float(t))
+                return 0;
             cf_cast_to_type(out, t);
             return 1;
         }

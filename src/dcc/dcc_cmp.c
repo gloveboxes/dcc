@@ -678,16 +678,21 @@ int simple_direct_condition_until(int stop_kind)
         if (depth == 0 && tok.kind == stop_kind)
             break;
 
-        if (depth == 0) {
-            if (tok.kind == TOK_FLOATLIT) {
+        /* A float operand anywhere in the condition - including inside
+         * parentheses such as "x < (fa * fb)" - rules out the integer
+         * direct-branch path.  Detect it at ANY depth (not only depth 0) so
+         * the caller falls back to the general, float-aware compare path
+         * (gen_rel/gen_eq) instead of silently emitting an integer compare. */
+        if (tok.kind == TOK_FLOATLIT) {
+            bad = 1;
+        } else if (tok.kind == TOK_ID) {
+            struct Sym *fs;
+            fs = find_sym(tok.text);
+            if (fs && type_is_float(fs->type))
                 bad = 1;
-            } else if (tok.kind == TOK_ID) {
-                struct Sym *fs;
-                fs = find_sym(tok.text);
-                if (fs && type_is_float(fs->type))
-                    bad = 1;
-            }
+        }
 
+        if (depth == 0) {
             if (is_relop_token(tok.kind)) {
                 if (found)
                     bad = 1;
@@ -1058,13 +1063,28 @@ void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
         int ptr_cmp;
         ptr_cmp = snippet_is_single_pointer_id(lhs_code);
         gen_snippet_expr(lhs_code);
-        emit_ld_de_const(rhs_const);
-        if ((g_expr_type & TYPE_UNSIGNED) || ptr_cmp) {
-            if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
-            else emit_cmp_branch_false_unsigned(op, label);
+        if (type_is_float(g_expr_type)) {
+            /* Hidden float LHS (a cast or a struct/union member the snippet
+             * pre-scan cannot classify) compared with an integer constant.
+             * Compare as float so the constant load does not clobber DE (the
+             * float's high word).  const_positive_snippet_value only yields
+             * 1..32767, so the constant fits HL as a positive int. */
+            emit("\tpush de\n\tpush hl\n");
+            if (!scan_mode)
+                fprintf(outf, "\tld hl,%ld\n", rhs_const & 0xffffL);
+            emit_convert_int_to_float(TYPE_INT);
+            emit("\tpush de\n\tpush hl\n");
+            emit_float_compare_call(op);
+            emit_branch_on_bool_hl(label, branch_when_true);
         } else {
-            if (branch_when_true) emit_cmp_branch_true(op, label);
-            else emit_cmp_branch_false(op, label);
+            emit_ld_de_const(rhs_const);
+            if ((g_expr_type & TYPE_UNSIGNED) || ptr_cmp) {
+                if (branch_when_true) emit_cmp_branch_true_unsigned(op, label);
+                else emit_cmp_branch_false_unsigned(op, label);
+            } else {
+                if (branch_when_true) emit_cmp_branch_true(op, label);
+                else emit_cmp_branch_false(op, label);
+            }
         }
     } else {
         int lhs_type;
@@ -1075,16 +1095,40 @@ void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
         if (snippet_needs_long_compare(lhs_code, rhs_code, &common_type)) {
             gen_snippet_expr(lhs_code);
             lhs_type = g_expr_type;
-            emit_cast_16_to_common(lhs_type, common_type);
-            /* Prefer an inline compare against a constant RHS; the LHS is now
-             * in DE:HL, which both that path and the runtime fallback need. */
-            if (!try_emit_long_cmp_const_branch(op, rhs_code, common_type,
-                                                label, branch_when_true)) {
+            if (type_is_float(lhs_type)) {
+                /* The LHS actually generated a float (e.g. "(float)x" or a
+                 * struct-member float) even though the snippet pre-scan put
+                 * the common type at long because the *other* operand looked
+                 * long.  Float dominates: widen the RHS to float and compare
+                 * as float. */
                 emit("\tpush de\n\tpush hl\n");
                 gen_snippet_expr(rhs_code);
-                emit_cast_16_to_common(g_expr_type, common_type);
-                gen_cmp32(op, common_type);
+                if (!type_is_float(g_expr_type))
+                    emit_convert_int_to_float(g_expr_type);
+                emit("\tpush de\n\tpush hl\n");
+                emit_float_compare_call(op);
                 emit_branch_on_bool_hl(label, branch_when_true);
+            } else {
+                emit_cast_16_to_common(lhs_type, common_type);
+                /* Prefer an inline compare against a constant RHS; the LHS is
+                 * now in DE:HL, which both that path and the runtime fallback
+                 * need. */
+                if (!try_emit_long_cmp_const_branch(op, rhs_code, common_type,
+                                                    label, branch_when_true)) {
+                    emit("\tpush de\n\tpush hl\n");
+                    gen_snippet_expr(rhs_code);
+                    if (type_is_float(g_expr_type)) {
+                        /* The RHS actually generated a float while the LHS is
+                         * a long on the stack.  Float dominates: widen the
+                         * stacked long LHS and compare as float. */
+                        gen_float_cmp_long_lhs(op, common_type);
+                        emit_branch_on_bool_hl(label, branch_when_true);
+                    } else {
+                        emit_cast_16_to_common(g_expr_type, common_type);
+                        gen_cmp32(op, common_type);
+                        emit_branch_on_bool_hl(label, branch_when_true);
+                    }
+                }
             }
         } else {
             ptr_cmp = snippet_is_single_pointer_id(lhs_code) ||
@@ -1092,7 +1136,23 @@ void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
             gen_snippet_expr(lhs_code);
             lhs_type = g_expr_type;
 
-            if (type_is_long(lhs_type)) {
+            if (type_is_float(lhs_type)) {
+                /*
+                 * Hidden float LHS (a cast or struct/union member the snippet
+                 * pre-scan could not classify, e.g. "(float)x" or "s->f").
+                 * The float value is in DE:HL; compare as float.  Lay out
+                 * deep=LHS / top=RHS so emit_float_compare_call computes the
+                 * relation LHS op RHS; the RHS is converted to float if it was
+                 * generated as an integer.
+                 */
+                emit("\tpush de\n\tpush hl\n");
+                gen_snippet_expr(rhs_code);
+                if (!type_is_float(g_expr_type))
+                    emit_convert_int_to_float(g_expr_type);
+                emit("\tpush de\n\tpush hl\n");
+                emit_float_compare_call(op);
+                emit_branch_on_bool_hl(label, branch_when_true);
+            } else if (type_is_long(lhs_type)) {
                 /*
                  * The LHS turned out to be a long expression that the snippet
                  * pre-analysis (snippet_simple_type) could not classify, e.g.
@@ -1102,17 +1162,37 @@ void gen_direct_rel_branch_until(int op, int label, int branch_when_true,
                 emit("\tpush de\n\tpush hl\n");
                 gen_snippet_expr(rhs_code);
                 rhs_type = g_expr_type;
-                common_type = common_arith_type(lhs_type, rhs_type);
-                emit_cast_16_to_common(rhs_type, common_type);
-                gen_cmp32(op, common_type);
-                emit_branch_on_bool_hl(label, branch_when_true);
+                if (type_is_float(rhs_type)) {
+                    /* The RHS actually generated a float while the LHS is a
+                     * long on the stack (e.g. "l < (F)y" with a float
+                     * typedef).  Float dominates: widen the stacked long LHS
+                     * and compare as float. */
+                    gen_float_cmp_long_lhs(op, lhs_type);
+                    emit_branch_on_bool_hl(label, branch_when_true);
+                } else {
+                    common_type = common_arith_type(lhs_type, rhs_type);
+                    emit_cast_16_to_common(rhs_type, common_type);
+                    gen_cmp32(op, common_type);
+                    emit_branch_on_bool_hl(label, branch_when_true);
+                }
             } else {
                 emit("\tpush hl\n");
                 gen_snippet_expr(rhs_code);
                 rhs_type = g_expr_type;
                 common_type = common_arith_type(lhs_type, rhs_type);
 
-                if (type_is_long(rhs_type)) {
+                if (type_is_float(rhs_type)) {
+                    /*
+                     * Hidden float RHS (a cast or struct/union member, e.g.
+                     * "(float)y" or "s->f") that the snippet pre-scan could
+                     * not classify, while the LHS was generated as a 16-bit
+                     * value (only HL was pushed).  Reuse the shared fallback:
+                     * it reloads the LHS, widens it to float, and compares
+                     * LHS op RHS, leaving 0/1 in HL.
+                     */
+                    gen_float_cmp_16lhs(op, lhs_type);
+                    emit_branch_on_bool_hl(label, branch_when_true);
+                } else if (type_is_long(rhs_type)) {
                     /*
                      * The RHS is long but the LHS was generated as a 16-bit
                      * value (only HL was pushed).  Reclaim the 16-bit LHS,

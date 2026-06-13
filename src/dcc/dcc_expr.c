@@ -3576,13 +3576,7 @@ void gen_unary(void)
         lt = new_label();
         le = new_label();
         gen_unary();
-        if (type_is_long(g_expr_type)) {
-            /* logical not of 32-bit: zero iff DE:HL==0 */
-            emit("\tld a,h\n\tor l\n\tor d\n\tor e\n");
-        } else {
-            emit("\tld a,h\n\tor l\n");
-        }
-        emit_jp_label("jp z,", lt);
+        emit_test_expr_nonzero(g_expr_type, lt, 0);
         emit("\tld hl,0\n");
         emit_jp_label("jp", le);
         emit_label(lt);

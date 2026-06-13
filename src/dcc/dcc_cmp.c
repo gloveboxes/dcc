@@ -678,16 +678,23 @@ int simple_direct_condition_until(int stop_kind)
         if (depth == 0 && tok.kind == stop_kind)
             break;
 
-        if (depth == 0) {
-            if (tok.kind == TOK_FLOATLIT) {
+        /*
+         * A float operand anywhere in the condition -- including inside
+         * parentheses such as  if (x < (fa * fb))  -- means the integer
+         * direct-branch comparison path cannot represent it.  Check at every
+         * depth (not just depth 0) so it falls back to the general expression
+         * path, which converts and compares as float.
+         */
+        if (tok.kind == TOK_FLOATLIT) {
+            bad = 1;
+        } else if (tok.kind == TOK_ID) {
+            struct Sym *fs;
+            fs = find_sym(tok.text);
+            if (fs && type_is_float(fs->type))
                 bad = 1;
-            } else if (tok.kind == TOK_ID) {
-                struct Sym *fs;
-                fs = find_sym(tok.text);
-                if (fs && type_is_float(fs->type))
-                    bad = 1;
-            }
+        }
 
+        if (depth == 0) {
             if (is_relop_token(tok.kind)) {
                 if (found)
                     bad = 1;

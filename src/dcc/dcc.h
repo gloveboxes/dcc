@@ -777,6 +777,8 @@ int emit_shift_const_long(int op, int lhs_type, long count);
 void emit_shift_loop(int op, int lhs_type);
 void gen_shift(void);
 void emit_float_compare_call(int op);
+void gen_float_cmp_16lhs(int op, int lhs_type);
+void gen_float_cmp_long_lhs(int op, int lhs_type);
 void gen_rel(void);
 void gen_eq(void);
 void gen_band(void);

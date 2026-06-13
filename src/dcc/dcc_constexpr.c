@@ -67,11 +67,23 @@ long parse_const_long_primary(void)
          */
         if (starts_type()) {
             int t;
-            (void)t;
             t = parse_type();
             while (accept('*')) { skip_type_qualifiers(); t = type_add_ptr(t); }
             expect(')');
             v = parse_const_long_primary();
+            /*
+             * A cast to float rounds through single precision before any
+             * outer integer cast consumes the value: (long)(float)16777217 is
+             * 16777216, because 16777217 is not representable as a 32-bit
+             * float.  This integer-only evaluator otherwise ignores the cast
+             * type, which silently dropped that rounding.  The host build has
+             * real floats, so round the operand the same way the Z80 runtime
+             * would.  Pointer casts (t became a pointer above) are not float. */
+            if (type_is_float(t)) {
+                float ftmp;
+                ftmp = (float)v;
+                v = (long)ftmp;
+            }
             return sign * v;
         }
 

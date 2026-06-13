@@ -741,6 +741,85 @@ static void gen_binop32_promote_16lhs(int op, int lhs_type, int common_type)
     g_long_from16 = 0;
 }
 
+/*
+ * Arithmetic fallback for a float RHS that peek_simple_unary_type mis-predicted
+ * as 16-bit (e.g. a parenthesized "fa * fb" or a float-returning call).  The
+ * predictive peek is only a hint; once the RHS has actually been generated the
+ * authoritative type lives in g_expr_type, and these fallbacks trust it.
+ *
+ * On entry the 16-bit LHS is the top word of the stack (pushed by the caller)
+ * and the float RHS is in DE:HL.  Convert the LHS to float and evaluate in the
+ * canonical deep=LHS / top=RHS stack order the float helpers expect, so the
+ * result is LHS op RHS (correct for the non-commutative '-' and '/').  Result
+ * left in DE:HL; the stack is fully balanced.  op is one of '+','-','*','/'.
+ */
+static void gen_float_binop_16lhs(int op, int lhs_type)
+{
+    const char *helper;
+
+    helper = (op == '+') ? "__fadd" :
+             (op == '-') ? "__fsub" :
+             (op == '*') ? "__fmul" : "__fdiv";
+
+    /* spill the float RHS above the 16-bit LHS word */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHS16][RHSf] */
+    /* reload the 16-bit LHS (now at SP+4) and widen it to float */
+    emit("\tld hl,4\n\tadd hl,sp\n");
+    emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n\tex de,hl\n");
+    emit_convert_int_to_float(lhs_type);              /* DE:HL = (float)LHS */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHS16][RHSf][LHSf] */
+    /* reload the spilled RHS float (now the 4 bytes at SP+4) */
+    emit("\tld hl,4\n\tadd hl,sp\n");
+    emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n\tinc hl\n");
+    emit("\tld a,(hl)\n\tinc hl\n\tld h,(hl)\n\tld l,a\n");
+    emit("\tex de,hl\n");                            /* DE:HL = RHS float */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHS16][RHSf][LHSf][RHSf] */
+    emit_runtime_call(helper);                        /* deep=LHS,top=RHS -> LHS op RHS */
+    /* clean all 14 pushed bytes without disturbing DE:HL (the result) */
+    emit("\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n");
+    g_expr_type = TYPE_FLOAT;
+    g_long_from16 = 0;
+}
+
+/*
+ * Arithmetic fallback for a float RHS that the predicted common type put at
+ * long (e.g. "longvar + (fa * fb)"): the snippet/peek pre-analysis classified
+ * the operation as long, but the RHS actually generated a float.  On entry the
+ * 32-bit long LHS is on top of the stack (pushed by the caller as push de;push
+ * hl) and the float RHS is in DE:HL.  Widen the long LHS to float, evaluate in
+ * canonical deep=LHS / top=RHS order so the result is LHS op RHS, and leave it
+ * in DE:HL with the stack fully balanced.  op is one of '+','-','*','/'.
+ */
+static void gen_float_binop_long_lhs(int op, int lhs_type)
+{
+    const char *helper;
+
+    helper = (op == '+') ? "__fadd" :
+             (op == '-') ? "__fsub" :
+             (op == '*') ? "__fmul" : "__fdiv";
+
+    /* spill the float RHS above the 4-byte long LHS */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHSlong][RHSf] */
+    /* reload the long LHS (now at SP+4) into DE:HL and widen it to float */
+    emit("\tld hl,4\n\tadd hl,sp\n");
+    emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n\tinc hl\n");
+    emit("\tld a,(hl)\n\tinc hl\n\tld h,(hl)\n\tld l,a\n");
+    emit("\tex de,hl\n");                            /* DE:HL = LHS long */
+    emit_convert_int_to_float(lhs_type);              /* DE:HL = (float)LHS */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHSlong][RHSf][LHSf] */
+    /* reload the spilled RHS float (now the 4 bytes at SP+4) */
+    emit("\tld hl,4\n\tadd hl,sp\n");
+    emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n\tinc hl\n");
+    emit("\tld a,(hl)\n\tinc hl\n\tld h,(hl)\n\tld l,a\n");
+    emit("\tex de,hl\n");                            /* DE:HL = RHS float */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHSlong][RHSf][LHSf][RHSf] */
+    emit_runtime_call(helper);                        /* deep=LHS,top=RHS -> LHS op RHS */
+    /* clean all 16 pushed bytes without disturbing DE:HL (the result) */
+    emit("\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n");
+    g_expr_type = TYPE_FLOAT;
+    g_long_from16 = 0;
+}
+
 void gen_mul(void)
 {
     int op;
@@ -883,20 +962,37 @@ void gen_mul(void)
             lhs_w = g_long_from16;      /* widen kind of the LHS operand */
             emit("\tpush de\n\tpush hl\n");
             gen_unary();
-            emit_cast_16_to_common(g_expr_type, common_type);
-            rhs_w = g_long_from16;      /* widen kind of the RHS operand */
-
-            mulhelp = (op == '*') ? long_mul_widen_helper(lhs_w, rhs_w) : 0;
-            if (mulhelp) {
-                /* Same 8-byte stack convention as gen_binop32's l32call, but
-                 * the 16x16 helper reads only the two pushed low words. */
-                emit("\tpush de\n\tpush hl\n");
-                emit_runtime_call(mulhelp);
-                emit("\tld b,d\n\tld c,e\n\tex de,hl\n");
-                emit("\tld hl,8\n\tadd hl,sp\n\tld sp,hl\n");
-                emit("\tex de,hl\n\tld d,b\n\tld e,c\n");
+            if (type_is_float(g_expr_type)) {
+                /* The RHS generated a float though the predicted common type
+                 * was long (a parenthesized/compound/member float that
+                 * peek_simple_unary_type could not see).  Float dominates:
+                 * widen the stacked long LHS and operate as float.  Modulo
+                 * has no float form. */
+                if (op == '%') {
+                    error_float_unsupported("float modulo not supported");
+                    emit("\tpop bc\n\tpop bc\n\tld hl,0\n");
+                    common_type = TYPE_INT;
+                } else {
+                    gen_float_binop_long_lhs(op, common_type);
+                    common_type = TYPE_FLOAT;
+                }
             } else {
-                gen_binop32(op, common_type);
+                emit_cast_16_to_common(g_expr_type, common_type);
+                rhs_w = g_long_from16;      /* widen kind of the RHS operand */
+
+                mulhelp = (op == '*') ? long_mul_widen_helper(lhs_w, rhs_w) : 0;
+                if (mulhelp) {
+                    /* Same 8-byte stack convention as gen_binop32's l32call,
+                     * but the 16x16 helper reads only the two pushed low
+                     * words. */
+                    emit("\tpush de\n\tpush hl\n");
+                    emit_runtime_call(mulhelp);
+                    emit("\tld b,d\n\tld c,e\n\tex de,hl\n");
+                    emit("\tld hl,8\n\tadd hl,sp\n\tld sp,hl\n");
+                    emit("\tex de,hl\n\tld d,b\n\tld e,c\n");
+                } else {
+                    gen_binop32(op, common_type);
+                }
             }
         } else {
             emit("\tpush hl\n");
@@ -904,6 +1000,17 @@ void gen_mul(void)
             if (type_is_long(g_expr_type)) {
                 common_type = common_arith_type(lhs_type, g_expr_type);
                 gen_binop32_promote_16lhs(op, lhs_type, common_type);
+            } else if (type_is_float(g_expr_type)) {
+                /* RHS is float but peek predicted 16-bit (parenthesized or
+                 * compound operand).  Trust the computed type. */
+                if (op == '%') {
+                    error_float_unsupported("float modulo not supported");
+                    emit("\tpop bc\n\tld hl,0\n");
+                    common_type = TYPE_INT;
+                } else {
+                    gen_float_binop_16lhs(op, lhs_type);
+                    common_type = TYPE_FLOAT;
+                }
             } else {
                 emit("\tex de,hl\n\tpop hl\n");
                 gen_binop_typed(op, common_type);
@@ -1072,14 +1179,27 @@ void gen_add(void)
             emit_cast_16_to_common(lhs_type, common_type);
             emit("\tpush de\n\tpush hl\n");
             gen_mul();
-            emit_cast_16_to_common(g_expr_type, common_type);
-            gen_binop32(op, common_type);
+            if (type_is_float(g_expr_type)) {
+                /* RHS generated a float though the predicted common type was
+                 * long; float dominates.  Widen the stacked long LHS and add
+                 * or subtract as float. */
+                gen_float_binop_long_lhs(op, common_type);
+                common_type = TYPE_FLOAT;
+            } else {
+                emit_cast_16_to_common(g_expr_type, common_type);
+                gen_binop32(op, common_type);
+            }
         } else {
             emit("\tpush hl\n");
             gen_mul();
             if (type_is_long(g_expr_type)) {
                 common_type = common_arith_type(lhs_type, g_expr_type);
                 gen_binop32_promote_16lhs(op, lhs_type, common_type);
+            } else if (type_is_float(g_expr_type)) {
+                /* RHS is float but peek predicted 16-bit (parenthesized or
+                 * compound operand).  Trust the computed type. */
+                gen_float_binop_16lhs(op, lhs_type);
+                common_type = TYPE_FLOAT;
             } else {
                 emit("\tex de,hl\n\tpop hl\n");
                 gen_binop_typed(op, common_type);
@@ -1257,6 +1377,81 @@ void emit_float_compare_call(int op)
     g_expr_type = TYPE_INT;
 }
 
+/*
+ * Compare fallback for a long RHS that peek_simple_unary_type mis-predicted as
+ * 16-bit (e.g. a parenthesized or compound "y + la").  The 16-bit LHS is the
+ * top word of the stack and the long RHS is in DE:HL.  Widen the LHS and
+ * compare as 32-bit with the operands swapped: the RHS becomes gen_cmp32's
+ * stacked left operand, so the relop is inverted (== / != are commutative, so
+ * the swap is also correct for them).  Result int 0/1 in HL.
+ */
+static void gen_cmp_promote_16lhs(int op, int lhs_type)
+{
+    int ct = common_arith_type(lhs_type, g_expr_type);
+    emit("\tpop bc\n");
+    emit("\tpush de\n\tpush hl\n");
+    emit("\tld h,b\n\tld l,c\n");
+    emit_cast_16_to_common(lhs_type, ct);
+    gen_cmp32(invert_relop_for_swap(op), ct);
+}
+
+/*
+ * Compare fallback for a float RHS that peek_simple_unary_type mis-predicted as
+ * 16-bit (e.g. a parenthesized "fa * fb").  The 16-bit LHS is the top word of
+ * the stack and the float RHS is in DE:HL.  Convert the LHS to float and lay
+ * out canonical deep=LHS / top=RHS so emit_float_compare_call computes the
+ * relation LHS op RHS.  Result int 0/1 in HL; the stack is fully balanced.
+ */
+void gen_float_cmp_16lhs(int op, int lhs_type)
+{
+    /* spill the float RHS above the 16-bit LHS word */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHS16][RHSf] */
+    /* reload the 16-bit LHS (now at SP+4) and widen it to float */
+    emit("\tld hl,4\n\tadd hl,sp\n");
+    emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n\tex de,hl\n");
+    emit_convert_int_to_float(lhs_type);              /* DE:HL = (float)LHS */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHS16][RHSf][LHSf] */
+    /* reload the spilled RHS float (now the 4 bytes at SP+4) */
+    emit("\tld hl,4\n\tadd hl,sp\n");
+    emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n\tinc hl\n");
+    emit("\tld a,(hl)\n\tinc hl\n\tld h,(hl)\n\tld l,a\n");
+    emit("\tex de,hl\n");                            /* DE:HL = RHS float */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHS16][RHSf][LHSf][RHSf] */
+    emit_float_compare_call(op);                      /* pops LHSf+RHSf; HL = 0/1 */
+    emit("\tpop bc\n\tpop bc\n\tpop bc\n");          /* discard LHS16 + RHS spill */
+    g_expr_type = TYPE_INT;
+}
+
+/*
+ * Compare fallback for a float RHS that the predicted common type put at long
+ * (e.g. "longvar < (fa * fb)" or "longvar < s->f").  On entry the 32-bit long
+ * LHS is on top of the stack (pushed by the caller as push de;push hl) and the
+ * float RHS is in DE:HL.  Widen the long LHS to float and lay out canonical
+ * deep=LHS / top=RHS so emit_float_compare_call computes LHS op RHS.  Result
+ * int 0/1 in HL; the stack is fully balanced.
+ */
+void gen_float_cmp_long_lhs(int op, int lhs_type)
+{
+    /* spill the float RHS above the 4-byte long LHS */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHSlong][RHSf] */
+    /* reload the long LHS (now at SP+4) into DE:HL and widen it to float */
+    emit("\tld hl,4\n\tadd hl,sp\n");
+    emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n\tinc hl\n");
+    emit("\tld a,(hl)\n\tinc hl\n\tld h,(hl)\n\tld l,a\n");
+    emit("\tex de,hl\n");                            /* DE:HL = LHS long */
+    emit_convert_int_to_float(lhs_type);              /* DE:HL = (float)LHS */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHSlong][RHSf][LHSf] */
+    /* reload the spilled RHS float (now the 4 bytes at SP+4) */
+    emit("\tld hl,4\n\tadd hl,sp\n");
+    emit("\tld e,(hl)\n\tinc hl\n\tld d,(hl)\n\tinc hl\n");
+    emit("\tld a,(hl)\n\tinc hl\n\tld h,(hl)\n\tld l,a\n");
+    emit("\tex de,hl\n");                            /* DE:HL = RHS float */
+    emit("\tpush de\n\tpush hl\n");                  /* [LHSlong][RHSf][LHSf][RHSf] */
+    emit_float_compare_call(op);                      /* pops LHSf+RHSf; HL = 0/1 */
+    emit("\tpop bc\n\tpop bc\n\tpop bc\n\tpop bc\n"); /* discard LHSlong + RHS spill */
+    g_expr_type = TYPE_INT;
+}
+
 void gen_rel(void)
 {
     int op;
@@ -1285,26 +1480,22 @@ void gen_rel(void)
             emit_cast_16_to_common(lhs_type, common_type);
             emit("\tpush de\n\tpush hl\n");
             gen_shift();
-            emit_cast_16_to_common(g_expr_type, common_type);
-            gen_binop32_typed(op, common_type);
+            if (type_is_float(g_expr_type)) {
+                /* RHS generated a float though the predicted common type was
+                 * long (hidden float the peek could not see).  Widen the
+                 * stacked long LHS and compare as float. */
+                gen_float_cmp_long_lhs(op, common_type);
+            } else {
+                emit_cast_16_to_common(g_expr_type, common_type);
+                gen_binop32_typed(op, common_type);
+            }
         } else {
             emit("\tpush hl\n");
             gen_shift();
             if (type_is_long(g_expr_type)) {
-                /*
-                 * peek_simple_unary_type only sees the first term of the RHS,
-                 * so a compound RHS such as "y + la" (long) was mis-predicted
-                 * as 16-bit.  The RHS is actually long in DE:HL while only the
-                 * 16-bit LHS was pushed; widen the LHS and compare as 32-bit
-                 * with the operands swapped (the RHS becomes gen_cmp32's
-                 * stacked left operand, so the relop is inverted).
-                 */
-                int ct = common_arith_type(lhs_type, g_expr_type);
-                emit("\tpop bc\n");
-                emit("\tpush de\n\tpush hl\n");
-                emit("\tld h,b\n\tld l,c\n");
-                emit_cast_16_to_common(lhs_type, ct);
-                gen_cmp32(invert_relop_for_swap(op), ct);
+                gen_cmp_promote_16lhs(op, lhs_type);
+            } else if (type_is_float(g_expr_type)) {
+                gen_float_cmp_16lhs(op, lhs_type);
             } else {
                 emit("\tex de,hl\n\tpop hl\n");
                 gen_binop_typed(op, common_type);
@@ -1343,24 +1534,22 @@ void gen_eq(void)
             emit_cast_16_to_common(lhs_type, common_type);
             emit("\tpush de\n\tpush hl\n");
             gen_rel();
-            emit_cast_16_to_common(g_expr_type, common_type);
-            gen_binop32_typed(op, common_type);
+            if (type_is_float(g_expr_type)) {
+                /* RHS generated a float though the predicted common type was
+                 * long (hidden float the peek could not see).  Widen the
+                 * stacked long LHS and compare as float. */
+                gen_float_cmp_long_lhs(op, common_type);
+            } else {
+                emit_cast_16_to_common(g_expr_type, common_type);
+                gen_binop32_typed(op, common_type);
+            }
         } else {
             emit("\tpush hl\n");
             gen_rel();
             if (type_is_long(g_expr_type)) {
-                /*
-                 * Equality with a compound long RHS (e.g. "y + la") that
-                 * peek_simple_unary_type mis-predicted as 16-bit.  Widen the
-                 * 16-bit LHS and compare as 32-bit; == / != are commutative,
-                 * so the swapped-operand form is equivalent.
-                 */
-                int ct = common_arith_type(lhs_type, g_expr_type);
-                emit("\tpop bc\n");
-                emit("\tpush de\n\tpush hl\n");
-                emit("\tld h,b\n\tld l,c\n");
-                emit_cast_16_to_common(lhs_type, ct);
-                gen_cmp32(invert_relop_for_swap(op), ct);
+                gen_cmp_promote_16lhs(op, lhs_type);
+            } else if (type_is_float(g_expr_type)) {
+                gen_float_cmp_16lhs(op, lhs_type);
             } else {
                 emit("\tex de,hl\n\tpop hl\n");
                 gen_binop_typed(op, common_type);
@@ -1476,7 +1665,13 @@ void gen_bor(void)
 
 void emit_test_expr_nonzero(int expr_type, int true_label, int branch_when_true)
 {
-    if (type_is_long(expr_type))
+    if (type_is_float(expr_type))
+        /* A float is false only for +0.0 and -0.0.  Mask the sign bit (bit 7
+         * of D) so -0.0 (0x80000000) tests as zero too, then OR the remaining
+         * magnitude bytes: A==0 iff the value is +/-0.0.  The float lives in
+         * DE:HL with D holding the sign/exponent MSB. */
+        emit("\tld a,d\n\tand 7fh\n\tor e\n\tor h\n\tor l\n");
+    else if (type_is_long(expr_type))
         emit("\tld a,h\n\tor l\n\tor d\n\tor e\n");
     else
         emit("\tld a,h\n\tor l\n");
@@ -1545,6 +1740,399 @@ void gen_lor(void)
     }
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * Type-only expression oracle.
+ *
+ * typeof_conditional_arm() resolves the C type of the conditional-expression
+ * beginning at the current token WITHOUT emitting code and WITHOUT advancing
+ * the parser: the public entry saves and restores all lexer/token state, so a
+ * bug in the walker can only produce a wrong *type verdict*, never corrupt the
+ * token stream that real codegen re-parses afterwards.
+ *
+ * The internal to_* ladder mirrors the codegen gen_* precedence ladder
+ * one-for-one, so the type it reports matches what codegen ultimately produces
+ * under the usual arithmetic conversions (float dominates long dominates
+ * unsigned dominates int) and the pointer-arithmetic rules.  Unlike
+ * peek_simple_unary_type, which classifies only a single leading unary
+ * operand, the oracle recurses through parentheses, casts, every binary level
+ * and nested conditionals, so a float hidden arbitrarily deep is resolved:
+ *   (float)y      x + fa*fb      s->f      a ? 1 : b ? 2 : 3.5f
+ *
+ * gen_conditional uses it to decide whether a conditional expression's result
+ * is float - and therefore whether the already-generated selected arm must be
+ * converted to float - without needing the false arm's type before the false
+ * arm is generated.
+ * ---------------------------------------------------------------------------
+ */
+static int to_comma(void);
+static int to_assign(void);
+static int to_conditional(void);
+static int to_unary(void);
+
+/* Usual-arithmetic-conversion balance for the two arms of ?:, including the
+ * pointer cases common_arith_type does not model. */
+static int to_balance(int a, int b)
+{
+    if (type_is_float(a) || type_is_float(b))
+        return TYPE_FLOAT;
+    if (type_ptr_depth(a) > 0)
+        return a;
+    if (type_ptr_depth(b) > 0)
+        return b;
+    return common_arith_type(a, b);
+}
+
+static int to_postfix(void)
+{
+    int tt;
+    int is_arr;
+    int dim_count;
+    int base_type;
+    int nsubs;
+    struct Sym *s;
+
+    if (tok.kind == TOK_NUM) {
+        if (tok.val > 0xffffL || tok.val < -32768L || g_tok_long_suffix)
+            tt = TYPE_LONG;
+        else
+            tt = TYPE_INT;
+        if (g_tok_unsigned_suffix)
+            tt |= TYPE_UNSIGNED;
+        next_token();
+        return promote_int_type(tt);
+    }
+    if (tok.kind == TOK_CHARLIT) { next_token(); return TYPE_INT; }
+    if (tok.kind == TOK_FLOATLIT) { next_token(); return TYPE_FLOAT; }
+    if (tok.kind == TOK_STR || tok.kind == TOK_WSTR) {
+        int wide = (tok.kind == TOK_WSTR);
+        while (tok.kind == TOK_STR || tok.kind == TOK_WSTR)
+            next_token();
+        return (wide ? TYPE_INT : TYPE_CHAR) | TYPE_PTR;
+    }
+
+    /* Resolve the primary, seeding the array-tracking state used by the
+     * shared postfix-suffix walk below. */
+    if (tok.kind == '(') {
+        next_token();
+        tt = to_comma();          /* inner expression: already value-decayed */
+        if (tok.kind == ')')
+            next_token();
+        is_arr = 0;
+        dim_count = 0;
+        base_type = tt;
+        nsubs = 0;
+    } else if (tok.kind == TOK_ID) {
+        s = find_sym(tok.text);
+        if (!s) {
+            /* enum constant or unknown identifier behaves like int */
+            next_token();
+            return TYPE_INT;
+        }
+        /* Port of peek_simple_unary_type's id + subscript/member chain. */
+        tt = s->type;
+        is_arr = s->is_array;
+        dim_count = s->dim_count;
+        base_type = s->type;
+        nsubs = 0;
+        next_token();
+    } else {
+        return TYPE_INT;
+    }
+
+    for (;;) {
+        if (tok.kind == '[') {
+            skip_balanced_bracket('[', ']');
+            nsubs++;
+            if (is_arr) {
+                if (dim_count > 0 && nsubs < dim_count)
+                    tt = type_add_ptr(base_type);
+                else
+                    tt = base_type;
+                if (dim_count <= 0 || nsubs >= dim_count)
+                    is_arr = 0;
+                continue;
+            } else if (dim_count > 0 && type_ptr_depth(base_type) > 0) {
+                if (nsubs <= dim_count)
+                    tt = type_add_ptr(type_decay_ptr(base_type));
+                else
+                    tt = type_decay_ptr(base_type);
+                continue;
+            } else {
+                tt = type_decay_ptr(tt);
+                continue;
+            }
+        }
+        if (tok.kind == '.' || tok.kind == TOK_ARROW) {
+            struct FieldDef *fd;
+            int sid;
+            next_token();
+            if (tok.kind != TOK_ID)
+                break;
+            sid = base_struct_id_from_type(tt);
+            fd = find_field_def(sid, tok.text);
+            if (!fd)
+                break;
+            tt = fd->is_array ? fd->elem_type : fd->type;
+            is_arr = fd->is_array;
+            dim_count = fd->dim_count;
+            base_type = fd->elem_type;
+            nsubs = 0;
+            next_token();
+            continue;
+        }
+        if (tok.kind == '(') {
+            /* Call: through a pointer yields int (this compiler only
+             * models int-returning function pointers); a plain function
+             * symbol's stored type is already its return type. */
+            skip_balanced_bracket('(', ')');
+            if (type_ptr_depth(tt) > 0)
+                tt = TYPE_INT;
+            is_arr = 0;
+            continue;
+        }
+        if (tok.kind == TOK_INC || tok.kind == TOK_DEC) {
+            next_token();
+            continue;
+        }
+        break;
+    }
+
+    /* An array expression that was never fully subscripted decays to a
+     * pointer-to-element in value context, exactly as gen_primary does
+     * (g_expr_type = type_add_ptr(val_type)).  Without this a bare float
+     * array such as `fa` in `c ? fp : fa` was reported as float, which made
+     * the conditional oracle mis-convert the pointer arms to float. */
+    if (is_arr)
+        tt = type_add_ptr(tt);
+    return tt;
+}
+
+static int to_unary(void)
+{
+    int t;
+
+    if (paren_starts_cast()) {
+        int ct;
+        int sz;
+        expect('(');
+        parse_type_name_decl(&ct, &sz);
+        expect(')');
+        (void)to_unary();             /* cast operand; its type is discarded */
+        return ct;                    /* a cast value has the cast's type */
+    }
+    if (tok.kind == '!') { next_token(); (void)to_unary(); return TYPE_INT; }
+    if (tok.kind == '~') { next_token(); return promote_int_type(to_unary()); }
+    if (tok.kind == '-' || tok.kind == '+') { next_token(); return promote_int_type(to_unary()); }
+    if (tok.kind == '*') {
+        next_token();
+        t = type_decay_ptr(to_unary());
+        if ((t & 15) == TYPE_VOID)
+            t = TYPE_CHAR;
+        return t;
+    }
+    if (tok.kind == '&') { next_token(); return type_add_ptr(to_unary()); }
+    if (tok.kind == TOK_INC || tok.kind == TOK_DEC) { next_token(); return to_unary(); }
+    if (tok.kind == TOK_SIZEOF) {
+        next_token();
+        if (tok.kind == '(') {
+            next_token();
+            if (starts_type()) {
+                int tt;
+                int ss;
+                parse_type_name_decl(&tt, &ss);
+                if (tok.kind == ')')
+                    next_token();
+            } else {
+                (void)to_comma();
+                if (tok.kind == ')')
+                    next_token();
+            }
+        } else {
+            (void)to_unary();
+        }
+        return TYPE_INT | TYPE_UNSIGNED;
+    }
+    return to_postfix();
+}
+
+static int to_mul(void)
+{
+    int t = to_unary();
+    while (tok.kind == '*' || tok.kind == '/' || tok.kind == '%') {
+        next_token();
+        t = common_arith_type(t, to_unary());
+    }
+    return t;
+}
+
+static int to_add(void)
+{
+    int t = to_mul();
+    while (tok.kind == '+' || tok.kind == '-') {
+        int op = tok.kind;
+        int r;
+        next_token();
+        r = to_mul();
+        if (type_ptr_depth(t) > 0) {
+            if (op == '-' && type_ptr_depth(r) > 0)
+                t = TYPE_INT;             /* ptr - ptr -> ptrdiff (int) */
+            /* else ptr +/- int -> ptr (t unchanged) */
+        } else if (op == '+' && type_ptr_depth(r) > 0) {
+            t = r;                        /* int + ptr -> ptr */
+        } else {
+            t = common_arith_type(t, r);
+        }
+    }
+    return t;
+}
+
+static int to_shift(void)
+{
+    int t = to_add();
+    while (tok.kind == TOK_SHL || tok.kind == TOK_SHR) {
+        next_token();
+        (void)to_add();
+        t = promote_int_type(t);          /* result is the promoted left operand */
+    }
+    return t;
+}
+
+static int to_rel(void)
+{
+    int t = to_shift();
+    while (tok.kind == '<' || tok.kind == '>' || tok.kind == TOK_LE || tok.kind == TOK_GE) {
+        next_token();
+        (void)to_shift();
+        t = TYPE_INT;
+    }
+    return t;
+}
+
+static int to_eq(void)
+{
+    int t = to_rel();
+    while (tok.kind == TOK_EQ || tok.kind == TOK_NE) {
+        next_token();
+        (void)to_rel();
+        t = TYPE_INT;
+    }
+    return t;
+}
+
+static int to_band(void)
+{
+    int t = to_eq();
+    while (tok.kind == '&') {
+        next_token();
+        t = common_arith_type(t, to_eq());
+    }
+    return t;
+}
+
+static int to_bxor(void)
+{
+    int t = to_band();
+    while (tok.kind == '^') {
+        next_token();
+        t = common_arith_type(t, to_band());
+    }
+    return t;
+}
+
+static int to_bor(void)
+{
+    int t = to_bxor();
+    while (tok.kind == '|') {
+        next_token();
+        t = common_arith_type(t, to_bxor());
+    }
+    return t;
+}
+
+static int to_land(void)
+{
+    int t = to_bor();
+    while (tok.kind == TOK_ANDAND) {
+        next_token();
+        (void)to_bor();
+        t = TYPE_INT;
+    }
+    return t;
+}
+
+static int to_lor(void)
+{
+    int t = to_land();
+    while (tok.kind == TOK_OROR) {
+        next_token();
+        (void)to_land();
+        t = TYPE_INT;
+    }
+    return t;
+}
+
+static int to_conditional(void)
+{
+    int t = to_lor();
+    if (tok.kind == '?') {
+        int mt;
+        int ft;
+        next_token();
+        mt = to_comma();              /* middle arm is a full expression */
+        if (tok.kind == ':')
+            next_token();
+        ft = to_conditional();        /* false arm is a conditional-expression */
+        t = to_balance(mt, ft);
+    }
+    return t;
+}
+
+static int to_assign(void)
+{
+    int t = to_conditional();
+    /* An assignment's value has the (unconverted) type of its left operand,
+     * which is the conditional-expression just parsed. */
+    if (is_assignment_token(tok.kind)) {
+        next_token();
+        (void)to_assign();
+    }
+    return t;
+}
+
+static int to_comma(void)
+{
+    int t = to_assign();
+    while (tok.kind == ',') {
+        next_token();
+        t = to_assign();
+    }
+    return t;
+}
+
+static int typeof_conditional_arm(void)
+{
+    long save_pos = posi;
+    long save_tok_start = tok_start_pos;
+    int save_line = line_no;
+    int save_tok_line = tok_line;
+    int save_long_suffix = g_tok_long_suffix;
+    int save_unsigned_suffix = g_tok_unsigned_suffix;
+    struct Token save_tok = tok;
+    int t;
+
+    t = to_conditional();
+
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    g_tok_long_suffix = save_long_suffix;
+    g_tok_unsigned_suffix = save_unsigned_suffix;
+    tok = save_tok;
+    return t;
+}
+
 void gen_conditional(void)
 {
     int lfalse;
@@ -1552,6 +2140,7 @@ void gen_conditional(void)
     int true_type;
     int false_type;
     int need_long_result;
+    int result_is_float;
 
     gen_lor();
 
@@ -1559,40 +2148,49 @@ void gen_conditional(void)
         lfalse = new_label();
         lend = new_label();
 
-        if (type_is_long(g_expr_type))
-            emit("\tld a,h\n\tor l\n\tor d\n\tor e\n");
-        else
-            emit("\tld a,h\n\tor l\n");
-        emit_jp_label("jp z,", lfalse);
+        emit_test_expr_nonzero(g_expr_type, lfalse, 0);
 
         gen_expr();
         true_type = g_expr_type;
         if (type_is_struct_object(true_type))
             error_here("unsupported struct conditional expression");
 
+        expect(':');
+
         /*
-         * C's conditional operator applies the usual conversions between the
-         * second and third operands.  DCC does not have a full typed IR, so a
-         * narrow true arm used with a long false arm could leave DE stale.
-         *
-         * Example from tarray.c:
-         *     int32_t cap = (end_of_row > beyond) ? beyond : end_of_row;
-         *
-         * beyond is 16-bit size_t, end_of_row is 32-bit int32_t.  Without
-         * extending the true arm, selecting beyond stores a garbage high word.
-         *
-         * Extending a 16-bit true arm here is safe when the whole expression is
-         * ultimately 16-bit: callers/stores that want int use HL and ignore DE.
+         * C's conditional operator applies the usual arithmetic conversions
+         * between the second and third operands, so if either arm is float the
+         * whole expression is float.  The true arm has already been generated
+         * (its value is in DE:HL); resolve the not-yet-generated false arm's
+         * type with the side-effect-free oracle so the already-generated arm
+         * can be converted to float when needed.  The oracle restores parser
+         * state, so the real false-arm generation below is unaffected.
          */
-        need_long_result = type_is_long(true_type);
-        if (!type_is_long(true_type) && !type_is_float(true_type)) {
-            emit_extend_to_long((true_type & TYPE_UNSIGNED) ||
-                                (true_type & (TYPE_PTR | TYPE_PTR2)));
+        result_is_float = type_is_float(true_type) ||
+                          type_is_float(typeof_conditional_arm());
+
+        need_long_result = 0;
+
+        if (result_is_float) {
+            if (!type_is_float(true_type))
+                emit_convert_int_to_float(true_type);
+        } else {
+            /*
+             * DCC has no full typed IR, so a narrow true arm used with a long
+             * false arm could leave DE stale.  Speculatively widen a 16-bit
+             * true arm to long; that is safe when the whole expression is
+             * ultimately 16-bit because consumers read HL and ignore DE.
+             * (tarray.c: int32_t cap = (end_of_row > beyond) ? beyond : end_of_row;)
+             */
+            need_long_result = type_is_long(true_type);
+            if (!type_is_long(true_type)) {
+                emit_extend_to_long((true_type & TYPE_UNSIGNED) ||
+                                    (true_type & (TYPE_PTR | TYPE_PTR2)));
+            }
         }
 
         emit_jp_label("jp", lend);
 
-        expect(':');
         emit_label(lfalse);
 
         gen_conditional();
@@ -1600,18 +2198,25 @@ void gen_conditional(void)
         if (type_is_struct_object(false_type))
             error_here("unsupported struct conditional expression");
 
-        if (type_is_long(false_type))
-            need_long_result = 1;
+        if (result_is_float) {
+            if (!type_is_float(false_type))
+                emit_convert_int_to_float(false_type);
+        } else {
+            if (type_is_long(false_type))
+                need_long_result = 1;
 
-        if (need_long_result && !type_is_long(false_type) && !type_is_float(false_type)) {
-            emit_extend_to_long((false_type & TYPE_UNSIGNED) ||
-                                (false_type & (TYPE_PTR | TYPE_PTR2)));
-            false_type = (false_type & TYPE_UNSIGNED) ? (TYPE_LONG | TYPE_UNSIGNED) : TYPE_LONG;
+            if (need_long_result && !type_is_long(false_type)) {
+                emit_extend_to_long((false_type & TYPE_UNSIGNED) ||
+                                    (false_type & (TYPE_PTR | TYPE_PTR2)));
+                false_type = (false_type & TYPE_UNSIGNED) ? (TYPE_LONG | TYPE_UNSIGNED) : TYPE_LONG;
+            }
         }
 
         emit_label(lend);
 
-        if (need_long_result) {
+        if (result_is_float) {
+            g_expr_type = TYPE_FLOAT;
+        } else if (need_long_result) {
             if ((true_type & TYPE_UNSIGNED) || (false_type & TYPE_UNSIGNED))
                 g_expr_type = TYPE_LONG | TYPE_UNSIGNED;
             else

@@ -678,11 +678,13 @@ int simple_direct_condition_until(int stop_kind)
         if (depth == 0 && tok.kind == stop_kind)
             break;
 
-        /* A float operand anywhere in the condition - including inside
-         * parentheses such as "x < (fa * fb)" - rules out the integer
-         * direct-branch path.  Detect it at ANY depth (not only depth 0) so
-         * the caller falls back to the general, float-aware compare path
-         * (gen_rel/gen_eq) instead of silently emitting an integer compare. */
+        /*
+         * A float operand anywhere in the condition -- including inside
+         * parentheses such as  if (x < (fa * fb))  -- means the integer
+         * direct-branch comparison path cannot represent it.  Check at every
+         * depth (not just depth 0) so it falls back to the general expression
+         * path, which converts and compares as float.
+         */
         if (tok.kind == TOK_FLOATLIT) {
             bad = 1;
         } else if (tok.kind == TOK_ID) {

@@ -224,6 +224,11 @@ Notes specific to the 16-bit model:
   visible afterward. Multiple declarators (`for (int i = 0, j = n; ...)`) and
   pointer/array declarators in the init clause are scoped the same way. See
   [Limitations](#limitations-to-keep-in-mind) for the one nested-scope caveat.
+- **C99 `//` line comments** — accepted everywhere C89 `/* ... */` block
+  comments are, including as trailing comments on preprocessor directives such
+  as `#define` (where, like block comments, they are stripped before macro
+  replacement). Both comment styles are correctly ignored inside string and
+  character literals, so a literal such as `"a // b"` is left intact.
 
 ```c
 int i = 99;

@@ -526,6 +526,7 @@ void scan_local_decl_after_type(int base)
     int type, bytes, arrlen;
     int total_elems;
     char name[64];
+    char source_name[64];
     struct Sym *s;
 
     for (;;) {
@@ -539,6 +540,15 @@ void scan_local_decl_after_type(int base)
             strncpy(name, tok.text, sizeof(name) - 1);
             name[sizeof(name) - 1] = 0;
             next_token();
+        }
+        strncpy(source_name, name, sizeof(source_name) - 1);
+        source_name[sizeof(source_name) - 1] = 0;
+
+        if (g_for_decl_seq >= 0) {
+            const char *rn;
+            rn = enter_for_decl_rename(name);
+            strncpy(name, rn, sizeof(name) - 1);
+            name[sizeof(name) - 1] = 0;
         }
 
         arrlen = g_funcptr_decl_array_len;
@@ -588,7 +598,7 @@ void scan_local_decl_after_type(int base)
         s = find_local(name);
         if (!s && decl_is_const && arrlen == 0 && g_last_array_dim_count == 0 &&
             type_is_const_scalar_candidate(type) && tok.kind == '=' &&
-            !local_name_address_taken_ahead(name)) {
+            !local_name_address_taken_ahead(source_name)) {
             unsigned long const_value;
             next_token();
             if (try_parse_local_const_initializer(type, &const_value)) {
@@ -719,6 +729,14 @@ void scan_function_body(void)
     int brace;
     int can_decl;
 
+    /* Restart the per-function for-loop counter so the frame-sizing scan and
+     * the real codegen agree on which for-loop is which. */
+    g_for_seq = 0;
+    g_forren_n = 0;
+    g_for_decl_seq = -1;
+    g_for_decl_rename_index = 0;
+    g_for_decl_recording = 0;
+
     expect('{');
     brace = 1;
     can_decl = 1;
@@ -733,6 +751,7 @@ void scan_function_body(void)
             next_token();
             can_decl = 1;
         } else if (tok.kind == TOK_FOR) {
+            int for_seq;
             /*
              * The old scanner looked for starts_type() at every token in the
              * function body.  That is unsafe now that casts are supported:
@@ -750,20 +769,45 @@ void scan_function_body(void)
              * Scan declarations only at statement/declaration boundaries, with
              * a special case for C99-style for-init declarations.
              */
+            for_seq = g_for_seq++;
+            if (for_seq >= MAX_FOR_SCOPES)
+                fatal("too many for statements");
             next_token();
             if (accept('(')) {
                 int depth;
 
                 if (starts_type()) {
                     int t;
+                    int old_for_decl_seq;
+                    int old_for_decl_rename_index;
+                    int old_for_decl_recording;
                     decl_is_extern = 0;
                     decl_is_const = 0;
                     t = parse_base_type();
+
+                    g_for_rename_count[for_seq] = 0;
+
+                    old_for_decl_seq = g_for_decl_seq;
+                    old_for_decl_rename_index = g_for_decl_rename_index;
+                    old_for_decl_recording = g_for_decl_recording;
+                    g_for_decl_seq = for_seq;
+                    g_for_decl_rename_index = 0;
+                    g_for_decl_recording = 1;
+
                     if (tok.kind != ';')
                         scan_local_decl_after_type(t); /* consumes ';' */
                     else
                         next_token();
+
+                    while (g_for_decl_rename_index > 0) {
+                        pop_for_rename();
+                        g_for_decl_rename_index--;
+                    }
+                    g_for_decl_seq = old_for_decl_seq;
+                    g_for_decl_rename_index = old_for_decl_rename_index;
+                    g_for_decl_recording = old_for_decl_recording;
                 } else {
+                    g_for_rename_count[for_seq] = 0;
                     depth = 0;
                     while (tok.kind != TOK_EOF) {
                         if (depth == 0 && tok.kind == ';') {
@@ -1618,6 +1662,13 @@ void parse_function_or_global(int base_type)
                 nulabels = 0;
                 current_return_label = new_label();
                 current_return_type = type;
+                /* Restart the for-loop counter for the codegen pass so it
+                 * lines up with the frame-sizing scan. */
+                g_for_seq = 0;
+                g_forren_n = 0;
+                g_for_decl_seq = -1;
+                g_for_decl_rename_index = 0;
+                g_for_decl_recording = 0;
                 emit_function_prologue(name, current_local_bytes, current_function_safe_to_omit_ix(type, current_local_bytes));
                 gen_compound();
                 check_undefined_user_labels();

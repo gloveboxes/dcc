@@ -1004,8 +1004,21 @@ void gen_for(void)
     char *inc_code;
     char *cond_code;
     int do_while;
+    int for_seq;
+    int rename_count;
+    int old_for_decl_seq;
+    int old_for_decl_rename_index;
+    int old_for_decl_recording;
 
-    if (try_gen_bc_byte_array_cycle_for())
+    /* Advance the per-function for-loop counter in pre-order so it matches the
+     * frame-sizing scan; g_for_rename_count[seq] tells us whether this loop's
+     * for-init declaration introduced C99 loop-scoped names. */
+    for_seq = g_for_seq++;
+    if (for_seq >= MAX_FOR_SCOPES)
+        fatal("too many for statements");
+    rename_count = g_for_rename_count[for_seq];
+
+    if (rename_count == 0 && try_gen_bc_byte_array_cycle_for())
         return;
 
     ltop = new_label();
@@ -1026,10 +1039,24 @@ void gen_for(void)
         int t;
         decl_is_extern = 0;
         t = parse_base_type();
+
+        old_for_decl_seq = g_for_decl_seq;
+        old_for_decl_rename_index = g_for_decl_rename_index;
+        old_for_decl_recording = g_for_decl_recording;
+        g_for_decl_seq = for_seq;
+        g_for_decl_rename_index = 0;
+        g_for_decl_recording = 0;
+
         if (tok.kind != ';')
             gen_local_decl_after_type(t); /* consumes the ';' */
         else
             next_token();
+
+        if (g_for_decl_rename_index != rename_count)
+            fatal("for-init scope mismatch");
+        g_for_decl_seq = old_for_decl_seq;
+        g_for_decl_rename_index = old_for_decl_rename_index;
+        g_for_decl_recording = old_for_decl_recording;
         /* no expect(';') here — already consumed above */
     } else {
         if (tok.kind != ';') gen_expr();
@@ -1088,6 +1115,12 @@ void gen_for(void)
         free(cond_code);
     }
     emit_label(lend);
+
+    /* Close the for-init scope: source names now resolve to any outer symbols. */
+    while (rename_count > 0) {
+        pop_for_rename();
+        rename_count--;
+    }
 }
 
 void gen_return(void)

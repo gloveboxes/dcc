@@ -104,6 +104,27 @@ int current_function_has_call;
 int break_stack[MAX_FLOW];
 int cont_stack[MAX_FLOW];
 int nflow;
+
+/* ---- C99 for-init declaration scoping ---------------------------------- */
+/* Per-function counter of for-loops, advanced in source/pre-order in BOTH the
+ * frame-sizing scan and the real codegen so the two agree on which loop is
+ * which.  The frame-sizing scan records the source-name -> unique-local-name
+ * mappings for each C99 for-init declaration; codegen replays them while
+ * compiling the corresponding loop. */
+int g_for_seq;
+int g_for_rename_count[MAX_FOR_SCOPES];
+char g_for_rename_from[MAX_FOR_SCOPES][MAX_FOR_SCOPE_RENAMES][64];
+char g_for_rename_to[MAX_FOR_SCOPES][MAX_FOR_SCOPE_RENAMES][64];
+
+/* Active for-init renames: while inside a for-loop with C99 init declarations,
+ * source names are mapped to unique internal names so the variables have real
+ * loop scope.  A small stack supports nested for scopes. */
+char g_forren_from[MAX_FORREN][64];
+char g_forren_to[MAX_FORREN][64];
+int g_forren_n;
+int g_for_decl_seq;
+int g_for_decl_rename_index;
+int g_for_decl_recording;
 int errors;
 int scan_mode;
 int decl_is_extern;

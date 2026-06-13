@@ -4197,3 +4197,5 @@ inp result 0..255: ok
 port io ok
 test tlongidx
 PASS tlongidx
+test tforsco
+tforsco passed with great success

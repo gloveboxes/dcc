@@ -11,9 +11,107 @@
  */
 
 #include "dcc.h"
+
+/*
+ * C99 for-init renames.  While code generation (or the frame-sizing scan) is
+ * inside a for-loop with init declarations, each declared source name is mapped
+ * to a unique internal local name.  That gives the variable real C99 loop
+ * scope even though dcc's local symbol table is otherwise function-flat.
+ * resolve_local_rename applies the innermost active mapping; it is idempotent
+ * because the mapped-to names contain '#', which never appears in a source
+ * identifier and so never matches a "from" entry.
+ */
+const char *resolve_local_rename(const char *name)
+{
+    int k;
+    for (k = g_forren_n - 1; k >= 0; --k) {
+        if (!strcmp(g_forren_from[k], name))
+            return g_forren_to[k];
+    }
+    return name;
+}
+
+void make_for_rename_name(char *dst, int dstsz, const char *from, int for_seq, int rename_index)
+{
+    char suffix[24];
+    int from_len;
+    int suffix_len;
+
+    sprintf(suffix, "#%d#%d", for_seq, rename_index);
+    suffix_len = (int)strlen(suffix);
+    if (dstsz <= suffix_len + 1)
+        fatal("for-init rename buffer too small");
+
+    from_len = (int)strlen(from);
+    if (from_len > dstsz - suffix_len - 1)
+        from_len = dstsz - suffix_len - 1;
+
+    memcpy(dst, from, from_len);
+    strcpy(dst + from_len, suffix);
+}
+
+void add_for_scope_rename(int for_seq, const char *from)
+{
+    int n;
+
+    if (for_seq >= MAX_FOR_SCOPES)
+        fatal("too many for statements");
+
+    n = g_for_rename_count[for_seq];
+    if (n >= MAX_FOR_SCOPE_RENAMES)
+        fatal("too many for-init declarators");
+
+    strncpy(g_for_rename_from[for_seq][n], from, 63);
+    g_for_rename_from[for_seq][n][63] = 0;
+    make_for_rename_name(g_for_rename_to[for_seq][n], 64,
+                         g_for_rename_from[for_seq][n], for_seq, n);
+    g_for_rename_count[for_seq] = n + 1;
+}
+
+const char *enter_for_decl_rename(const char *name)
+{
+    int n;
+
+    if (g_for_decl_seq < 0)
+        fatal("bad for-init scope");
+
+    n = g_for_decl_rename_index;
+    if (g_for_decl_recording) {
+        add_for_scope_rename(g_for_decl_seq, name);
+    } else {
+        if (g_for_decl_seq >= MAX_FOR_SCOPES)
+            fatal("too many for statements");
+        if (n >= g_for_rename_count[g_for_decl_seq])
+            fatal("for-init scope mismatch");
+    }
+
+    push_for_rename(g_for_rename_from[g_for_decl_seq][n],
+                    g_for_rename_to[g_for_decl_seq][n]);
+    g_for_decl_rename_index = n + 1;
+    return g_for_rename_to[g_for_decl_seq][n];
+}
+
+void push_for_rename(const char *from, const char *to)
+{
+    if (g_forren_n >= MAX_FORREN)
+        fatal("too many nested for-init scopes");
+    strncpy(g_forren_from[g_forren_n], from, 63);
+    g_forren_from[g_forren_n][63] = 0;
+    strncpy(g_forren_to[g_forren_n], to, 63);
+    g_forren_to[g_forren_n][63] = 0;
+    g_forren_n++;
+}
+
+void pop_for_rename(void)
+{
+    if (g_forren_n > 0)
+        g_forren_n--;
+}
+
 struct Sym *find_local(const char *name)
 {
     int i;
+    name = resolve_local_rename(name);
     for (i = nlocals - 1; i >= 0; --i)
         if (!strcmp(locals[i].name, name)) return &locals[i];
     return NULL;

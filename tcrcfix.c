@@ -323,6 +323,48 @@ static void test_stdio_rtl_symbols(void)
         fail("fputc", 0L, 1L);
 }
 
+/*
+ * Regression for dccpeep small_const_eq misapplied to a >= comparison.
+ *
+ * The peephole recognized the 9-line sequence ending with "jp z,L" and
+ * rewrote it as a 16-bit equality test.  But the caller's next instruction
+ * was "jp c,L" (same label), making it a (const <= var) test, not (==).
+ * The rewrite left "jp c,L48; jp L47" exposed; a second peephole inverted
+ * that pair to "jr nc,L47".  Because "or a" clears carry unconditionally,
+ * the branch misfired: loops using "while (10 <= r)" exited immediately
+ * when r > 10 and entered the body when r < 10.
+ *
+ * crc.c's cb_add inner loop "while (10 <= r) { r -= 10; q++; }" is the
+ * canonical trigger.  It is exercised here in isolation so the bug is
+ * caught without running a full CRC computation.
+ */
+static unsigned int bcd_div10(unsigned int r)
+{
+    unsigned int q = 0;
+    while (10 <= r) {
+        r -= 10;
+        q++;
+    }
+    return q;
+}
+
+static void test_const_le_var_loop(void)
+{
+    /* r < 10: loop should not execute */
+    check_i("bcd_div10 0",   (int)bcd_div10(0),   0);
+    check_i("bcd_div10 5",   (int)bcd_div10(5),   0);
+    check_i("bcd_div10 9",   (int)bcd_div10(9),   0);
+    /* r in [10, 255]: single- and multi-digit quotients, all in one byte */
+    check_i("bcd_div10 10",  (int)bcd_div10(10),  1);
+    check_i("bcd_div10 15",  (int)bcd_div10(15),  1);
+    check_i("bcd_div10 100", (int)bcd_div10(100), 10);
+    check_i("bcd_div10 255", (int)bcd_div10(255), 25);
+    /* r > 255: r_hi != 0, the specific case that triggered the peep bug */
+    check_i("bcd_div10 256", (int)bcd_div10(256), 25);
+    check_i("bcd_div10 300", (int)bcd_div10(300), 30);
+    check_i("bcd_div10 768", (int)bcd_div10(768), 76);
+}
+
 int main(void)
 {
     test_static_name_mangling();
@@ -332,6 +374,7 @@ int main(void)
     test_crc_update_kernel();
     test_non_ix_compound_shift_store();
     test_stdio_rtl_symbols();
+    test_const_le_var_loop();
 
     if (failures) {
         printf("tcrcfix_c89: %d failure(s)\n", failures);

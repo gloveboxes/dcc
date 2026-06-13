@@ -5219,7 +5219,14 @@ static int pass_once(void)
                 eq(i + 6, "or a") &&
                 eq(i + 7, "sbc hl,de") &&
                 (strncmp(lines[i + 8], "jp z,", 5) == 0 ||
-                 strncmp(lines[i + 8], "jp nz,", 6) == 0)) {
+                 strncmp(lines[i + 8], "jp nz,", 6) == 0) &&
+                /* Skip >= comparisons: "jp z,L; jp c,L" with the same label
+                 * means (const <= var), not (const == var).  Treating it as
+                 * equality corrupts the carry flag used by the leftover jp c. */
+                !(strncmp(lines[i + 8], "jp z,", 5) == 0 &&
+                  i + 9 < nlines &&
+                  strncmp(lines[i + 9], "jp c,", 5) == 0 &&
+                  strcmp(lines[i + 8] + 5, lines[i + 9] + 5) == 0)) {
 
                 /*
                  * For nonzero 16-bit constants the high byte must also be

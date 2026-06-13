@@ -125,6 +125,16 @@ int g_forren_n;
 int g_for_decl_seq;
 int g_for_decl_rename_index;
 int g_for_decl_recording;
+
+/* General lexical block scope stack: the nlocals watermark saved at each open
+ * { } block.  leave_scope truncates nlocals back so block-local names leave
+ * scope.  Codegen rebuilds the table the same way the scan did, so the two
+ * passes assign identical offsets; storage (local_size) is monotonic, so the
+ * frame equals the sum over all scopes. */
+int g_scope_watermark[MAX_SCOPE_DEPTH];
+int g_scope_depth;
+int g_static_local_func_index;
+int g_static_local_seq;
 int errors;
 int scan_mode;
 int decl_is_extern;

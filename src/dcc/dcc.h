@@ -78,6 +78,8 @@
 #define MAX_FOR_SCOPES 256
 #define MAX_FOR_SCOPE_RENAMES 16
 #define MAX_FORREN     128
+/* General lexical block-scope nesting depth (C block scope, beyond for-init) */
+#define MAX_SCOPE_DEPTH 64
 #define MAX_FLOW       128
 #define MAX_SNAPSHOT   256
 #define MAX_PROTO_PARAMS 16
@@ -197,6 +199,7 @@ struct Token {
 
 struct Sym {
     char name[64];
+    char link_name[64];
     int type;
     int storage;
     int offset;
@@ -389,6 +392,19 @@ const char *enter_for_decl_rename(const char *name);
 void push_for_rename(const char *from, const char *to);
 void pop_for_rename(void);
 
+/* General lexical block scope stack (see dcc_state.c).  enter_scope/leave_scope
+ * bracket every { } block in both the frame-sizing scan and codegen.  Codegen
+ * rebuilds the locals table exactly as the scan did, so both passes truncate
+ * nlocals on block exit and a local declared in an inner block stops resolving
+ * once the block ends. */
+extern int g_scope_watermark[MAX_SCOPE_DEPTH];
+extern int g_scope_depth;
+extern int g_static_local_func_index;
+extern int g_static_local_seq;
+void enter_scope(void);
+void leave_scope(void);
+struct Sym *find_local_decl(const char *name);
+
 extern int errors;
 extern int scan_mode;
 extern int decl_is_extern;
@@ -442,6 +458,7 @@ int asm_name_must_mangle(const char *cname);
 int asm_name_is_internal_public(const char *cname);
 const char *asm_name_for_runtime(const char *cname);
 const char *asm_name_for(const char *cname);
+const char *sym_asm_name(struct Sym *s);
 
 /* ---- diag_emit ---- */
 void fatal(const char *msg);
@@ -796,6 +813,8 @@ void gen_expr_statement(void);
 int parse_float_init_literal(unsigned long *bits);
 int type_is_const_scalar_candidate(int type);
 int try_parse_local_const_initializer(int type, unsigned long *valuep);
+struct Sym *try_const_fold_local(const char *store_name, const char *src_name,
+                                 int type, int has_array);
 void emit_load_const_sym_value(struct Sym *s);
 int try_parse_auto_const_init_value(int type, long *valuep);
 void emit_store_const_to_local_array_elem(struct Sym *s, int elem_type, int index, long v);

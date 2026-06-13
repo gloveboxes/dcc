@@ -509,13 +509,13 @@ void emit_byte_operand_to_a(struct ByteOperand *op)
     } else if (op->kind == 3) {
         emit_extrn_if_needed(op->sym);
         if (op->idx_sym) {
-            fprintf(outf, "\tld hl,%s\n", asm_name_for(op->sym->name));
+            fprintf(outf, "\tld hl,%s\n", asm_name_for(sym_asm_name(op->sym)));
             fprintf(outf, "\tld e,(ix%+d)\n", op->idx_sym->offset);
             emit("\tld d,0\n");
             emit("\tadd hl,de\n");
             emit("\tld a,(hl)\n");
         } else {
-            fprintf(outf, "\tld a,(%s+%ld)\n", asm_name_for(op->sym->name), op->val & 0xffffL);
+            fprintf(outf, "\tld a,(%s+%ld)\n", asm_name_for(sym_asm_name(op->sym)), op->val & 0xffffL);
         }
     }
 }
@@ -530,14 +530,14 @@ void emit_cp_byte_operand(struct ByteOperand *op)
         emit_extrn_if_needed(op->sym);
         if (op->idx_sym) {
             emit("\tld b,a\n");
-            fprintf(outf, "\tld hl,%s\n", asm_name_for(op->sym->name));
+            fprintf(outf, "\tld hl,%s\n", asm_name_for(sym_asm_name(op->sym)));
             fprintf(outf, "\tld e,(ix%+d)\n", op->idx_sym->offset);
             emit("\tld d,0\n");
             emit("\tadd hl,de\n");
             emit("\tld a,b\n");
             emit("\tcp (hl)\n");
         } else {
-            fprintf(outf, "\tcp (%s+%ld)\n", asm_name_for(op->sym->name), op->val & 0xffffL);
+            fprintf(outf, "\tcp (%s+%ld)\n", asm_name_for(sym_asm_name(op->sym)), op->val & 0xffffL);
         }
     }
 }

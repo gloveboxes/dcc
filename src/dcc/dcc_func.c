@@ -595,21 +595,10 @@ void scan_local_decl_after_type(int base)
         bytes = type_size(type);
         if (total_elems > 0) bytes *= total_elems;
 
-        s = find_local(name);
-        if (!s && decl_is_const && arrlen == 0 && g_last_array_dim_count == 0 &&
-            type_is_const_scalar_candidate(type) && tok.kind == '=' &&
-            !local_name_address_taken_ahead(source_name)) {
-            unsigned long const_value;
-            next_token();
-            if (try_parse_local_const_initializer(type, &const_value)) {
-                s = add_local_known(name, type, SC_LOCAL, 0, 0);
-                s->is_const_value = 1;
-                s->const_value = const_value;
-            } else {
-                s = add_local_alloc(name, type, bytes);
-                skip_initializer_or_decl_tail();
-            }
-        }
+        s = find_local_decl(name);
+        if (!s)
+            s = try_const_fold_local(name, source_name, type,
+                                     arrlen != 0 || g_last_array_dim_count != 0);
 
         if (!s) {
             s = add_local_alloc(name, type, bytes);
@@ -650,6 +639,7 @@ void scan_static_local_decl_after_type(int base)
 {
     int type, bytes, arrlen;
     char name[64];
+    char backing_name[64];
     struct Sym *g;
     struct Sym *l;
 
@@ -682,7 +672,19 @@ void scan_static_local_decl_after_type(int base)
         else if (arrlen < 0)
             bytes = 0;
 
-        g = add_global(name, type, SC_GLOBAL);
+        l = find_local_decl(name);
+        if (l && l->link_name[0]) {
+            strncpy(backing_name, l->link_name, sizeof(backing_name) - 1);
+            backing_name[sizeof(backing_name) - 1] = 0;
+        } else {
+            sprintf(backing_name, "__sl%d_%d", g_static_local_func_index,
+                    g_static_local_seq++);
+        }
+
+        g = add_global(backing_name, type, SC_GLOBAL);
+        g->is_defined = 1;
+        g->needs_extrn = 0;
+        g->is_static = 1;
         g->size = bytes;
         if (arrlen != 0) {
             g->is_array = 1;
@@ -692,8 +694,10 @@ void scan_static_local_decl_after_type(int base)
             copy_last_array_dims_to_sym(g);
         }
 
-        if (!find_local(name)) {
+        if (!l) {
             l = add_local_known(name, type, SC_GLOBAL, 0, bytes);
+            strncpy(l->link_name, backing_name, sizeof(l->link_name) - 1);
+            l->link_name[sizeof(l->link_name) - 1] = 0;
             if (arrlen != 0) {
                 l->is_array = 1;
                 l->array_len = arrlen > 0 ? arrlen : 0;
@@ -709,7 +713,7 @@ void scan_static_local_decl_after_type(int base)
          * inferred the real storage size.  Mirror that back into the local
          * alias used for references inside the function.
          */
-        l = find_local(name);
+        l = find_local_decl(name);
         if (l && g->is_array && l->is_array) {
             l->size = g->size;
             l->array_len = g->array_len;
@@ -736,19 +740,23 @@ void scan_function_body(void)
     g_for_decl_seq = -1;
     g_for_decl_rename_index = 0;
     g_for_decl_recording = 0;
+    g_scope_depth = 0;
 
     expect('{');
+    enter_scope();              /* function body block */
     brace = 1;
     can_decl = 1;
 
     while (tok.kind != TOK_EOF && brace > 0) {
         if (tok.kind == '{') {
+            enter_scope();
             brace++;
             next_token();
             can_decl = 1;
         } else if (tok.kind == '}') {
             brace--;
             next_token();
+            leave_scope();
             can_decl = 1;
         } else if (tok.kind == TOK_FOR) {
             int for_seq;
@@ -1006,7 +1014,11 @@ int parse_global_init_atom(long *val, char *label, int labelsz)
         }
 
         if (label && labelsz > 0) {
-            strncpy(label, tok.text, labelsz - 1);
+            struct Sym *ls;
+            const char *lname;
+            ls = find_sym(tok.text);
+            lname = ls ? sym_asm_name(ls) : tok.text;
+            strncpy(label, lname, labelsz - 1);
             label[labelsz - 1] = 0;
         }
         next_token();
@@ -1017,7 +1029,11 @@ int parse_global_init_atom(long *val, char *label, int labelsz)
         next_token();
         if (tok.kind == TOK_ID) {
             if (label && labelsz > 0) {
-                strncpy(label, tok.text, labelsz - 1);
+                struct Sym *ls;
+                const char *lname;
+                ls = find_sym(tok.text);
+                lname = ls ? sym_asm_name(ls) : tok.text;
+                strncpy(label, lname, labelsz - 1);
                 label[labelsz - 1] = 0;
             }
             next_token();
@@ -1629,6 +1645,8 @@ void parse_function_or_global(int base_type)
                 saved_param_offset = param_offset;
 
                 current_function_has_call = 0;
+                g_static_local_func_index = (int)(s - globals);
+                g_static_local_seq = 0;
                 scan_function_body();
                 body_end_pos = posi;
                 body_end_tok_start = tok_start_pos;
@@ -1648,6 +1666,8 @@ void parse_function_or_global(int base_type)
                 local_size = saved_local_size;
                 param_offset = saved_param_offset;
 
+                g_static_local_func_index = (int)(s - globals);
+                g_static_local_seq = 0;
                 scan_function_body();
 
                 posi = saved_pos;
@@ -1669,6 +1689,15 @@ void parse_function_or_global(int base_type)
                 g_for_decl_seq = -1;
                 g_for_decl_rename_index = 0;
                 g_for_decl_recording = 0;
+                /* Codegen rebuilds the local table exactly as the frame-sizing
+                 * scan did - block scopes truncate nlocals as they close - so
+                 * restart from just the parameters with an empty scope stack.
+                 * Both passes therefore assign identical frame offsets. */
+                nlocals = saved_nlocals;
+                local_size = saved_local_size;
+                g_scope_depth = 0;
+                g_static_local_func_index = (int)(s - globals);
+                g_static_local_seq = 0;
                 emit_function_prologue(name, current_local_bytes, current_function_safe_to_omit_ix(type, current_local_bytes));
                 gen_compound();
                 check_undefined_user_labels();

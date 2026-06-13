@@ -171,8 +171,8 @@ void emit_data(void)
         if (!(s->has_init && s->init_count > 0) && !(s->has_init && !s->is_array)) continue;
 
         if (!s->is_static)
-            fprintf(outf, "\tpublic %s\n", asm_name_for(s->name));
-        fprintf(outf, "%s:\n", asm_name_for(s->name));
+            fprintf(outf, "\tpublic %s\n", asm_name_for(sym_asm_name(s)));
+        fprintf(outf, "%s:\n", asm_name_for(sym_asm_name(s)));
         if (s->has_init && s->init_count > 0) {
             int j;
             int elem_bytes;
@@ -232,8 +232,8 @@ void emit_data(void)
 
                 bss_size = s->size > 0 ? s->size : 2;
                 if (!s->is_static)
-                    fprintf(outf, "\tpublic %s\n", asm_name_for(s->name));
-                fprintf(outf, "%s:\n", asm_name_for(s->name));
+                    fprintf(outf, "\tpublic %s\n", asm_name_for(sym_asm_name(s)));
+                fprintf(outf, "%s:\n", asm_name_for(sym_asm_name(s)));
                 fprintf(outf, "\tds %d\n", bss_size);
             }
             return;
@@ -268,7 +268,7 @@ void emit_data(void)
             if ((s->has_init && s->init_count > 0) || (s->has_init && !s->is_array)) continue;
 
             bss_size = s->size > 0 ? s->size : 2;
-            fprintf(outf, "%s\tequ\t__bssb+%d\n", asm_name_for(s->name), bss_off);
+            fprintf(outf, "%s\tequ\t__bssb+%d\n", asm_name_for(sym_asm_name(s)), bss_off);
             bss_off += bss_size;
         }
 

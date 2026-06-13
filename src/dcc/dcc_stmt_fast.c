@@ -352,7 +352,7 @@ void emit_store_a_to_sym_byte_preserve_de(struct Sym *s, int byte_off)
 
     /* Conservative fallback for globals: preserve DE while storing A. */
     emit("\tpush de\n");
-    fprintf(outf, "\tld hl,%s\n", asm_name_for(s->name));
+    fprintf(outf, "\tld hl,%s\n", asm_name_for(sym_asm_name(s)));
     if (byte_off)
         fprintf(outf, "\tld de,%d\n\tadd hl,de\n", byte_off);
     emit("\tld (hl),a\n\tpop de\n");

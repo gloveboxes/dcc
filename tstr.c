@@ -168,7 +168,7 @@ void test_wide()
     }
 
     printf( "testing printf with wide strings\n" );
-    for ( i = 0; i < 20; i++ )
+    for ( int i = 0; i < 20; i++ )
     {
         int start = ( (unsigned int) rand() % 300 );
         int end = 1 + start + ( ( (unsigned int) rand() ) % 70 );

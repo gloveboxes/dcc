@@ -218,6 +218,24 @@ Notes specific to the 16-bit model:
 - `inline` — accepted as a non-C89 (C99) extension and then ignored; functions
   are always emitted normally. No other C99/C11 keywords (`restrict`, `_Bool`,
   `_Complex`, and so on) are recognized.
+- **C99 `for`-loop init declarations** — `for (int i = 0; i < n; i++)` is
+  accepted and the loop variable has proper C99 loop scope: it shadows any
+  outer variable of the same name for the duration of the loop and is not
+  visible afterward. Multiple declarators (`for (int i = 0, j = n; ...)`) and
+  pointer/array declarators in the init clause are scoped the same way. See
+  [Limitations](#limitations-to-keep-in-mind) for the one nested-scope caveat.
+- **C99 `//` line comments** — accepted everywhere C89 `/* ... */` block
+  comments are, including as trailing comments on preprocessor directives such
+  as `#define` (where, like block comments, they are stripped before macro
+  replacement). Both comment styles are correctly ignored inside string and
+  character literals, so a literal such as `"a // b"` is left intact.
+
+```c
+int i = 99;
+for (int i = 0; i < 3; i++)   /* this i shadows the outer one */
+    use(i);                   /* 0, 1, 2 */
+/* outer i is still 99 here */
+```
 
 ---
 
@@ -811,6 +829,12 @@ either `#include` its `.c` from your main file, or compile it separately with
   `-stack` and see [spsmash.c](spsmash.c) for an optional manual stack check.
 - **CP/M 2.2 only.** The runtime uses BDOS functions only (no BIOS calls), plus
   CP/M 3.0 BDOS 108 for the process exit code.
+- **Only `for`-init declarations get a nested scope.** dcc keeps one flat set
+  of locals per function. A C99 `for (int i = ...; ...)` correctly shadows an
+  outer `i` (its declaration gets its own slot for the loop), but a same-named
+  variable declared in an ordinary nested `{ ... }` block reuses the outer
+  variable's storage instead of getting a fresh one. Use distinct names when
+  you shadow a variable inside a plain block.
 
 ---
 

@@ -49,6 +49,17 @@ At a glance: `char` 8-bit (signed), `short`/`int` 16-bit, `long` 32-bit,
 - **Inert but accepted:** `const` (constant-folds initializers only; not
   read-only memory), `volatile` (ignored), `register` (hint only), `auto`
   (no-op). `inline` is accepted as a C99 extension and ignored.
+- **C99 `for`-init declarations are supported** with real loop scope:
+  `for (int i = 0; i < n; i++)` declares `i` only for the loop, so it shadows
+  (does not clobber) an outer same-named variable and is invisible after the
+  loop. Multiple declarators (`for (int i = 0, j = n; ...)`) and pointer/array
+  declarators scope the same way. Caveat: the `for`-init is the *only* nested
+  scope dcc models — a same-named variable declared in an ordinary inner
+  `{ ... }` block still aliases the outer one, so use distinct names there.
+- **C99 `//` line comments are supported** alongside C89 `/* ... */` block
+  comments — including trailing comments on `#define` lines (stripped like
+  block comments before macro replacement). Both forms are correctly ignored
+  inside string and character literals (e.g. `"http://..."` stays intact).
 - **K&R function definitions are accepted** (dcc's typing is lenient), but
   prefer prototypes for new code. Mixed decls/statements and block-local
   variables are fine (real C89).
@@ -58,8 +69,8 @@ At a glance: `char` 8-bit (signed), `short`/`int` 16-bit, `long` 32-bit,
   use `unsigned`/`unsigned long` when you need a guaranteed zero-fill shift.
   Shifts act at the operand width (16-bit for `int`; cast/promote to `long`
   for wider shifts).
-- No other C99/C11 features (`restrict`, `_Bool`, `//`-only assumptions about
-  runtime, VLAs, compound literals, designated initializers).
+- No other C99/C11 features (`restrict`, `_Bool`, VLAs, compound literals,
+  designated initializers).
 
 ## Identifier significance
 

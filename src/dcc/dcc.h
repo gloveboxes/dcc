@@ -73,6 +73,11 @@
 #define MAX_STRINGS    2048
 #define MAX_DEFINES    512
 #define MAX_MACRO_TEXT 2048
+
+/* C99 for-init declaration scoping limits */
+#define MAX_FOR_SCOPES 256
+#define MAX_FOR_SCOPE_RENAMES 16
+#define MAX_FORREN     128
 #define MAX_FLOW       128
 #define MAX_SNAPSHOT   256
 #define MAX_PROTO_PARAMS 16
@@ -365,6 +370,25 @@ extern int current_function_has_call;
 extern int break_stack[MAX_FLOW];
 extern int cont_stack[MAX_FLOW];
 extern int nflow;
+
+/* C99 for-init declaration scoping (see dcc_state.c for details) */
+extern int g_for_seq;
+extern int g_for_rename_count[MAX_FOR_SCOPES];
+extern char g_for_rename_from[MAX_FOR_SCOPES][MAX_FOR_SCOPE_RENAMES][64];
+extern char g_for_rename_to[MAX_FOR_SCOPES][MAX_FOR_SCOPE_RENAMES][64];
+extern char g_forren_from[MAX_FORREN][64];
+extern char g_forren_to[MAX_FORREN][64];
+extern int g_forren_n;
+extern int g_for_decl_seq;
+extern int g_for_decl_rename_index;
+extern int g_for_decl_recording;
+const char *resolve_local_rename(const char *name);
+void make_for_rename_name(char *dst, int dstsz, const char *from, int for_seq, int rename_index);
+void add_for_scope_rename(int for_seq, const char *from);
+const char *enter_for_decl_rename(const char *name);
+void push_for_rename(const char *from, const char *to);
+void pop_for_rename(void);
+
 extern int errors;
 extern int scan_mode;
 extern int decl_is_extern;

@@ -709,6 +709,13 @@ void gen_local_decl_after_type(int base)
             next_token();
         }
 
+        if (g_for_decl_seq >= 0) {
+            const char *rn;
+            rn = enter_for_decl_rename(name);
+            strncpy(name, rn, sizeof(name) - 1);
+            name[sizeof(name) - 1] = 0;
+        }
+
         arrlen = g_funcptr_decl_array_len;
         g_funcptr_decl_array_len = 0;
         total_elems = arrlen;

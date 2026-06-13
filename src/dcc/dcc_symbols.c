@@ -108,12 +108,80 @@ void pop_for_rename(void)
         g_forren_n--;
 }
 
+const char *sym_asm_name(struct Sym *s)
+{
+    if (s && s->link_name[0])
+        return s->link_name;
+    return s ? s->name : "";
+}
+
+/*
+ * General lexical block scope.  The frame-sizing scan and codegen both bracket
+ * every { } block with enter_scope/leave_scope, and both build the locals[]
+ * table the same way: a block's locals are truncated away when it closes.
+ * Storage (local_size) is monotonic, so a block-local still gets a distinct
+ * frame slot and the reserved frame is the sum over all scopes; because codegen
+ * rebuilds the table exactly as the scan did, the two passes assign identical
+ * offsets and resolve names identically.
+ */
+void enter_scope(void)
+{
+    if (g_scope_depth >= MAX_SCOPE_DEPTH)
+        fatal("too many nested block scopes");
+    g_scope_watermark[g_scope_depth++] = nlocals;
+}
+
+void leave_scope(void)
+{
+    if (g_scope_depth <= 0)
+        return;
+    /* Block-local names leave scope.  local_size is intentionally left alone:
+     * storage is monotonic (slots are never reused), so the frame size still
+     * equals the sum over every scope. */
+    nlocals = g_scope_watermark[--g_scope_depth];
+}
+
+/* Lookup used while DECLARING a local: only the innermost open block is
+ * considered, and for-init renames are ignored.  This lets an inner block (or a
+ * for body) declare a name that shadows an outer local, a parameter, or an
+ * active for-init loop variable instead of binding to it. */
+struct Sym *find_local_decl(const char *name)
+{
+    int i, base;
+    base = g_scope_depth > 0 ? g_scope_watermark[g_scope_depth - 1] : 0;
+    for (i = nlocals - 1; i >= base; --i)
+        if (!strcmp(locals[i].name, name)) return &locals[i];
+    return NULL;
+}
+
 struct Sym *find_local(const char *name)
 {
     int i;
-    name = resolve_local_rename(name);
+    const char *rn;
+    int plain_idx;
+    int ren_idx;
+
+    /* Two backward searches over the in-scope locals (nlocals is truncated on
+     * block exit, so out-of-scope names are excluded): one for the original
+     * spelling (block locals and ordinary locals) and one for an active
+     * for-init rename (the loop variable lives under a unique internal name).
+     * The higher index wins because declaration order equals scope depth, so
+     * the innermost binding is selected.  This makes a for-init variable shadow
+     * an outer same-named local, and an inner block redeclaration shadow the
+     * for-init variable, both correctly. */
+    plain_idx = -1;
     for (i = nlocals - 1; i >= 0; --i)
-        if (!strcmp(locals[i].name, name)) return &locals[i];
+        if (!strcmp(locals[i].name, name)) { plain_idx = i; break; }
+
+    ren_idx = -1;
+    rn = resolve_local_rename(name);
+    if (rn != name) {
+        for (i = nlocals - 1; i >= 0; --i)
+            if (!strcmp(locals[i].name, rn)) { ren_idx = i; break; }
+    }
+
+    if (ren_idx > plain_idx) return &locals[ren_idx];
+    if (plain_idx >= 0) return &locals[plain_idx];
     return NULL;
 }
 
@@ -147,7 +215,7 @@ int is_global_char_array_sym(struct Sym *s)
 void emit_global_char_index_addr(struct Sym *s)
 {
     emit_extrn_if_needed(s);
-    fprintf(outf, "\tld de,%s\n", asm_name_for(s->name));
+    fprintf(outf, "\tld de,%s\n", asm_name_for(sym_asm_name(s)));
     emit("\tadd hl,de\n");
 }
 
@@ -342,7 +410,7 @@ void emit_extrn_if_needed(struct Sym *s)
          * real generation pass must still print it before the first reference.
          */
         if (!scan_mode) {
-            fprintf(outf, "\textrn %s\n", asm_name_for(s->name));
+            fprintf(outf, "\textrn %s\n", asm_name_for(sym_asm_name(s)));
             s->needs_extrn = 0;
         }
         return;
@@ -366,7 +434,7 @@ void emit_deferred_extrns(void)
         struct Sym *s;
         s = used_extrns[i];
         if (s && s->needs_extrn && !s->is_defined && !asm_name_is_internal_public(s->name))
-            fprintf(outf, "\textrn %s\n", asm_name_for(s->name));
+            fprintf(outf, "\textrn %s\n", asm_name_for(sym_asm_name(s)));
     }
 }
 
@@ -436,7 +504,7 @@ void emit_load_sym_addr(struct Sym *s)
         emit_load_frame_addr_hl(s);
     } else {
         emit_extrn_if_needed(s);
-        fprintf(outf, "\tld hl,%s\n", asm_name_for(s->name));
+        fprintf(outf, "\tld hl,%s\n", asm_name_for(sym_asm_name(s)));
     }
 }
 
@@ -466,14 +534,14 @@ int is_global_word_sym(struct Sym *s)
 void emit_load_global_word_direct(struct Sym *s)
 {
     emit_extrn_if_needed(s);
-    fprintf(outf, "\tld hl,(%s)\n", asm_name_for(s->name));
+    fprintf(outf, "\tld hl,(%s)\n", asm_name_for(sym_asm_name(s)));
 }
 
 /* Z80: ld (name),hl — store 16-bit HL value to global/extern directly. */
 void emit_store_global_word_direct(struct Sym *s)
 {
     emit_extrn_if_needed(s);
-    fprintf(outf, "\tld (%s),hl\n", asm_name_for(s->name));
+    fprintf(outf, "\tld (%s),hl\n", asm_name_for(sym_asm_name(s)));
 }
 
 void emit_load_sym_value_direct(struct Sym *s)

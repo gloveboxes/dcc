@@ -191,11 +191,11 @@ void emit_global_byte_array_index_addr(struct Sym *arr, struct Sym *idx_sym, lon
     emit_extrn_if_needed(arr);
     if (has_const) {
         if (idx_const == 0)
-            fprintf(outf, "\tld hl,%s\n", asm_name_for(arr->name));
+            fprintf(outf, "\tld hl,%s\n", asm_name_for(sym_asm_name(arr)));
         else
-            fprintf(outf, "\tld hl,%s+%ld\n", asm_name_for(arr->name), idx_const & 0xffffL);
+            fprintf(outf, "\tld hl,%s+%ld\n", asm_name_for(sym_asm_name(arr)), idx_const & 0xffffL);
     } else {
-        fprintf(outf, "\tld hl,%s\n", asm_name_for(arr->name));
+        fprintf(outf, "\tld hl,%s\n", asm_name_for(sym_asm_name(arr)));
         fprintf(outf, "\tld e,(ix%+d)\n", idx_sym->offset);
         emit("\tld d,0\n");
         emit("\tadd hl,de\n");

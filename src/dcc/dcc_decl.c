@@ -153,6 +153,65 @@ int try_parse_local_const_initializer(int type, unsigned long *valuep)
     return 0;
 }
 
+/*
+ * Shared const-scalar folding decision for a local declaration, used by BOTH
+ * the frame-sizing scan and codegen so they allocate identically.  A
+ * `const`-qualified scalar with a compile-time-constant initializer whose
+ * address is never taken needs no stack storage: it folds to its value.  On
+ * success the symbol is created with zero storage (is_const_value set) and the
+ * initializer tokens are consumed.  On any miss the lexer is left exactly at
+ * the '=' so the caller can allocate real storage and emit/skip the
+ * initializer normally.  store_name is the (possibly for-init-renamed) table
+ * name; src_name is the original spelling used for the address-taken probe.
+ */
+struct Sym *try_const_fold_local(const char *store_name, const char *src_name,
+                                 int type, int has_array)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    int save_errors;
+    int save_long_suffix;
+    int save_unsigned_suffix;
+    struct Token save_tok;
+    unsigned long const_value;
+    struct Sym *s;
+
+    if (!decl_is_const || has_array ||
+        !type_is_const_scalar_candidate(type) || tok.kind != '=' ||
+        local_name_address_taken_ahead(src_name))
+        return NULL;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_errors = errors;
+    save_long_suffix = g_tok_long_suffix;
+    save_unsigned_suffix = g_tok_unsigned_suffix;
+    save_tok = tok;
+
+    next_token();   /* consume '=' */
+    if (try_parse_local_const_initializer(type, &const_value)) {
+        s = add_local_known(store_name, type, SC_LOCAL, 0, 0);
+        s->is_const_value = 1;
+        s->const_value = const_value;
+        return s;
+    }
+
+    /* Not a compile-time constant: rewind to the '=' for the caller. */
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    errors = save_errors;
+    g_tok_long_suffix = save_long_suffix;
+    g_tok_unsigned_suffix = save_unsigned_suffix;
+    tok = save_tok;
+    return NULL;
+}
+
 void emit_load_const_sym_value(struct Sym *s)
 {
     struct ConstVal cv;
@@ -691,6 +750,7 @@ void gen_local_decl_after_type(int base)
     int type, bytes, arrlen;
     int total_elems;
     char name[64];
+    char source_name[64];
     struct Sym *s;
 
     for (;;) {
@@ -708,6 +768,9 @@ void gen_local_decl_after_type(int base)
             name[sizeof(name) - 1] = 0;
             next_token();
         }
+
+        strncpy(source_name, name, sizeof(source_name) - 1);
+        source_name[sizeof(source_name) - 1] = 0;
 
         if (g_for_decl_seq >= 0) {
             const char *rn;
@@ -767,7 +830,10 @@ void gen_local_decl_after_type(int base)
             total_elems = g_typedef_array_len;
         }
 
-        s = find_local(name);
+        s = find_local_decl(name);
+        if (!s)
+            s = try_const_fold_local(name, source_name, type,
+                                     total_elems > 0 || g_last_array_dim_count > 0);
         if (!s) {
             bytes = type_size(type);
             if (total_elems > 0)

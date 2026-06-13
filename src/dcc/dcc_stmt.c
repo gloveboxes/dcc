@@ -13,6 +13,7 @@
 void gen_compound(void)
 {
     expect('{');
+    enter_scope();
 
     while (tok.kind != TOK_EOF && tok.kind != '}') {
         if (tok.kind == TOK_TYPEDEF) {
@@ -35,6 +36,7 @@ void gen_compound(void)
         }
     }
 
+    leave_scope();
     expect('}');
 }
 
@@ -77,7 +79,7 @@ void emit_load_sym_word_to_bc(struct Sym *s)
         }
     } else if (is_global_word_sym(s)) {
         emit_extrn_if_needed(s);
-        fprintf(outf, "\tld bc,(%s)\n", asm_name_for(s->name));
+        fprintf(outf, "\tld bc,(%s)\n", asm_name_for(sym_asm_name(s)));
     }
 }
 
@@ -93,7 +95,7 @@ void emit_store_de_to_sym_word(struct Sym *s)
         }
     } else if (is_global_word_sym(s)) {
         emit_extrn_if_needed(s);
-        fprintf(outf, "\tld (%s),de\n", asm_name_for(s->name));
+        fprintf(outf, "\tld (%s),de\n", asm_name_for(sym_asm_name(s)));
     }
 }
 
@@ -109,7 +111,7 @@ void emit_store_bc_to_sym_word(struct Sym *s)
         }
     } else if (is_global_word_sym(s)) {
         emit_extrn_if_needed(s);
-        fprintf(outf, "\tld (%s),bc\n", asm_name_for(s->name));
+        fprintf(outf, "\tld (%s),bc\n", asm_name_for(sym_asm_name(s)));
     }
 }
 
@@ -257,7 +259,7 @@ int try_gen_bc_pointer_copy_while(void)
         fprintf(outf, "\tld d,(ix%+d)\n", dstsym->offset + 1);
     } else {
         emit_extrn_if_needed(dstsym);
-        fprintf(outf, "\tld de,(%s)\n", asm_name_for(dstsym->name));
+        fprintf(outf, "\tld de,(%s)\n", asm_name_for(sym_asm_name(dstsym)));
     }
     emit_label(ltop);
     if (selem == 1) {
@@ -966,7 +968,7 @@ int try_gen_bc_byte_array_cycle_for(void)
     lnowrap = new_label();
 
     emit("\tld bc,0\n");
-    fprintf(outf, "\tld de,%s\n", asm_name_for(asym->name));
+    fprintf(outf, "\tld de,%s\n", asm_name_for(sym_asm_name(asym)));
     fprintf(outf, "\tld h,%ld\n", base & 255L);
     emit_label(ltop);
     emit("\tld a,h\n");
@@ -1321,6 +1323,7 @@ void gen_switch_chain(void)
     emit_jp_label("jp", default_lab >= 0 ? default_lab : lend);
 
     expect('{');
+    enter_scope();
 
     break_stack[nflow] = lend;
     /* continue inside a switch should target the enclosing loop, not the switch */
@@ -1374,6 +1377,7 @@ void gen_switch_chain(void)
         }
     }
 
+    leave_scope();
     expect('}');
 
     nflow--;
@@ -1689,6 +1693,7 @@ void gen_switch_table(void)
     emit_switch_jump_table(minv, maxv, case_vals, case_labs, ncase, default_lab, lend);
 
     expect('{');
+    enter_scope();
 
     break_stack[nflow] = lend;
     cont_stack[nflow] = (nflow > 0) ? cont_stack[nflow - 1] : lend;
@@ -1730,6 +1735,7 @@ void gen_switch_table(void)
         }
     }
 
+    leave_scope();
     expect('}');
     nflow--;
     emit_label(lend);

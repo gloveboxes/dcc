@@ -4201,5 +4201,7 @@ test tlongidx
 PASS tlongidx
 test tforsco
 tforsco passed with great success
+test tforblk
+tforblk passed with great success
 test tcmt99
 tcmt99 passed with great success

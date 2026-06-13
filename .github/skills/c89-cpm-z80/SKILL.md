@@ -53,9 +53,12 @@ At a glance: `char` 8-bit (signed), `short`/`int` 16-bit, `long` 32-bit,
   `for (int i = 0; i < n; i++)` declares `i` only for the loop, so it shadows
   (does not clobber) an outer same-named variable and is invisible after the
   loop. Multiple declarators (`for (int i = 0, j = n; ...)`) and pointer/array
-  declarators scope the same way. Caveat: the `for`-init is the *only* nested
-  scope dcc models — a same-named variable declared in an ordinary inner
-  `{ ... }` block still aliases the outer one, so use distinct names there.
+  declarators scope the same way.
+- **Block scope is fully modeled.** A variable declared in an inner `{ ... }`
+  block (including `if`/`while`/`for`/`switch` bodies) shadows an outer
+  same-named local or parameter for that block only and is invisible once the
+  block ends — sibling blocks may safely reuse a name, and an inner block may
+  shadow a `for`-init loop variable.
 - **C99 `//` line comments are supported** alongside C89 `/* ... */` block
   comments — including trailing comments on `#define` lines (stripped like
   block comments before macro replacement). Both forms are correctly ignored

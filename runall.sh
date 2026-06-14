@@ -3,6 +3,9 @@ set -uo pipefail
 
 # Optional first argument: emulator command. Defaults to ntvcm.
 EMULATOR=${1:-ntvcm}
+BUILD_DIR=${BUILD_DIR:-build}
+
+mkdir -p "$BUILD_DIR"
 
 APPLIST="sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong \
          tpi mm tm tfio wumpus triangle fileops nqueens fact tsetjmp \
@@ -12,13 +15,13 @@ APPLIST="sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong \
          tc89pp tc89fnty tc89flt tc89fltc tc89flta tc89fptr tc89fs tc89fcmp \
          tc89fcnv tc89fadd tc89fmul tc89fdiv tc89ffio tc89flng tc89fmat \
          ttrig tlog tphi tap cpmenumd tbits tfo pihex tstrify tlcont primes \
-         tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 \
+         tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 tstring \
          tlongaud tlongreg tlongopt tctxops tppreg tinitreg ttypesr ttype2 tdecinit tmalloch \
          tallocx tstdlib tioerr tqsort tbsearch trw2 terrno tpostfld tswitch tppifcom tpostidx \
          tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 \
          tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom \
          tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield \
-         pint cobint forint bint fint cint tstretst tportio tlongidx tforsco tforblk tcmt99 tctxflt"
+         pint cobint forint bint fint cint tstretst tportio tlongidx tforsco tforblk tcmt99 tc99scpe tctxflt"
 
 run_args() {
     case "$1" in
@@ -46,9 +49,22 @@ to_lf() {
 clean_one() {
     app="$1"
     upper="$(printf '%s' "$app" | tr '[:lower:]' '[:upper:]')"
-    rm -f "${upper}.MAC" "${upper}.REL" "${upper}.PRN" "${upper}.COM" \
-          "${app}.mac" "${app}.rel" "${app}.prn" "${app}.com" "${app}.COM" \
-          RTLMIN.MAC RTLMIN.REL RTLMIN.PRN _PEEPOUT.MAC
+    rm -f "${BUILD_DIR}/${upper}.MAC" "${BUILD_DIR}/${upper}.REL" "${BUILD_DIR}/${upper}.PRN" "${BUILD_DIR}/${upper}.COM" \
+          "${BUILD_DIR}/${app}.mac" "${BUILD_DIR}/${app}.rel" "${BUILD_DIR}/${app}.prn" "${BUILD_DIR}/${app}.com" "${BUILD_DIR}/${app}.COM" \
+          "${BUILD_DIR}/DCCRTL.MAC" "${BUILD_DIR}/RTLMIN.MAC" "${BUILD_DIR}/RTLMIN.REL" "${BUILD_DIR}/RTLMIN.PRN" "${BUILD_DIR}/_PEEPOUT.MAC"
+}
+
+stage_fixture_inputs() {
+    # Some tests read CP/M data files (E.*). Since test binaries run from
+    # build/, ensure those files are present there. Prefer tests/ and keep
+    # root fallback for compatibility.
+    for f in E.PAS E.COB E.FOR E.BAS E.F E.C; do
+        if [ -f "tests/$f" ]; then
+            cp -f "tests/$f" "${BUILD_DIR}/$f"
+        elif [ -f "$f" ]; then
+            cp -f "$f" "${BUILD_DIR}/$f"
+        fi
+    done
 }
 
 run_set() {
@@ -56,6 +72,7 @@ run_set() {
     outfile="$2"
 
     : > "$outfile"
+    stage_fixture_inputs
 
     for app in $APPLIST; do
         upper="$(printf '%s' "$app" | tr '[:lower:]' '[:upper:]')"
@@ -68,9 +85,9 @@ run_set() {
         args="$(run_args "$app")"
         if [ -n "$args" ]; then
             # shellcheck disable=SC2086
-            "$EMULATOR" "$upper" $args >> "$outfile"
+            (cd "$BUILD_DIR" && "$EMULATOR" "$upper" $args) >> "$outfile"
         else
-            "$EMULATOR" "$upper" >> "$outfile"
+            (cd "$BUILD_DIR" && "$EMULATOR" "$upper") >> "$outfile"
         fi
 
         clean_one "$app"

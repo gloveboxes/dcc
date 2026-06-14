@@ -9,7 +9,20 @@ if "%~1"=="" (
 )
 
 set "name=%~n1"
-set "SOURCE_FILE=%name%.c"
+set "BUILDDIR=build"
+if not exist "%BUILDDIR%" mkdir "%BUILDDIR%"
+
+rem ntvcm resolves COM command files from the current working directory.
+rem Since we run ntvcm from build, stage m80/l80 there automatically.
+if exist "m80.com" copy /Y "m80.com" "%BUILDDIR%\m80.com" >nul
+if exist "l80.com" copy /Y "l80.com" "%BUILDDIR%\l80.com" >nul
+
+set "SOURCE_FILE="
+
+if exist "tests\%name%.c" set "SOURCE_FILE=tests\%name%.c"
+if not defined SOURCE_FILE if exist "tests\%name%.C" set "SOURCE_FILE=tests\%name%.C"
+if not defined SOURCE_FILE if exist "%name%.c" set "SOURCE_FILE=%name%.c"
+if not defined SOURCE_FILE if exist "%name%.C" set "SOURCE_FILE=%name%.C"
 set "USE_PEEP=1"
 
 if /I "%~2"=="nopeep" set "USE_PEEP=0"
@@ -21,8 +34,8 @@ if /I "%~2"=="peep" set "USE_PEEP=1"
 if /I "%~2"=="opt" set "USE_PEEP=1"
 if /I "%~2"=="-O" set "USE_PEEP=1"
 
-if not exist "%SOURCE_FILE%" (
-    echo source file not found: %SOURCE_FILE%
+if not defined SOURCE_FILE (
+    echo source file not found: tests\%name%.c or %name%.c
     exit /b 1
 )
 
@@ -44,35 +57,54 @@ if not errorlevel 1 (
 )
 
 rem Compile on host first, producing %name%.mac.
-dcc.exe %DCC_FLAGS% -stack 512 "%SOURCE_FILE%" -o "%name%.mac"
+dcc.exe %DCC_FLAGS% -stack 512 "%SOURCE_FILE%" -o "%BUILDDIR%\%name%.mac"
 if errorlevel 1 exit /b 1
 
 if "%USE_PEEP%"=="1" (
-    dccpeep "%name%.mac" _peepout.mac
+    dccpeep "%BUILDDIR%\%name%.mac" "%BUILDDIR%\_peepout.mac"
     if errorlevel 1 exit /b 1
-    del "%name%.mac"
-    ren _peepout.mac "%name%.mac"
+    del "%BUILDDIR%\%name%.mac"
+    ren "%BUILDDIR%\_peepout.mac" "%name%.mac"
 )
 
 rem Ensure CRLF line endings so CP/M M80 doesn't split on embedded LF bytes.
-unix2dos "%name%.mac" >nul 2>nul
+unix2dos "%BUILDDIR%\%name%.mac" >nul 2>nul
 
 rem Assemble app.
+pushd "%BUILDDIR%"
 ntvcm m80 =%name%.mac /X /O /Z /L
+if errorlevel 1 (
+    popd
+    exit /b 1
+)
+popd
 if errorlevel 1 exit /b 1
 
 rem Produce a subset of the C runtime actually used by the app.
-unix2dos DCCRTL.MAC >nul 2>nul
-dccrtlstrip.exe %STRIP_FLAGS% -r dccrtl.mac -o rtlmin.mac "%name%.mac"
+copy /Y DCCRTL.MAC "%BUILDDIR%\DCCRTL.MAC" >nul
+unix2dos "%BUILDDIR%\DCCRTL.MAC" >nul 2>nul
+dccrtlstrip.exe %STRIP_FLAGS% -r "%BUILDDIR%\DCCRTL.MAC" -o "%BUILDDIR%\rtlmin.mac" "%BUILDDIR%\%name%.mac"
 if errorlevel 1 exit /b 1
 
 rem Assemble runtime.
-unix2dos rtlmin.mac >nul 2>nul
+unix2dos "%BUILDDIR%\rtlmin.mac" >nul 2>nul
+pushd "%BUILDDIR%"
 ntvcm m80 =rtlmin.mac /X /O /Z
+if errorlevel 1 (
+    popd
+    exit /b 1
+)
+popd
 if errorlevel 1 exit /b 1
 
 rem Link app + runtime.
+pushd "%BUILDDIR%"
 ntvcm l80 /P:100,rtlmin,%name%,%name%/N/E
+if errorlevel 1 (
+    popd
+    exit /b 1
+)
+popd
 if errorlevel 1 exit /b 1
 
 

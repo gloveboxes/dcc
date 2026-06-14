@@ -3632,6 +3632,33 @@ strncpy Pad2   : PASS
 tstr2 completed with great success!
 test tstr3
 tstr3 completed with great success
+test tstring
+testing strlen
+testing strchr and strrchr
+testing strstr
+testing memcpy and memcmp
+testing printf
+60 (60): lmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrs
+32 (32): xyzabcdefghijklmnopqrstuvwxyzabc
+52 (52): wxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv
+34 (34): defghijklmnopqrstuvwxyzabcdefghijk
+15 (15): hijklmnopqrstuv
+33 (33): tuvwxyzabcdefghijklmnopqrstuvwxyz
+48 (48): stuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmn
+45 (45): zabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqr
+48 (48): pqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk
+54 (54): ghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefgh
+28 (28): nopqrstuvwxyzabcdefghijklmno
+48 (48): fghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyza
+ 6 ( 6): ghijkl
+47 (47): cdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvw
+ 7 ( 7): rstuvwx
+ 2 ( 2): lm
+66 (66): pqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabc
+52 (52): fghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcde
+50 (50): hijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcde
+ 3 ( 3): lmn
+tnarrow completed with great success
 test tlongaud
 tlongaud: all tests passed with great success
 test tlongreg
@@ -4205,5 +4232,7 @@ test tforblk
 tforblk passed with great success
 test tcmt99
 tcmt99 passed with great success
+test tc99scpe
+tc99scpe passed with great success
 test tctxflt
 tctxflt passed with great success

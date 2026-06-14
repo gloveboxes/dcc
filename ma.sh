@@ -33,19 +33,25 @@ case "$mode_lc" in
         ;;
 esac
 
-# Prefer the user's spelling, but also support CP/M-style uppercase/lowercase names
-# on case-sensitive Linux/macOS filesystems.
-source_file="${base}.c"
-if [ ! -f "$source_file" ]; then
-    source_file="${base}.C"
-fi
-if [ ! -f "$source_file" ]; then
-    source_file="${lower_base}.c"
-fi
-if [ ! -f "$source_file" ]; then
-    source_file="${upper_base}.C"
-fi
-if [ ! -f "$source_file" ]; then
+# Prefer tests/ first (where runall sources now live), but keep a root fallback.
+# Also support CP/M-style uppercase/lowercase names on case-sensitive filesystems.
+source_file=""
+for cand in \
+    "tests/${base}.c" \
+    "tests/${base}.C" \
+    "tests/${lower_base}.c" \
+    "tests/${upper_base}.C" \
+    "${base}.c" \
+    "${base}.C" \
+    "${lower_base}.c" \
+    "${upper_base}.C"
+do
+    if [ -f "$cand" ]; then
+        source_file="$cand"
+        break
+    fi
+done
+if [ -z "$source_file" ]; then
     echo "source file not found for: $name_arg" >&2
     exit 1
 fi
@@ -57,17 +63,30 @@ NTVCM=${NTVCM:-ntvcm}
 M80=${M80:-m80}
 L80=${L80:-l80}
 
+build_dir="build"
+mkdir -p "$build_dir"
+
+# ntvcm resolves COM command files from the working directory; when we run it
+# in build/, stage the tool COM files there to avoid manual setup.
+if [ -f "m80.com" ]; then
+    cp -f "m80.com" "${build_dir}/m80.com"
+fi
+if [ -f "l80.com" ]; then
+    cp -f "l80.com" "${build_dir}/l80.com"
+fi
+
 # M80/L80 on CP/M want uppercase filenames. Keep all generated CP/M-facing
 # modules uppercase: FOO.MAC, FOO.REL, RTLMIN.MAC, RTLMIN.REL.
-app_mac="${upper_base}.MAC"
-app_rel="${upper_base}.REL"
-app_com="${upper_base}.COM"
-peep_tmp="_PEEPOUT.MAC"
-rtl_src="DCCRTL.MAC"
-rtl_min="RTLMIN.MAC"
+app_mac="${build_dir}/${upper_base}.MAC"
+app_rel="${build_dir}/${upper_base}.REL"
+app_com="${build_dir}/${upper_base}.COM"
+peep_tmp="${build_dir}/_PEEPOUT.MAC"
+rtl_src="${build_dir}/DCCRTL.MAC"
+rtl_min="${build_dir}/RTLMIN.MAC"
+root_rtl_src="DCCRTL.MAC"
 
-if [ ! -f "$rtl_src" ]; then
-    echo "runtime not found: $rtl_src" >&2
+if [ ! -f "$root_rtl_src" ]; then
+    echo "runtime not found: $root_rtl_src" >&2
     exit 1
 fi
 
@@ -87,8 +106,8 @@ if grep -Eiq '%[-+ #0-9.*]*[fF]' "$source_file"; then
     dcc_floatio=1
 fi
 
-rm -f "$app_mac" "$app_rel" "$app_com" "${upper_base}.PRN" \
-      "$peep_tmp" "$rtl_min" RTLMIN.REL RTLMIN.PRN
+rm -f "$app_mac" "$app_rel" "$app_com" "${build_dir}/${upper_base}.PRN" \
+    "$peep_tmp" "$rtl_src" "$rtl_min" "${build_dir}/RTLMIN.REL" "${build_dir}/RTLMIN.PRN"
 
 # Compile directly to an uppercase .MAC file.
 # Avoid empty-array expansion here: macOS ships Bash 3.2, where
@@ -107,9 +126,13 @@ fi
 to_crlf "$app_mac"
 
 # Assemble app. Explicit uppercase .MAC is important on Linux/macOS.
-"$NTVCM" "$M80" "=${app_mac}" /X /O /Z /L
+(
+    cd "$build_dir"
+    "$NTVCM" "$M80" "=${upper_base}.MAC" /X /O /Z /L
+)
 
 # Strip runtime using the final app .MAC, then assemble/link uppercase modules.
+cp -f "$root_rtl_src" "$rtl_src"
 to_crlf "$rtl_src"
 if [ "$dcc_floatio" -eq 1 ]; then
     "$DCCRTLSTRIP" -k _pffio -r "$rtl_src" -o "$rtl_min" "$app_mac"
@@ -118,13 +141,16 @@ else
 fi
 to_crlf "$rtl_min"
 
-"$NTVCM" "$M80" "=${rtl_min}" /X /O /Z
-"$NTVCM" "$L80" "/P:100,RTLMIN,${upper_base},${upper_base}/N/E"
+(
+    cd "$build_dir"
+    "$NTVCM" "$M80" "=RTLMIN.MAC" /X /O /Z
+    "$NTVCM" "$L80" "/P:100,RTLMIN,${upper_base},${upper_base}/N/E"
+)
 
 # Convenience lowercase copy for host-side scripts/emulators that prefer it.
 # On macOS's usual case-insensitive filesystems, TTT.COM and ttt.com may be
 # the same file.  Avoid cp's "identical" error under set -e.
-lower_com="${lower_base}.com"
+lower_com="${build_dir}/${lower_base}.com"
 if [ -f "$app_com" ] && [ "$lower_base" != "$upper_base" ]; then
     if [ ! -e "$lower_com" ] || [ ! "$app_com" -ef "$lower_com" ]; then
         cp -f "$app_com" "$lower_com"

@@ -5,6 +5,8 @@ setlocal EnableExtensions
 set "_emulator=%~1"
 if "%_emulator%"=="" set "_emulator=ntvcm"
 :: the cpm and ntvcm emulators produce identical results
+set "_builddir=build"
+if not exist "%_builddir%" mkdir "%_builddir%"
 
 set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              tpi mm tm tfio wumpus triangle fileops nqueens fact tsetjmp ^
@@ -14,13 +16,13 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              tc89pp tc89fnty tc89flt tc89fltc tc89flta tc89fptr tc89fs tc89fcmp ^
              tc89fcnv tc89fadd tc89fmul tc89fdiv tc89ffio tc89flng tc89fmat ^
              ttrig tlog tphi tap cpmenumd tbits tfo pihex tstrify tlcont primes ^
-             tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 ^
+             tpreproc trwold tlimits spsmash tcrcfix trtl2 tsyntax tstr2 tstr3 tstring ^
              tlongaud tlongreg tlongopt tctxops tppreg tinitreg ttypesr ttype2 tdecinit tmalloch ^
              tallocx tstdlib tioerr tqsort tbsearch trw2 terrno tpostfld tswitch tppifcom tpostidx ^
              tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 ^
              tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom ^
              tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield ^
-             pint cobint forint bint fint cint tstretst tportio tlongidx tforsco tforblk tcmt99 tctxflt
+             pint cobint forint bint fint cint tstretst tportio tlongidx tforsco tforblk tcmt99 tc99scpe tctxflt
 
 echo --- optimized (ma peep) ---
 set "outputfile=test_dcc.txt"
@@ -43,43 +45,84 @@ goto :EOF
 :RUNTESTS
 set "peepmode=%~1"
 set "outfile=%~2"
+set "outabs=%cd%\%outfile%"
+
+call :STAGEFIXTURES
 
 for %%a in (%_applist%) do (
     echo test %%a
     echo test %%a>>"%outfile%"
 
-    if exist %%a.com del %%a.com
+    if exist "%_builddir%\%%a.com" del "%_builddir%\%%a.com"
 
     call ma %%a %peepmode% >nul
     if errorlevel 1 exit /b 1
 
     if "%%a"=="ttt" (
-        %_emulator% %%a 10 >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a 10 >>"%outabs%" & popd
     ) else if "%%a"=="wumpus" (
-        %_emulator% %%a -c >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a -c >>"%outabs%" & popd
     ) else if "%%a"=="tchess" (
-        %_emulator% %%a -c >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a -c >>"%outabs%" & popd
     ) else if "%%a"=="pint" (
-        %_emulator% %%a e.pas >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a e.pas >>"%outabs%" & popd
     ) else if "%%a"=="cobint" (
-        %_emulator% %%a e.cob >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a e.cob >>"%outabs%" & popd
     ) else if "%%a"=="forint" (
-        %_emulator% %%a e.for >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a e.for >>"%outabs%" & popd
     ) else if "%%a"=="bint" (
-        %_emulator% %%a e.bas >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a e.bas >>"%outabs%" & popd
     ) else if "%%a"=="fint" (
-        %_emulator% %%a e.f >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a e.f >>"%outabs%" & popd
     ) else if "%%a"=="cint" (
-        %_emulator% %%a e.c >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a e.c >>"%outabs%" & popd
     ) else if "%%a"=="targs" (
-        %_emulator% %%a a bb ccc dddd eeeee >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a a bb ccc dddd eeeee >>"%outabs%" & popd
     ) else (
-        %_emulator% %%a >>"%outfile%"
+        pushd "%_builddir%" && %_emulator% %%a >>"%outabs%" & popd
     )
 
-    if exist %%a.mac del %%a.mac
-    if exist %%a.prn del %%a.prn
-    if exist %%a.rel del %%a.rel
-    if exist %%a.com del %%a.com
+    if exist "%_builddir%\%%a.mac" del "%_builddir%\%%a.mac"
+    if exist "%_builddir%\%%a.prn" del "%_builddir%\%%a.prn"
+    if exist "%_builddir%\%%a.rel" del "%_builddir%\%%a.rel"
+    if exist "%_builddir%\%%a.com" del "%_builddir%\%%a.com"
+    if exist "%_builddir%\DCCRTL.MAC" del "%_builddir%\DCCRTL.MAC"
+    if exist "%_builddir%\RTLMIN.MAC" del "%_builddir%\RTLMIN.MAC"
+    if exist "%_builddir%\RTLMIN.REL" del "%_builddir%\RTLMIN.REL"
+    if exist "%_builddir%\RTLMIN.PRN" del "%_builddir%\RTLMIN.PRN"
+    if exist "%_builddir%\_PEEPOUT.MAC" del "%_builddir%\_PEEPOUT.MAC"
+)
+exit /b
+
+:STAGEFIXTURES
+if exist "tests\E.PAS" (
+    copy /Y "tests\E.PAS" "%_builddir%\E.PAS" >nul
+) else if exist "E.PAS" (
+    copy /Y "E.PAS" "%_builddir%\E.PAS" >nul
+)
+if exist "tests\E.COB" (
+    copy /Y "tests\E.COB" "%_builddir%\E.COB" >nul
+) else if exist "E.COB" (
+    copy /Y "E.COB" "%_builddir%\E.COB" >nul
+)
+if exist "tests\E.FOR" (
+    copy /Y "tests\E.FOR" "%_builddir%\E.FOR" >nul
+) else if exist "E.FOR" (
+    copy /Y "E.FOR" "%_builddir%\E.FOR" >nul
+)
+if exist "tests\E.BAS" (
+    copy /Y "tests\E.BAS" "%_builddir%\E.BAS" >nul
+) else if exist "E.BAS" (
+    copy /Y "E.BAS" "%_builddir%\E.BAS" >nul
+)
+if exist "tests\E.F" (
+    copy /Y "tests\E.F" "%_builddir%\E.F" >nul
+) else if exist "E.F" (
+    copy /Y "E.F" "%_builddir%\E.F" >nul
+)
+if exist "tests\E.C" (
+    copy /Y "tests\E.C" "%_builddir%\E.C" >nul
+) else if exist "E.C" (
+    copy /Y "E.C" "%_builddir%\E.C" >nul
 )
 exit /b

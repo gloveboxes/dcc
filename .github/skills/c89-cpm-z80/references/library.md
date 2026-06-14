@@ -12,6 +12,14 @@ provides, plus the `printf`/`scanf` conversion subset.
 > Inside the dcc repo, `dcc-c89-reference-guide.md` at the repo root is the
 > exhaustive source; this file is the portable summary for use anywhere.
 
+> **Where the headers live (`-I`).** dcc resolves `#include <stdio.h>` from the
+> current directory first, then each `-I` directory in order. The bundled
+> headers sit in the **dcc repo root**, so building inside the repo needs no
+> `-I`; building elsewhere needs `dcc -I /path/to/dcc …` (both `-I dir` and the
+> joined `-Idir` form work; repeat for more dirs). A `<...>` header that isn't
+> found is **silently ignored** (calls fall back to implicit `int`), whereas a
+> missing `"..."` header is fatal.
+
 ## Type sizes
 
 | Type            | Size    | Notes                                            |
@@ -51,16 +59,20 @@ calling convention, not the memory layout.)
 ## stdio.h
 
 **Declared in `<stdio.h>` and implemented:** `printf`, `fprintf`, `sprintf`,
-`putchar`, `putc`, `fputc`, `puts`, `fputs`, `getchar`, `getc`, `perror`,
-`scanf`, `fscanf`, `sscanf`, `fopen`, `fclose`, `fflush`, `fgets`, `fread`,
-`fwrite`, `fseek`, `ftell`, `rewind`, `feof`, `ferror`, `clearerr`, `setbuf`,
-`remove`. Streams `stdin`, `stdout`, `stderr` exist; `FILE` is `int`.
+`vprintf`, `vfprintf`, `vsprintf`, `putchar`, `putc`, `fputc`, `puts`, `fputs`,
+`getchar`, `getc`, `perror`, `scanf`, `fscanf`, `sscanf`, `fopen`, `fclose`,
+`fflush`, `fgets`, `fread`, `fwrite`, `fseek`, `ftell`, `rewind`, `feof`,
+`ferror`, `clearerr`, `setbuf`, `remove`. Streams `stdin`, `stdout`, `stderr`
+exist; `FILE` is `int`.
 
 `fopen` modes: `"r"`, `"w"`, `"a"`, with optional `"+"`/`"b"`.
 
+The `v…` variants take a `va_list` (from `<stdarg.h>`) and share the same
+formatting engine and conversion subset as `printf`, so you can write your own
+`printf`-style wrappers. (`<stdio.h>` includes `<stdarg.h>` for `va_list`.)
+
 **Not present (link error if called):** `fgetc`, `rename`, `tmpfile`, `tmpnam`,
-`freopen`, `setvbuf`, `vprintf`/`vfprintf`/`vsprintf`, `gets`, `ungetc`,
-`fgetpos`/`fsetpos`.
+`freopen`, `setvbuf`, `gets`, `ungetc`, `fgetpos`/`fsetpos`.
 
 ### printf-family conversions
 
@@ -100,9 +112,10 @@ calling convention, not the memory layout.)
 
 ## stdlib.h
 
-**Implemented:** `malloc`, `calloc`, `realloc`, `free`, `atoi`, `atol`, `abs`,
-`labs`, `div`, `ldiv`, `qsort`, `bsearch`, `exit`, `rand`, `srand`.
-`div_t`/`ldiv_t`, `EXIT_SUCCESS`/`EXIT_FAILURE`, `RAND_MAX` (32767).
+**Implemented:** `malloc`, `calloc`, `realloc`, `free`, `atoi`, `atol`,
+`strtol`, `strtoul`, `abs`, `labs`, `div`, `ldiv`, `qsort`, `bsearch`, `exit`,
+`rand`, `srand`. `div_t`/`ldiv_t`, `EXIT_SUCCESS`/`EXIT_FAILURE`, `RAND_MAX`
+(32767).
 
 - Heap shares memory with the stack — there is **no stack/heap guard** (size the
   stack with `-stack`; keep big buffers `static`/global).
@@ -111,6 +124,10 @@ calling convention, not the memory layout.)
   on equal keys `bsearch` may return any matching element.
 - `atoi`/`atol` skip leading space, accept `+`/`-`, stop at first non-digit;
   overflow wraps modulo the type width.
+- `strtol`/`strtoul` are the full C89 conversions: base 2..36 (0 = auto-detect
+  `0x`/`0` prefixes), optional sign, `endptr` reports the unused tail, and they
+  set `errno` to `ERANGE` and clamp to `LONG_MAX`/`LONG_MIN`/`ULONG_MAX` on
+  overflow. `strtoul` also accepts a leading `-` (value negated modulo 2^32).
 - `inp(port)`/`outp(port,val)` are a **dcc extension** (declared in
   `<stdlib.h>`, not C89): direct Z80 8-bit port I/O. `inp` runs `IN A,(port)`
   and returns the byte zero-extended to `int` (0..255); `outp` runs
@@ -123,7 +140,7 @@ calling convention, not the memory layout.)
   below and `tbdos.c`/`crc.c`.
 
 **Not present** (neither declared in `<stdlib.h>` nor in the runtime):
-`strtol`, `strtoul`, `abort`, `atexit`, `getenv`, `system`, the multibyte
+`abort`, `atexit`, `getenv`, `system`, the multibyte
 functions (`mblen`/`mbtowc`/`wctomb`/…), and `MB_CUR_MAX`. `atof` and `strtod`
 are also absent and can't be provided in standard form at all — both return
 `double`, which dcc doesn't have.
@@ -171,7 +188,7 @@ gauge).
 **All implemented:** `memcpy`, `memmove`, `memset`, `memcmp`, `memchr`,
 `strlen`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strcmp`, `strncmp`,
 `strcoll` (== `strcmp`), `strchr`, `strrchr`, `strstr`, `strspn`, `strcspn`,
-`strpbrk`, `strerror`. Plus `strdup` (a dcc extension; `free` it later).
+`strpbrk`, `strtok`, `strerror`. Plus `strdup` (a dcc extension; `free` it later).
 
 `strstr` is case-sensitive; for case-insensitive search write a small ASCII-fold
 helper (see editor `strifnd` pattern in the dcc repo).
@@ -183,11 +200,30 @@ helper (see editor `strifnd` pattern in the dcc repo).
 
 ## math.h (single precision)
 
-`fabsf`, `floorf`, `ceilf`, `sqrtf`, `fmodf`, `nextafterf`, plus unsuffixed
-macro aliases `fabs`, `floor`, `ceil`, `sqrt`, `fmod`. **No** `sin`, `cos`,
-`tan`, `asin`, `acos`, `atan`, `atan2`, `exp`, `log`, `log10`, `pow`, `sinh`,
-`cosh`, `tanh`, `frexp`, `ldexp`, `modf`, `HUGE_VAL`. Roll your own polynomial
-approximation if you need a transcendental (`trig.c` shows the idiom).
+`<math.h>` provides single-precision (`…f`) functions, each with an unsuffixed
+C89 macro alias so portable source compiles unchanged (the operation stays
+single-precision):
+
+- **Rounding/remainder/roots:** `fabsf`, `floorf`, `ceilf`, `sqrtf`, `fmodf`,
+  `nextafterf`.
+- **Exponential/log:** `expf`, `logf`, `log10f`, `powf`.
+- **Trigonometric:** `sinf`, `cosf`, `tanf`, `asinf`, `acosf`, `atanf`, `atan2f`.
+- **Hyperbolic:** `sinhf`, `coshf`, `tanhf`.
+- **Decomposition:** `frexpf`, `ldexpf`, `modff`.
+
+Unsuffixed aliases: `fabs`, `floor`, `ceil`, `sqrt`, `fmod`, `exp`, `log`,
+`log10`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`,
+`cosh`, `tanh`, `frexp`, `ldexp`, `modf`.
+
+The transcendentals are single-precision polynomial approximations: expect about
+**5–6 correct decimal digits**, not full `float` round-trip accuracy. The
+range-reduction in `sinf`/`cosf`/`tanf` uses `fmodf`, so accuracy degrades for
+very large arguments. There is **no** `double`, no `long double`, and no
+`HUGE_VAL`. Printing a float (`%f`) still requires the `-ffloatio` build flag.
+
+`atof`/`strtod` are absent (both return `double`); use `strtol`/`strtoul` for
+integers, or a small hand-written `float` parser for decimals.
+
 
 ## setjmp.h / stdarg.h / stddef.h
 

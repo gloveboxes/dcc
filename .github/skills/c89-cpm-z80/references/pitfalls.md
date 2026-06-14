@@ -10,8 +10,10 @@ Each has a symptom and a fix.
 - Unsuffixed floating constants like `3.14` are already `float`, not `double`.
 - There is no `float`→`double` promotion in variadic calls (there is no
   double), so `printf("%f", x)` consumes a 32-bit `float` directly.
-- No `atof`/`strtod`, and no `<math.h>` transcendentals (`sin`/`cos`/`exp`/
-  `log`/`pow`/…). Parse decimals (or approximate) yourself:
+- No `atof`/`strtod` (both return `double`). `<math.h>` *does* provide the
+  single-precision transcendentals (`sinf`/`cosf`/`expf`/`logf`/`powf`/… with
+  unsuffixed aliases), and `strtol`/`strtoul` parse integers — but for
+  decimal-string→`float` you still parse it yourself:
 
 ```c
 /* minimal signed decimal -> float */

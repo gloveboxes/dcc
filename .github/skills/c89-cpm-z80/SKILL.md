@@ -1,6 +1,6 @@
 ---
 name: c89-cpm-z80
-description: 'Write, build, test, and debug C89 code for the dcc compiler targeting CP/M 2.2 on the Z80 (e.g. run under the ntvcm Altair 8800 emulator). Use when working on .c/.h sources compiled with dcc, or when the task mentions dcc, CP/M, CP/M 2.2, Z80, ntvcm, DCCRTL, ma.sh, VT100/ANSI terminal apps for CP/M, or the no-double single-precision-float constraint. dcc is TRUE C89 (prototypes, void, const, typedef, enum, and K&R definitions all accepted). Hard constraints to respect: no double (32-bit float is the only floating type), 16-bit int/short, 32-bit long, 16-bit pointers, 16-bit size_t. Full library/printf/scanf inventory and hard-won pitfalls are in the reference files.'
+description: 'Write, build, test, and debug C89 code for the dcc compiler targeting CP/M 2.2 on the Z80 (e.g. run under the ntvcm Altair 8800 emulator). Use when working on .c/.h sources compiled with dcc, or when the task mentions dcc, CP/M, CP/M 2.2, Z80, ntvcm, DCCRTL, ma.sh, VT100/ANSI terminal apps for CP/M, or the no-double single-precision-float constraint. dcc is TRUE C89 (prototypes, void, const, typedef, enum, and K&R definitions all accepted) and also accepts some C99 conveniences (for-init declarations, // line comments, block-scoped variables, inline). Hard constraints to respect: no double (32-bit float is the only floating type), 16-bit int/short, 32-bit long, 16-bit pointers, 16-bit size_t. Full library/printf/scanf inventory and hard-won pitfalls are in the reference files.'
 argument-hint: 'Describe the C89/CP-M task (write code, build, run under ntvcm, debug a failure)'
 ---
 
@@ -26,8 +26,10 @@ real CP/M hardware or an emulator such as **ntvcm** (Altair 8800).
    more range. Watch for silent overflow in loops, sizes, and accumulators.
 3. **Pointers and `size_t` are 16-bit.** `ptrdiff_t` is `int`. Flat 64 KB space.
 4. **`char` is signed by default.** Use `unsigned char` for byte/`>=0x80` work.
-5. **The library is a subset.** No `atof`/`strtod`/`strtol`, no `<math.h>`
-   transcendentals, no `<locale.h>`/`<signal.h>`/`<time.h>`. See
+5. **The library is a subset.** No `atof`/`strtod` (both return `double`), no
+   `<locale.h>`/`<signal.h>`/`<time.h>`. `<math.h>` now has the full
+   single-precision set (trig, exp/log, hyperbolic, decomposition); `strtol`/
+   `strtoul`/`strtok` are present. See
    [references/library.md](./references/library.md) before assuming a function exists.
 6. **`%f` needs `-ffloatio`.** Float `printf` formatting isn't linked unless you
    pass that flag. Without it, `%f` won't work.
@@ -42,6 +44,11 @@ At a glance: `char` 8-bit (signed), `short`/`int` 16-bit, `long` 32-bit,
 [references/library.md](./references/library.md).
 
 ## Language support
+
+dcc is C89 at heart but **accepts a handful of C99 conveniences**: `for`-init
+declarations with real loop scope (`for (int i = 0; ...)`), `//` line comments,
+block-scoped variable storage (inner `{ ... }` declarations shadow outer ones),
+and `inline` (parsed, ignored). Details below.
 
 - **31 of 32 C89 keywords.** Only `double` is missing. Everything else
   (`struct`, `union`, `enum`, `typedef`, `const`, `volatile`, `sizeof`, all
@@ -92,12 +99,16 @@ toolchain (this is *not* BDS C's 7-char rule):
 ## Floating point: single precision only
 
 - `float` is 32-bit; there is no `double` or `long double`.
-- `<math.h>` provides single-precision primitives: `fabsf`, `floorf`, `ceilf`,
-  `sqrtf`, `fmodf`, `nextafterf`, plus **unsuffixed aliases** `fabs`, `floor`,
-  `ceil`, `sqrt`, `fmod` (macros → the `…f` routines). **No** `sin`/`cos`/`tan`/
-  `exp`/`log`/`pow` in the runtime — hand-roll a polynomial approximation
-  (see [trig.c](trig.c) in the dcc repo for the established pattern).
-- No `atof`/`strtod`. To parse decimals to `float`, write a small parser.
+- `<math.h>` provides a full single-precision library: rounding/remainder/roots
+  (`fabsf`, `floorf`, `ceilf`, `sqrtf`, `fmodf`, `nextafterf`), exp/log
+  (`expf`, `logf`, `log10f`, `powf`), trig (`sinf`, `cosf`, `tanf`, `asinf`,
+  `acosf`, `atanf`, `atan2f`), hyperbolic (`sinhf`, `coshf`, `tanhf`), and
+  decomposition (`frexpf`, `ldexpf`, `modff`) — each with an **unsuffixed alias**
+  (`sin`, `cos`, `exp`, `pow`, …) that stays single-precision. The
+  transcendentals are polynomial approximations (~5–6 digits), not full `float`
+  accuracy.
+- No `atof`/`strtod`. To parse decimals to `float`, write a small parser
+  (`strtol`/`strtoul` handle integers).
 - `printf("%f", x)` requires the `-ffloatio` compile flag and consumes a 32-bit
   `float` (there is no float→double default promotion, because there's no double).
 
@@ -120,8 +131,9 @@ ntvcm FOO ARG1 ARG2   # with CP/M command-line args
 ```
 
 **Useful `dcc` options:** `-o file` (output .mac), `-c`/`-module` (linkable
-module), `-f`/`-ffloatio` (float printf), `-s N`/`--stack N` (reserve stack;
-default 512 — heap and stack share memory, **no guard**), `-I dir`, `-Dname[=v]`,
+module), `-f`/`-ffloatio` (float printf), `-stack N`/`-s N`/`--stack N` (reserve
+stack; default 512 — heap and stack share memory, **no guard**), `-I dir` (or
+joined `-Idir`; repeatable), `-Dname[=v]`,
 `-Uname`, `-v`, `-h`. `_DCC_=1` is always predefined.
 
 **Finding the standard headers (`-I`).** dcc resolves `#include <stdio.h>` by
@@ -145,8 +157,8 @@ Notes: M80 needs CRLF (`ma.sh` converts). `RTLMIN.MAC` is generated per-app by
 
 ## Top pitfalls (details in references/pitfalls.md)
 
-- **No `double`** — `float` is the only floating type; no `atof`/`strtod`, no
-  `<math.h>` transcendentals.
+- **No `double`** — `float` is the only floating type; no `atof`/`strtod`.
+  (`<math.h>` *does* now provide single-precision transcendentals.)
 - **`%f` silently does nothing without `-ffloatio`.**
 - **16-bit `int`/`size_t` overflow** in sizes/indices/accumulators — promote to
   `long` (and `%ld`).

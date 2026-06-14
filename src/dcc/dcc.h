@@ -758,6 +758,7 @@ int try_gen_const_times(void);
 int type_is_unsigned(int t);
 int type_is_arith(int t);
 int promote_int_type(int t);
+int typeof_conditional_arm(void);
 int common_arith_type(int a, int b);
 void emit_cast_16_to_common(int from_type, int common_type);
 int peek_simple_unary_type(void);

@@ -12,6 +12,51 @@ dccrtlstrip.c is an app that examines the code of your .c file and strips portio
 
 The 3 compiler apps dcc, dccpeep, and dccrtlstrip all build and run on Windows, Linux, and MacOS. They are too big to run on CP/M. Use m.bat, m.sh, mmacos.sh to build these apps using msvc (Windows), gcc (Linux), or clang (MacOS) respectively. You may need to chmod 777 *.sh on Linux and MacOS prior to running dcc's scripts.
 
+## Documentation
+
+Two reference documents in the [docs](docs) directory cover the runtime in depth:
+
+  - [docs/dcc-c89-reference-guide.md](docs/dcc-c89-reference-guide.md): a practical guide to the C89 language features dcc accepts and the C runtime library implemented in DCCRTL.MAC. It documents type sizes and conventions, the recognized keywords and operators, every standard-header function that is actually linkable (stdio, stdlib, string, ctype, math, setjmp, stdarg, and the CP/M extensions), the supported printf/scanf conversions, and the limitations to keep in mind (no double, 16-bit int, integer-only `%`, etc.). Start here to learn what you can call and how.
+  - [docs/dccrtlstrip-inclusion-table.md](docs/dccrtlstrip-inclusion-table.md): an internals reference explaining how dccrtlstrip decides which blocks of DCCRTL.MAC are linked into a program. It maps each C-level construct to the runtime block it pulls in and gives the transitive dependency closures and the marginal .COM size cost of each function. Use it when optimizing binary size or to understand exactly what a given call drags into the link.
+
+## Agent skills
+
+This repo ships a project-scoped agent **skill** in [.github/skills/c89-cpm-z80](.github/skills/c89-cpm-z80). A skill is a folder containing a `SKILL.md` (plus optional `references/`) that packages domain knowledge — here, how to write, build, test, and debug C89 code for dcc/CP/M/Z80 along with the runtime library inventory and hard-won pitfalls. An agent that supports skills reads `SKILL.md` on demand when your task matches the skill's description, so it gets dcc-specific guidance without you pasting it into every prompt.
+
+### Invoking a skill in VS Code
+
+With GitHub Copilot in VS Code (agent mode), the skill is picked up automatically when you open this repo — the agent loads it when your request falls within the skill's scope (anything mentioning dcc, CP/M, Z80, ntvcm, DCCRTL, etc.). You don't have to do anything special; you can also nudge it explicitly, e.g. "use the c89-cpm-z80 skill to build and test foo.c".
+
+### Using the skill from the GitHub Copilot CLI
+
+The GitHub Copilot CLI discovers skills the same way: project skills from the repo you launch it in, plus any personal skills in your home-directory roots (see below). From the repo root just start a session and describe your task —
+
+```sh
+copilot
+```
+
+then, at the prompt, ask something within the skill's scope (e.g. "build and run tests/sieve.c for CP/M with dcc"). The CLI reads the matching `SKILL.md` on demand, exactly like VS Code. To make it available outside this repo, copy the skill into a personal skills root as shown next.
+
+### Making the skill available system-wide
+
+The copy in this repo only applies while you're working inside this repo. The main reason to deploy it system-wide is to build CP/M apps in a **separate, independent project**: with the skill in a personal root, the agent brings dcc-specific knowledge into that other workspace, and as long as the `dcc`/`dccpeep`/`dccrtlstrip` binaries and `DCCRTL.MAC` are on your `PATH` (see [Setting up your environment](#setting-up-your-environment)), you can compile and run from there without copying the toolchain into every project.
+
+To use it from **every** workspace on your machine, copy the skill folder into a personal skills root in your home directory (`~/.agents/skills/`, `~/.copilot/skills/`, or `~/.claude/skills/` — pick one and stay consistent):
+
+**macOS / Linux:**
+```sh
+mkdir -p ~/.agents/skills
+cp -R .github/skills/c89-cpm-z80 ~/.agents/skills/
+```
+
+**Windows (PowerShell):**
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.agents\skills" | Out-Null
+Copy-Item -Recurse ".github\skills\c89-cpm-z80" "$env:USERPROFILE\.agents\skills\"
+```
+
+The repo copy and the personal copy are independent files, so re-copy after editing either one to keep them in sync. See [.github/skills/README.md](.github/skills/README.md) for the full list of supported skill roots and sync tips.
+
 ## How to build test apps and your apps
 
 ma.bat and ma.sh are scripts to build your app. Run "ma foo" (or "ma.sh foo" on Linux/MacOS) to compile foo.c, optimize it, strip the DCCRTL.MAC runtime so unused code isn't included, assemble the generated FOO.MAC file, and link to FOO.COM. Use the "nopeep" argument like "ma foo nopeep" to not run the dccpeep peephole optimizer.
@@ -89,3 +134,129 @@ I built the compiler using AI. I wanted to use Claude and ChatGPT on something r
 Why dcc? All compilers from that era were K&R since the first ANSI C standard was C89 (1989). I wanted a compiler with modern syntax for CP/M. I was also curious how hard it would be to generate better code than the older compilers. Turns out it's generally straightforward. It's easier than ever to code for old machines, and I think that's pretty cool.
 
 Compiler writers generally avoid adding optimizations for specific apps; that's long been considered "cheating" by those who run benchmarks. In this case, I encourage you to "cheat" for your app. Point Claude at your source code and dcc's soucrce code and tell it to make dcc optimize code generation for your app (size or speed). It's the future.
+
+## Building dcc and ntvcm from source
+
+Both dcc and ntvcm are self-contained projects that can be built independently. You'll need them to compile and run CP/M apps.
+
+### Cloning the repositories
+
+```bash
+# Clone dcc compiler
+git clone https://github.com/davidly/dcc.git
+cd dcc
+
+# Clone ntvcm emulator (in a parallel directory, or wherever you prefer)
+cd ..
+git clone https://github.com/davidly/ntvcm.git
+```
+
+### Building dcc
+
+dcc compiles on Windows, Linux, and macOS. The build scripts are in the root directory:
+
+**macOS:**
+```bash
+chmod +x mmacos.sh
+./mmacos.sh
+```
+This produces `dcc`, `dccpeep`, and `dccrtlstrip` in the dcc directory.
+Requires the clang compiler from the Xcode Command Line Tools (install with `xcode-select --install`).
+
+**Linux:**
+```bash
+chmod +x m.sh
+./m.sh
+```
+Requires gcc (install with `sudo apt install build-essential` on Debian/Ubuntu, or the equivalent for your distribution).
+
+**Windows:**
+```batch
+m.bat
+```
+Requires Visual Studio with C++ build tools installed.
+
+### Building ntvcm
+
+ntvcm is a C++ project that compiles on Windows, Linux, and macOS.
+
+**macOS:**
+```bash
+cd ntvcm
+chmod +x mmac.sh
+./mmac.sh
+```
+This produces the `ntvcm` executable in the ntvcm directory.
+Requires the clang/g++ compiler from the Xcode Command Line Tools (install with `xcode-select --install`).
+
+**Linux:**
+```bash
+cd ntvcm
+chmod +x m.sh
+./m.sh
+```
+Requires g++ (install with `sudo apt install build-essential` on Debian/Ubuntu, or the equivalent for your distribution).
+
+**Windows:**
+Check the ntvcm repository for Windows build instructions (typically via Visual Studio or a batch script).
+
+Once both projects are built, set up your environment as shown in the next section so the build scripts can find the binaries.
+
+## Setting up your environment
+
+The build scripts (`ma.sh`, `ma.bat`, `runall.sh`, `runall.bat`) resolve each
+tool the same way: they use an environment variable if you set one, otherwise
+they look for the tool on your `PATH`. The relevant tools are `dcc`, `dccpeep`,
+`dccrtlstrip`, `ntvcm`, and the `m80`/`l80` assembler/linker.
+
+The simplest setup, especially when building C apps in a project *outside* the
+dcc repo, is to add the directories containing the built `dcc` and `ntvcm`
+binaries to your `PATH`. Then no per-tool environment variables are needed.
+
+### macOS / Linux
+
+Add this to your shell profile (e.g., `~/.zshrc`, `~/.bash_profile`, or
+`~/.bashrc`), or run it in the terminal before invoking the scripts:
+
+```bash
+# Add the directories that contain the built dcc and ntvcm binaries to PATH.
+# dcc's directory also provides dccpeep, dccrtlstrip, m80.com, l80.com, and DCCRTL.MAC.
+export PATH="$PATH:/path/to/dcc:/path/to/ntvcm"
+```
+
+Replace `/path/to/dcc` and `/path/to/ntvcm` with the actual directories
+(e.g., `~/GitHub/dcc` and `~/GitHub/ntvcm`). With this on your `PATH`, the
+scripts find `dcc`, `dccpeep`, `dccrtlstrip`, and `ntvcm` automatically — you do
+**not** need to set `DCC`, `DCCPEEP`, or `DCCRTLSTRIP`.
+
+If you instead want to pin specific binaries (for example, when juggling
+multiple dcc builds), set the env vars to explicit paths and only put ntvcm on
+`PATH`:
+
+```bash
+export PATH="$PATH:/path/to/ntvcm"
+export DCC=/path/to/dcc/dcc
+export DCCPEEP=/path/to/dcc/dccpeep
+export DCCRTLSTRIP=/path/to/dcc/dccrtlstrip
+```
+
+### Windows (native)
+
+Both dcc and ntvcm compile to native Windows executables. Add their directories
+to `PATH` (via System Properties → Environment Variables for a permanent
+setting, or temporarily in your shell):
+
+**PowerShell:**
+```powershell
+$env:PATH += ";C:\path\to\dcc;C:\path\to\ntvcm"
+```
+
+**CMD:**
+```batch
+set PATH=%PATH%;C:\path\to\dcc;C:\path\to\ntvcm
+```
+
+As with macOS/Linux, putting the dcc directory on `PATH` means `dcc`,
+`dccpeep`, and `dccrtlstrip` are found automatically; the `DCC`/`DCCPEEP`/
+`DCCRTLSTRIP` variables are only needed if you want to pin specific binaries.
+Then use `ma.bat` and `runall.bat` to build and test your apps.

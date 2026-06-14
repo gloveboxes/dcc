@@ -26,6 +26,8 @@ int rand(void);
 void srand(unsigned int seed);
 int atoi(const char *nptr);
 long atol(const char *nptr);
+long strtol(const char *nptr, char **endptr, int base);
+unsigned long strtoul(const char *nptr, char **endptr, int base);
 int abs(int j);
 long labs(long j);
 div_t div(int numer, int denom);

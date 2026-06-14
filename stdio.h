@@ -4,6 +4,7 @@
 #define _STDIO_H
 
 #include <stddef.h>
+#include <stdarg.h>
 
 #ifndef NULL
 #define NULL    0
@@ -69,5 +70,10 @@ void   setbuf(FILE *stream, char *buf);
 /* Formatted-string helpers */
 int sprintf(char *s, const char *format, ...);
 int sscanf(const char *s, const char *format, ...);
+
+/* Variadic (va_list) formatted output (C89 7.9.6.7-9) */
+int vprintf(const char *format, va_list ap);
+int vfprintf(FILE *stream, const char *format, va_list ap);
+int vsprintf(char *s, const char *format, va_list ap);
 
 #endif /* _STDIO_H */

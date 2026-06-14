@@ -90,64 +90,6 @@ Why dcc? All compilers from that era were K&R since the first ANSI C standard wa
 
 Compiler writers generally avoid adding optimizations for specific apps; that's long been considered "cheating" by those who run benchmarks. In this case, I encourage you to "cheat" for your app. Point Claude at your source code and dcc's soucrce code and tell it to make dcc optimize code generation for your app (size or speed). It's the future.
 
-## Setting up your environment
-
-To use the build scripts (`ma.sh`, `ma.bat`, `runall.sh`, `runall.bat`) without modifying your global PATH or environment, you can set project-local variables that point to the dcc tools and emulator. This is especially useful when working with multiple CP/M projects.
-
-### macOS (with ntvcm)
-
-Add this to your shell profile (e.g., `~/.zshrc` or `~/.bash_profile`), or set it in the terminal before running scripts:
-
-```bash
-# Path to ntvcm emulator directory
-export PATH="$PATH:/path/to/ntvcm"
-
-# Project-specific overrides for the DCC compiler toolchain
-export DCC=./dcc
-export DCCPEEP=./dccpeep
-export DCCRTLSTRIP=./dccrtlstrip
-```
-
-Replace `/path/to/ntvcm` with the actual path to your ntvcm clone (e.g., `~/GitHub/ntvcm` or `/opt/ntvcm`).
-
-### Linux (with ntvcm or other emulator)
-
-Add to your shell profile (e.g., `~/.bashrc` or `~/.zshrc`):
-
-```bash
-# Path to ntvcm emulator directory (adjust to your ntvcm location)
-export PATH="$PATH:/path/to/ntvcm"
-
-# Project-specific overrides for the DCC compiler toolchain
-export DCC=./dcc
-export DCCPEEP=./dccpeep
-export DCCRTLSTRIP=./dccrtlstrip
-```
-
-If you installed dcc itself globally via a package manager, you can omit the `DCC`, `DCCPEEP`, and `DCCRTLSTRIP` exports and let the scripts find the tools on your PATH.
-
-### Windows (native)
-
-Both dcc and ntvcm compile to native Windows executables. Set environment variables via System Properties → Environment Variables, or temporarily in your shell:
-
-**PowerShell:**
-```powershell
-$env:PATH += ";C:\path\to\ntvcm"
-$env:DCC = ".\dcc"
-$env:DCCPEEP = ".\dccpeep"
-$env:DCCRTLSTRIP = ".\dccrtlstrip"
-```
-
-**CMD:**
-```batch
-set PATH=%PATH%;C:\path\to\ntvcm
-set DCC=.\dcc
-set DCCPEEP=.\dccpeep
-set DCCRTLSTRIP=.\dccrtlstrip
-```
-
-Then use `ma.bat` and `runall.bat` to build and test your apps. Build the dcc tools themselves with `m.bat` (requires Visual Studio with C++ support).
-
 ## Building dcc and ntvcm from source
 
 Both dcc and ntvcm are self-contained projects that can be built independently. You'll need them to compile and run CP/M apps.
@@ -174,12 +116,14 @@ chmod +x mmacos.sh
 ./mmacos.sh
 ```
 This produces `dcc`, `dccpeep`, and `dccrtlstrip` in the dcc directory.
+Requires the clang compiler from the Xcode Command Line Tools (install with `xcode-select --install`).
 
 **Linux:**
 ```bash
 chmod +x m.sh
 ./m.sh
 ```
+Requires gcc (install with `sudo apt install build-essential` on Debian/Ubuntu, or the equivalent for your distribution).
 
 **Windows:**
 ```batch
@@ -198,6 +142,7 @@ chmod +x mmac.sh
 ./mmac.sh
 ```
 This produces the `ntvcm` executable in the ntvcm directory.
+Requires the clang/g++ compiler from the Xcode Command Line Tools (install with `xcode-select --install`).
 
 **Linux:**
 ```bash
@@ -205,10 +150,68 @@ cd ntvcm
 chmod +x m.sh
 ./m.sh
 ```
+Requires g++ (install with `sudo apt install build-essential` on Debian/Ubuntu, or the equivalent for your distribution).
 
 **Windows:**
 Check the ntvcm repository for Windows build instructions (typically via Visual Studio or a batch script).
 
-### After building
+Once both projects are built, set up your environment as shown in the next section so the build scripts can find the binaries.
 
-Once both projects are built, update your environment as shown in the [Setting up your environment](#setting-up-your-environment) section above, pointing `PATH` to your ntvcm build directory and setting the `DCC`, `DCCPEEP`, and `DCCRTLSTRIP` variables to the dcc binaries.
+## Setting up your environment
+
+The build scripts (`ma.sh`, `ma.bat`, `runall.sh`, `runall.bat`) resolve each
+tool the same way: they use an environment variable if you set one, otherwise
+they look for the tool on your `PATH`. The relevant tools are `dcc`, `dccpeep`,
+`dccrtlstrip`, `ntvcm`, and the `m80`/`l80` assembler/linker.
+
+The simplest setup, especially when building C apps in a project *outside* the
+dcc repo, is to add the directories containing the built `dcc` and `ntvcm`
+binaries to your `PATH`. Then no per-tool environment variables are needed.
+
+### macOS / Linux
+
+Add this to your shell profile (e.g., `~/.zshrc`, `~/.bash_profile`, or
+`~/.bashrc`), or run it in the terminal before invoking the scripts:
+
+```bash
+# Add the directories that contain the built dcc and ntvcm binaries to PATH.
+# dcc's directory also provides dccpeep, dccrtlstrip, m80.com, l80.com, and DCCRTL.MAC.
+export PATH="$PATH:/path/to/dcc:/path/to/ntvcm"
+```
+
+Replace `/path/to/dcc` and `/path/to/ntvcm` with the actual directories
+(e.g., `~/GitHub/dcc` and `~/GitHub/ntvcm`). With this on your `PATH`, the
+scripts find `dcc`, `dccpeep`, `dccrtlstrip`, and `ntvcm` automatically — you do
+**not** need to set `DCC`, `DCCPEEP`, or `DCCRTLSTRIP`.
+
+If you instead want to pin specific binaries (for example, when juggling
+multiple dcc builds), set the env vars to explicit paths and only put ntvcm on
+`PATH`:
+
+```bash
+export PATH="$PATH:/path/to/ntvcm"
+export DCC=/path/to/dcc/dcc
+export DCCPEEP=/path/to/dcc/dccpeep
+export DCCRTLSTRIP=/path/to/dcc/dccrtlstrip
+```
+
+### Windows (native)
+
+Both dcc and ntvcm compile to native Windows executables. Add their directories
+to `PATH` (via System Properties → Environment Variables for a permanent
+setting, or temporarily in your shell):
+
+**PowerShell:**
+```powershell
+$env:PATH += ";C:\path\to\dcc;C:\path\to\ntvcm"
+```
+
+**CMD:**
+```batch
+set PATH=%PATH%;C:\path\to\dcc;C:\path\to\ntvcm
+```
+
+As with macOS/Linux, putting the dcc directory on `PATH` means `dcc`,
+`dccpeep`, and `dccrtlstrip` are found automatically; the `DCC`/`DCCPEEP`/
+`DCCRTLSTRIP` variables are only needed if you want to pin specific binaries.
+Then use `ma.bat` and `runall.bat` to build and test your apps.

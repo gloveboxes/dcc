@@ -44,6 +44,7 @@ get surprised by a link error.
   - [setjmp.h — non-local jumps](#setjmph--non-local-jumps)
   - [stdarg.h — variadic arguments](#stdargh--variadic-arguments)
   - [stddef.h — common definitions](#stddefh--common-definitions)
+  - [stdbool.h — boolean type](#stdboolh--boolean-type)
   - [unistd.h / fcntl.h — low-level file I/O](#unistdh--fcntlh--low-level-file-io)
   - [dirent.h — directory enumeration](#direnth--directory-enumeration)
   - [errno.h — error reporting](#errnoh--error-reporting)
@@ -224,7 +225,11 @@ Notes specific to the 16-bit model:
 
 - `inline` — accepted as a non-C89 (C99) extension and then ignored; functions
   are always emitted normally. No other C99/C11 keywords (`restrict`, `_Bool`,
-  `_Complex`, and so on) are recognized.
+  `_Complex`, and so on) are recognized. The native `_Bool` keyword in
+  particular is **not** a compiler type — but `bool`, `true`, and `false` are
+  still available as an ordinary library typedef by including
+  [stdbool.h](#stdboolh--boolean-type), so portable C99 source that uses them
+  compiles unchanged.
 - **C99 `for`-loop init declarations** — `for (int i = 0; i < n; i++)` is
   accepted and the loop variable has proper C99 loop scope: it shadows any
   outer variable of the same name for the duration of the loop and is not
@@ -792,6 +797,35 @@ struct rec {
 };
 
 int off = offsetof(struct rec, value);
+```
+
+---
+
+## stdbool.h — boolean type
+
+Include [stdbool.h](stdbool.h) for the C99 boolean spelling. dcc does not
+recognize the native `_Bool` keyword, so this header provides the names as an
+ordinary library typedef and macros:
+
+| Name    | Definition                  |
+| ------- | --------------------------- |
+| `bool`  | `typedef unsigned char bool` |
+| `true`  | `1`                         |
+| `false` | `0`                         |
+
+Because `bool` is just `unsigned char`, it stores one byte and follows the
+normal integer-conversion rules. It does **not** carry C99 `_Bool` semantics:
+assigning a nonzero value such as `2` keeps that value rather than normalizing
+it to `1`. Compare against zero (or use `!!x`) when you need a canonical 0/1
+result.
+
+```c
+#include <stdbool.h>
+
+bool ready = false;
+ready = (count > 0);        /* 0 or 1 from the relational operator */
+if (ready)
+    puts("go");
 ```
 
 ---

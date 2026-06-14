@@ -30,6 +30,7 @@ run_args() {
         pint) echo "e.pas" ;;
         cobint) echo "e.cob" ;;
         forint) echo "e.for" ;;
+        adaint) echo "e.ada" ;;
         bint) echo "e.bas" ;;
         fint) echo "e.f" ;;
         cint) echo "eu.c" ;;

@@ -25,6 +25,7 @@ int      strcoll( const char *, const char * );
 size_t   strcspn( const char *, const char * );
 char *   strpbrk( const char *, const char * );
 size_t   strspn( const char *, const char * );
+char *   strtok( char *, const char * );
 
 /* dcc extension; not part of C89 */
 char *   strdup( const char * );

@@ -270,9 +270,28 @@ Include [stdio.h](stdio.h). The predefined streams `stdin`, `stdout`, and
 | `int printf(const char *fmt, ...)`             | Formatted output to the console (`stdout`).     |
 | `int fprintf(FILE *fp, const char *fmt, ...)`  | Formatted output to a stream.                   |
 | `int sprintf(char *buf, const char *fmt, ...)` | Formatted output into a caller-supplied buffer. |
+| `int vprintf(const char *fmt, va_list ap)`     | Like `printf`, taking an already-started `va_list`. |
+| `int vfprintf(FILE *fp, const char *fmt, va_list ap)` | Like `fprintf`, taking a `va_list`.      |
+| `int vsprintf(char *buf, const char *fmt, va_list ap)` | Like `sprintf`, taking a `va_list`.     |
 
-All three share one formatting engine, so they accept the same conversions (see
-[printf-family conversions](#printf-family-conversions)).
+All six share one formatting engine, so they accept the same conversions (see
+[printf-family conversions](#printf-family-conversions)). The `v…` variants take
+a `va_list` (from [stdarg.h](stdarg.h)) instead of inline `...` arguments, which
+lets you write your own logging/error wrappers that forward a format string:
+
+```c
+#include <stdarg.h>
+
+void logf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
+```
+
+The inline-argument forms are used the same way:
 
 ```c
 printf("count=%d name=%s hex=%04x\n", n, name, addr);
@@ -438,6 +457,8 @@ free(p);
 | ------------------------- | ------------------------------------------------ |
 | `int atoi(const char *s)` | Parse a leading signed decimal integer (16-bit). |
 | `long atol(const char *s)`| Parse a leading signed decimal integer (32-bit). |
+| `long strtol(const char *s, char **end, int base)` | Parse a `long` in `base` 2..36 (0 = auto). |
+| `unsigned long strtoul(const char *s, char **end, int base)` | Parse an `unsigned long` in `base` 2..36 (0 = auto). |
 
 ```c
 int  n = atoi("  -123xyz");   /* -123  */
@@ -448,6 +469,20 @@ Both skip leading spaces/tabs, accept an optional `+`/`-` sign, then consume
 decimal digits; conversion stops at the first non-digit. `atoi` accumulates a
 16-bit `int` and `atol` a 32-bit `long`; overflow wraps modulo the type width
 (the same defined-behaviour stance for both).
+
+`strtol`/`strtoul` are the full C89 conversions. They skip leading whitespace,
+accept an optional sign, honour a `0x`/`0X` prefix for base 16 and a leading
+`0` for base 8 when `base` is 0 (auto-detect), and accept digits/letters up to
+`base`-1 for any base from 2 to 36. The unused tail is reported through
+`*end` when `end` is non-`NULL`. On overflow they clamp to `LONG_MAX`/
+`LONG_MIN` (or `ULONG_MAX`) and set `errno` to `ERANGE`; `strtoul` also accepts
+a leading `-`, returning the negated value modulo 2^32.
+
+```c
+char *end;
+long  v = strtol("  -0x1Ag", &end, 0);   /* v = -26, *end = 'g'  */
+unsigned long u = strtoul("4294967295", NULL, 10); /* ULONG_MAX */
+```
 
 ### Integer arithmetic helpers
 
@@ -544,6 +579,7 @@ runtime.
 | `size_t strspn(const char *s, const char *set)`       | Length of leading run in `set`.          |
 | `size_t strcspn(const char *s, const char *set)`      | Length of leading run *not* in `set`.    |
 | `char *strpbrk(const char *s, const char *set)`       | First char that is in `set`.             |
+| `char *strtok(char *s, const char *set)`              | Split `s` into tokens delimited by `set`. |
 | `char *strdup(const char *s)`                         | Heap copy of `s` (free it later).        |
 | `void *memcpy(void *d, const void *s, size_t n)`      | Copy `n` bytes (no overlap).             |
 | `void *memmove(void *d, const void *s, size_t n)`     | Copy `n` bytes (overlap safe).           |
@@ -593,6 +629,8 @@ for (char *p = s; *p; ++p)
 Include [math.h](math.h). dcc has only 32-bit `float` (no `double`), so the
 math entry points are the single-precision `…f` variants.
 
+**Rounding, remainder, and roots**
+
 | Function                             | Summary                              |
 | ------------------------------------ | ------------------------------------ |
 | `float fabsf(float x)`               | Absolute value.                      |
@@ -602,9 +640,54 @@ math entry points are the single-precision `…f` variants.
 | `float sqrtf(float x)`               | Square root.                         |
 | `float nextafterf(float x, float y)` | Next representable value after `x`.  |
 
-For convenience, the unsuffixed C89 names `fabs`, `floor`, `ceil`, `sqrt`, and
-`fmod` are provided as macro aliases of the `…f` variants, so portable C89
-source compiles unchanged (the operations remain single-precision).
+**Exponential and logarithmic**
+
+| Function                       | Summary                                    |
+| ------------------------------ | ------------------------------------------ |
+| `float expf(float x)`          | Base-*e* exponential, e<sup>x</sup>.       |
+| `float logf(float x)`          | Natural logarithm (base *e*).              |
+| `float log10f(float x)`        | Base-10 logarithm.                         |
+| `float powf(float x, float y)` | `x` raised to the power `y`.               |
+
+**Trigonometric**
+
+| Function                          | Summary                                       |
+| --------------------------------- | --------------------------------------------- |
+| `float sinf(float x)`             | Sine of `x` (radians).                        |
+| `float cosf(float x)`             | Cosine of `x` (radians).                       |
+| `float tanf(float x)`             | Tangent of `x` (radians).                      |
+| `float asinf(float x)`            | Arc sine, result in `[-π/2, π/2]`.            |
+| `float acosf(float x)`            | Arc cosine, result in `[0, π]`.               |
+| `float atanf(float x)`            | Arc tangent, result in `[-π/2, π/2]`.         |
+| `float atan2f(float y, float x)`  | Arc tangent of `y/x` using the signs of both. |
+
+**Hyperbolic**
+
+| Function               | Summary               |
+| ---------------------- | --------------------- |
+| `float sinhf(float x)` | Hyperbolic sine.      |
+| `float coshf(float x)` | Hyperbolic cosine.    |
+| `float tanhf(float x)` | Hyperbolic tangent.   |
+
+**Decomposition**
+
+| Function                          | Summary                                                         |
+| --------------------------------- | -------------------------------------------------------------- |
+| `float frexpf(float x, int *e)`   | Split `x` into a normalized fraction in `[0.5, 1)` and exponent `*e`. |
+| `float ldexpf(float x, int n)`    | Compute `x * 2^n`.                                              |
+| `float modff(float x, float *ip)` | Split `x` into integer part `*ip` and the returned fraction.   |
+
+For convenience, the unsuffixed C89 names are provided as macro aliases of the
+`…f` variants, so portable C89 source compiles unchanged (the operations remain
+single-precision): `fabs`, `floor`, `ceil`, `sqrt`, `fmod`, `exp`, `log`,
+`log10`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`,
+`cosh`, `tanh`, `frexp`, `ldexp`, and `modf`.
+
+The transcendental routines (`exp`/`log`/`pow`, the trig and hyperbolic
+families) are single-precision polynomial approximations: expect roughly
+5–6 correct decimal digits, not full `float` round-trip accuracy. The
+range-reduction in `sinf`/`cosf`/`tanf` uses `fmodf`, so accuracy gradually
+degrades for very large arguments.
 
 To print floats, compile with `-ffloatio` and use `%f`:
 
@@ -679,6 +762,10 @@ int sum(int count, ...) {
     return total;
 }
 ```
+
+A `va_list` can be forwarded straight to `vprintf`/`vfprintf`/`vsprintf` (see
+[Formatted output](#formatted-output)) to build `printf`-style wrappers without
+re-parsing the arguments yourself.
 
 ---
 

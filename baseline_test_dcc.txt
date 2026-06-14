@@ -3068,7 +3068,7 @@ targs completed with great success
 test tstdc
 __DATE__ Jun 12 2026
 __TIME__ 14:38:48
-__FILE__ tstdc.c
+__FILE__ tests/tstdc.c
 __LINE__ 8
 __STDC__ 1
 test tstdc completed with great success
@@ -4236,3 +4236,15 @@ test tc99scpe
 tc99scpe passed with great success
 test tctxflt
 tctxflt passed with great success
+test tmathf
+=== dcc math.h verification ===
+-------------------------------
+checks=90 failures=0
+RESULT: PASS
+test tstrconv
+=== dcc strconv verification ===
+longcount:123456
+vprintf:x=7
+vfprintf:99
+checks=32 failures=0
+RESULT: PASS

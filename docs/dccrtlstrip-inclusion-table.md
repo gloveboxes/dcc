@@ -92,6 +92,7 @@ construct that makes the compiler emit a reference to that symbol.
 | `strchr` (and fast-call) / `strrchr` | `__schr`, `__chf` / `__srch` |
 | `strstr` / `strdup` / `strcoll` | `__sstr` / `__sdup` / `__scol` |
 | `strspn` / `strcspn` / `strpbrk` | `__sspn` / `__scsp` / `__spbr` |
+| `strtok` | `__stok` |
 | `memcpy` / `memmove` / `memset` | `__mcpy` / `__mmov` / `__mset` |
 | `memcmp` / `memchr` | `__mcmp` / `__mchr` |
 | `isalpha/isalnum/isspace/isdigit` | `__caa`/`__can`/`__csp`/`__cdg` |
@@ -105,6 +106,7 @@ construct that makes the compiler emit a reference to that symbol.
 | `printf` (no `-ffloatio`) | `_printf` (+ `pf_*` body, sink/buffer) |
 | `printf` with `-ffloatio` | `_pffio` (compiler swaps the name; pulls float `%f` path) |
 | `sprintf` / `fprintf` | `_sprintf` / `_fprintf` |
+| `vprintf` / `vfprintf` / `vsprintf` | `_vprintf` / `_vfprintf` / `_vsprintf` (reuse the `pf_*` engine) |
 | `puts` / `fputs` / `fgets` | `_puts` / `__fps` / `_fgets` |
 | `putchar`/`putc`/`fputc` | `__pchr` / `__putc` / `__fpc` |
 | `getc`/`getchar` | `__getc` / `___gchr` |
@@ -128,6 +130,7 @@ construct that makes the compiler emit a reference to that symbol.
 |---|---|
 | `malloc` / `calloc` / `realloc` / `free` | `_malloc` (+ `__ckmul`) / `_calloc` / `__real` / `_free` (+ `__frcoal`) |
 | `atoi` / `atol` | `_atoi` / `_atol` |
+| `strtol` / `strtoul` | `__stol` / `__stou` |
 | `rand` / `srand` | `_rand` / `_srand` |
 | `bsearch` / `qsort` | `_bsearch` / `_qsort` |
 | `bdos` / `inp` / `outp` (dcc extensions) | `_bdos` / `_inp` / `_outp` |
@@ -145,6 +148,11 @@ construct that makes the compiler emit a reference to that symbol.
 | float helpers / classify (pulled transitively) | `__fzro`, `__fnan`, `__finf`, `__fabs`, `__fchs`, `__fsgn`, `__fscale_pow2` |
 | `fabsf`/`floorf`/`ceilf`/`fmodf` | `_fabsf` / `_floorf` / `_ceilf` / `_fmodf` |
 | `sqrtf` / `nextafterf` | `_sqrtf` / `_nextafterf` |
+| `expf`/`logf`/`log10f`/`powf` | `_expf` / `_logf` / `_log10f` / `_powf` |
+| `sinf`/`cosf`/`tanf` | `_sinf` / `_cosf` / `_tanf` |
+| `asinf`/`acosf`/`atanf`/`atan2f` | `_asinf` / `_acosf` / `_atanf` / `_atan2f` |
+| `sinhf`/`coshf`/`tanhf` | `_sinhf` / `_coshf` / `_tanhf` |
+| `frexpf`/`ldexpf`/`modff` | `_frexpf` / `_ldexpf` / `_modff` |
 
 ## Notable behaviours of this design
 
@@ -177,7 +185,7 @@ X actually drag in, including everything it transitively pulls?"*
 
 Line counts are a **relative proxy**, not exact bytes — blocks contain comments
 and blank lines. Use them to compare functions and spot the heavyweights, not to
-predict an exact byte total. (Measured from `DCCRTL.MAC`, ~11,264 lines total.)
+predict an exact byte total. (Measured from `DCCRTL.MAC`, ~16,380 lines total.)
 
 ## Always-present baseline (~208 lines)
 
@@ -204,6 +212,9 @@ nothing extra** — `putchar`/`puts` just call into already-present code.
 | `fprintf` | 68 | **~1372** | `_printf`, `_write` + file-I/O core (`__dma`, `__fcbs`, `_errno`, `_fdatasync`) |
 | `printf` (integer-only) | 717 | ~717 | nothing — self-contained monolith |
 | `sprintf` | 31 | ~748 | `_printf` (shares its formatter body) |
+| `vprintf` | 26 | ~743 | `_printf` (reuses `__pf_run`; console sink) |
+| `vsprintf` | 31 | ~748 | `_printf` (reuses `__pf_run`; buffer sink) |
+| `vfprintf` | 73 | ~1377 | `_printf`, `_write` + file-I/O core (fd dispatch, like `fprintf`) |
 | `puts` | 27 | ~27 | nothing (console only) |
 | `fputc`/`putc` (`__fpc`) | 63 | ~650 | `_write` + file-I/O core (needed for non-console fds) |
 | `fputs` (`__fps`) | 58 | ~645 | `_write` + file-I/O core |
@@ -259,6 +270,8 @@ consecutive `public` run, so they share a prelude and a common FCB/DMA core.
 | `bsearch` | 88 | ~328 | `__call_hl`, `__mulu`, `__r1s`, `__r1u` |
 | `atol` | 112 | ~112 | nothing |
 | `atoi` | 71 | ~71 | nothing |
+| `strtol` | 528 | ~980 | `__lmul`/`__ldu`/`__lmu`/`__lgu` (32-bit long mul/div/mod/compare) + `_errno` |
+| `strtoul` | 485 | ~485 | shares the same long-arithmetic core as `strtol`; ~940 on its own |
 | `rand`/`srand` | 44 | ~44 | nothing |
 
 ### 32-bit `long` arithmetic
@@ -288,14 +301,44 @@ consecutive `public` run, so they share a prelude and a common FCB/DMA core.
 
 ### `<math.h>` float functions
 
+The transcendental functions are single-precision C implementations folded into
+`DCCRTL.MAC`. Each one links the shared float arithmetic core
+(`__fadd/__fsub/__fmul/__fdiv` + classify helpers) plus whatever other math
+routines it calls, so they are the heaviest individual features in the runtime.
+`powf` is the worst case because it chains `expf`, `logf`, `frexpf`, and
+`ldexpf` on top of the float core.
+
 | Function | self | marginal | pulls in |
 |---|---:|---:|---|
+| `powf` | 280 | ~3296 | `expf`, `logf`, `frexpf`, `ldexpf` + full float core/conversions |
+| `tanhf` | 113 | ~2504 | `expf`, `ldexpf` + float core/conversions |
+| `sinhf` | 60 | ~2451 | `expf`, `ldexpf` + float core/conversions |
+| `coshf` | 60 | ~2451 | `expf`, `ldexpf` + float core/conversions |
+| `expf` | 340 | ~2279 | `ldexpf` + float core + int/long↔float conversions |
+| `tanf` | 377 | ~2110 | `fmodf` + float core + long↔float conversions |
+| `acosf` | 29 | ~2085 | `asinf`, `sqrtf` + float core |
+| `atan2f` | 192 | ~2083 | `atanf` + float core |
+| `log10f` | 29 | ~2082 | `logf`, `frexpf` + float core |
+| `asinf` | 360 | ~2056 | `sqrtf` + float core |
+| `logf` | 291 | ~2053 | `frexpf` + float core + uint→float |
+| `cosf` | 347 | ~2008 | `fmodf` + float core + long↔float conversions |
+| `sinf` | 305 | ~1966 | `fmodf` + float core + long↔float conversions |
+| `atanf` | 377 | ~1760 | float core (`__fadd/__fsub/__fmul/__fdiv`, compares, classify) |
 | `sqrtf` | 201 | ~1640 | `__fadd/__fsub/__fmul/__fdiv`, `__fge/__flt`, `__fnan/__fzro`, `__fscale_pow2` |
+| `modff` | 96 | ~1537 | `floorf`, `ceilf` + long↔float conversions + compares |
 | `fmodf` | 104 | ~1327 | `__fdiv/__fmul/__fsub` + long↔float conversions |
+| `ldexpf` | 251 | ~589 | `__feq/__fge/__fgt`, `__fnan/__fzro` |
 | `nextafterf` | 236 | ~577 | `__feq/__fge/__flt`, `__fnan/__fzro` |
 | `floorf` | 83 | ~523 | long↔float conv + compares |
 | `ceilf` | 77 | ~520 | long↔float conv + compares |
+| `frexpf` | 202 | ~310 | `__feq`, `__fnan`, `__fzro` |
 | `fabsf` | 14 | ~22 | `__fabs` |
+
+> **`frexpf`/`ldexpf` are the cheap ones.** They manipulate IEEE-754 bits
+> directly (no arithmetic core), so they only pull a couple of classify helpers.
+> Everything else drags in the full float arithmetic stack, and the
+> `exp`/`log`/`pow` and hyperbolic group is the most expensive thing you can
+> link — budget ~2,000–3,300 lines for any one of them.
 
 ### `<string.h>` / `<ctype.h>` — almost all self-contained
 
@@ -306,6 +349,7 @@ Most string and ctype routines pull in **nothing** beyond themselves (each
 |---|---:|---:|---|
 | `strdup` | 40 | ~258 | `_malloc` + `__mlh`, `__slen` |
 | `strstr` | 96 | ~96 | nothing |
+| `strtok` | 97 | ~185 | `__sspn` (`strspn`), `__spbr` (`strpbrk`) |
 | `memset` | 42 | ~42 | nothing |
 | `memcpy` | 32 | ~32 | nothing |
 | `strcpy` | 21 | ~21 | nothing |
@@ -334,11 +378,15 @@ Most string and ctype routines pull in **nothing** beyond themselves (each
    `fputc`/`fputs`/`fprintf` for console work — they link the file-I/O core.
 2. **`printf` is a 717-line monolith** but pulls nothing else. **Float printf
    (`-ffloatio`) roughly quadruples that** by linking the entire float stack.
+   `vprintf`/`vsprintf` reuse that same engine, so they cost no more than
+   `printf`/`sprintf`; `vfprintf` carries the file-I/O core like `fprintf`.
 3. **Any single low-level file call links the whole FCB/DMA core (~470 lines).**
    The first file function is expensive; additional ones are nearly free.
 4. **`scanf`/`sscanf` are not small** — they share the 697-line `fscanf` core.
 5. **Float is the biggest lever.** A single `float` operator links the shared
-   normalise/round core (~700+ lines); `sqrtf`/`fmodf` exceed 1,300 lines.
+   normalise/round core (~700+ lines); `sqrtf`/`fmodf` exceed 1,300 lines, and
+   the `expf`/`logf`/`powf` and hyperbolic group runs ~2,000–3,300 lines once
+   their transitive math dependencies are pulled in.
 6. **`malloc`/`calloc` pull integer mul/div/mod helpers** for size arithmetic;
    `strdup` inherits the whole `malloc` chain.
 7. **String/ctype routines are individually cheap** — pull only themselves.

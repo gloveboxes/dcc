@@ -4232,5 +4232,7 @@ test tforblk
 tforblk passed with great success
 test tcmt99
 tcmt99 passed with great success
+test tc99scpe
+tc99scpe passed with great success
 test tctxflt
 tctxflt passed with great success

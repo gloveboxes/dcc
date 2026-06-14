@@ -1,116 +1,92 @@
 ---
 name: c89-cpm-z80
-description: 'Write, build, test, and debug C89 code for the dcc compiler targeting CP/M 2.2 on the Z80 (e.g. run under the ntvcm Altair 8800 emulator). Use when working on .c/.h sources compiled with dcc, or when the task mentions dcc, CP/M, CP/M 2.2, Z80, ntvcm, DCCRTL, ma.sh, VT100/ANSI terminal apps for CP/M, or the no-double single-precision-float constraint. dcc is TRUE C89 (prototypes, void, const, typedef, enum, and K&R definitions all accepted) and also accepts some C99 conveniences (for-init declarations, // line comments, block-scoped variables, inline). Hard constraints to respect: no double (32-bit float is the only floating type), 16-bit int/short, 32-bit long, 16-bit pointers, 16-bit size_t. Full library/printf/scanf inventory and hard-won pitfalls are in the reference files.'
+description: 'Write, build, test, and debug C89 code for the dcc compiler targeting CP/M 2.2 on the Z80 (run under the ntvcm Altair 8800 emulator). Use for .c/.h sources compiled with dcc, or tasks mentioning dcc, CP/M, CP/M 2.2, Z80, ntvcm, DCCRTL, ma.sh, or VT100/ANSI CP/M terminal apps. Treat dcc as standard C89 plus a few C99 conveniences (for-init decls, // comments, block scope, inline-ignored) EXCEPT for the deviations this skill documents: no double (32-bit float is the only floating type), 16-bit int/short/pointer/size_t, 32-bit long, signed char, and a subset library (no atof/strtod; no locale/signal/time). Full library/printf/scanf inventory and pitfalls are in the reference files.'
 argument-hint: 'Describe the C89/CP-M task (write code, build, run under ntvcm, debug a failure)'
 ---
 
 # C89 for dcc (CP/M 2.2 / Z80)
 
-dcc is a C89 compiler that emits Z80 assembly for CP/M 2.2.
-The runtime is [DCCRTL.MAC](DCCRTL.MAC). Programs run on
-real CP/M hardware or an emulator such as **ntvcm** (Altair 8800).
+dcc is a cross-compiler (runs on the host) that emits Z80 assembly for CP/M 2.2.
+The runtime is [DCCRTL.MAC](DCCRTL.MAC); programs run on real hardware or an
+emulator such as **ntvcm** (Altair 8800).
+
+**Assume standard C89 plus the C99 conveniences listed below.** This skill
+documents only where dcc *deviates* from what an experienced C programmer
+expects — anything not listed here behaves as standard C89/C99.
 
 ## When to use
 
-- Writing, porting, or reviewing C source intended to be compiled by `dcc`.
+- Writing, porting, or reviewing C compiled by `dcc`.
 - Building/running/debugging a dcc program (`ma.sh`, `ntvcm`).
-- Any task touching CP/M file I/O, VT100/ANSI console UIs, or DCCRTL.
+- CP/M file I/O, VT100/ANSI console UIs, or DCCRTL work.
 
-## Golden rules
+## Deviations from standard C
 
-1. **No `double`. Ever.** `float` (32-bit IEEE single) is the *only* floating
-   type. The `double` keyword is not recognised — using it is a compile error.
-   Write `float`, and use `f`-suffixed literals (`3.14f`). Unsuffixed float
-   constants are already `float`, not `double`.
-2. **`int` is 16-bit** (±32767). Use `long` (32-bit) + `%ld` when you need
-   more range. Watch for silent overflow in loops, sizes, and accumulators.
-3. **Pointers and `size_t` are 16-bit.** `ptrdiff_t` is `int`. Flat 64 KB space.
-4. **`char` is signed by default.** Use `unsigned char` for byte/`>=0x80` work.
-5. **The library is a subset.** No `atof`/`strtod` (both return `double`), no
-   `<locale.h>`/`<signal.h>`/`<time.h>`. `<math.h>` now has the full
-   single-precision set (trig, exp/log, hyperbolic, decomposition); `strtol`/
-   `strtoul`/`strtok` are present. See
-   [references/library.md](./references/library.md) before assuming a function exists.
-6. **`%f` needs `-ffloatio`.** Float `printf` formatting isn't linked unless you
-   pass that flag. Without it, `%f` won't work.
-7. **CP/M filenames are 8.3, uppercase.** The `.COM` is named after the source
-   (`foo.c` → `FOO.COM`); run it as `ntvcm FOO`.
+**Types — a 16-bit machine:**
 
-## Type model
+| Type | dcc | Note |
+| ---- | --- | ---- |
+| `int` / `short` | 16-bit | overflow at ±32767; use `long` + `%ld` for range |
+| `long` | 32-bit | |
+| `float` | 32-bit | **the only floating type** |
+| `double` / `long double` | — | **not a keyword; using it is a compile error** |
+| pointer / `size_t` / `ptrdiff_t` / `wchar_t` | 16-bit | flat 64 KB space |
+| `char` | 8-bit **signed** | use `unsigned char` for bytes ≥ 0x80 / table indices |
+| `FILE` | `int` | |
 
-At a glance: `char` 8-bit (signed), `short`/`int` 16-bit, `long` 32-bit,
-`float` 32-bit (the only floating type), pointers / `size_t` / `ptrdiff_t` /
-`wchar_t` all 16-bit, `FILE` is `int`. Full annotated table in
-[references/library.md](./references/library.md).
+Multi-byte values are little-endian (Z80-native).
 
-## Language support
+**Floating point is single-precision only:**
 
-dcc is C89 at heart but **accepts a handful of C99 conveniences**: `for`-init
-declarations with real loop scope (`for (int i = 0; ...)`), `//` line comments,
-block-scoped variable storage (inner `{ ... }` declarations shadow outer ones),
-and `inline` (parsed, ignored). Details below.
+- Write `float`; unsuffixed constants (`3.14`) are already `float`, not `double`.
+- No `float`→`double` promotion in varargs (there is no double), so
+  `printf("%f", x)` consumes a 32-bit `float` directly — but **requires the
+  `-ffloatio` build flag**; without it `%f` silently does nothing.
+- `<math.h>` provides the full single-precision set (`sinf`/`expf`/`powf`/… each
+  with an unsuffixed alias that stays single-precision), but the transcendentals
+  are ~5–6-digit polynomial approximations.
+- No `atof`/`strtod` (both return `double`) — parse decimals yourself
+  (`strtol`/`strtoul` handle integers). Worked parser in pitfalls.md.
 
-- **31 of 32 C89 keywords.** Only `double` is missing. Everything else
-  (`struct`, `union`, `enum`, `typedef`, `const`, `volatile`, `sizeof`, all
-  control flow, all storage classes) is recognised.
-- **Inert but accepted:** `const` (constant-folds initializers only; not
-  read-only memory), `volatile` (ignored), `register` (hint only), `auto`
-  (no-op). `inline` is accepted as a C99 extension and ignored.
-- **C99 `for`-init declarations are supported** with real loop scope:
-  `for (int i = 0; i < n; i++)` declares `i` only for the loop, so it shadows
-  (does not clobber) an outer same-named variable and is invisible after the
-  loop. Multiple declarators (`for (int i = 0, j = n; ...)`) and pointer/array
-  declarators scope the same way.
-- **Block scope is fully modeled.** A variable declared in an inner `{ ... }`
-  block (including `if`/`while`/`for`/`switch` bodies) shadows an outer
-  same-named local or parameter for that block only and is invisible once the
-  block ends — sibling blocks may safely reuse a name, and an inner block may
-  shadow a `for`-init loop variable.
-- **C99 `//` line comments are supported** alongside C89 `/* ... */` block
-  comments — including trailing comments on `#define` lines (stripped like
-  block comments before macro replacement). Both forms are correctly ignored
-  inside string and character literals (e.g. `"http://..."` stays intact).
-- **K&R function definitions are accepted** (dcc's typing is lenient), but
-  prefer prototypes for new code. Mixed decls/statements and block-local
-  variables are fine (real C89).
-- **Full C89 operator set**, including bitwise `&` `|` `^` `~` `<<` `>>` and
-  their compound forms (`&=` `|=` `^=` `<<=` `>>=`). `>>` is **arithmetic**
-  (sign-extending) on signed operands and **logical** (zero-fill) on unsigned —
-  use `unsigned`/`unsigned long` when you need a guaranteed zero-fill shift.
-  Shifts act at the operand width (16-bit for `int`; cast/promote to `long`
-  for wider shifts).
-- No other C99/C11 features (`restrict`, `_Bool`, VLAs, compound literals,
-  designated initializers).
+**The library is a subset.** A missing function is a **link** error
+(`unresolved external`), not a compile error, so check
+[references/library.md](./references/library.md) before assuming one exists.
+Notably absent: `atof`/`strtod`, `<locale.h>`/`<signal.h>`/`<time.h>`, and
+some stdio entries (`fgetc`, `ungetc`, `rename`, …).
 
-## Identifier significance
+**printf/scanf are a subset.** No `+`/space/`#` flags and no `*`
+width/precision; scanf is integer/string only (no `%f`, scansets, `%n`, `%p`).
+Conversion tables in library.md.
 
-C89 guarantees significance of at least **31 characters** for internal
-identifiers and at least **6** (case-insensitive) for external (global /
-function) ones. dcc satisfies both, so you never need to shorten names for the
-toolchain (this is *not* BDS C's 7-char rule):
+**No stack/heap guard.** Heap and stack share memory and can collide silently.
+Size the stack with `-stack N` (default 512); keep big buffers `static`/global.
 
-- Internal names (locals, `static` file-scope names) keep their full spelling.
-- External names stay distinct well past the 6 characters C89 requires (verified
-  to at least the first 13 characters in this toolchain). Only externals sharing
-  a very long prefix (~16+ identical leading characters, far beyond what C89
-  promises or normal code uses) can silently collide at link time; make such a
-  one-file helper `static` if it ever matters.
+**Source filenames MUST be 8.3 and uppercase-safe** (≤ 8-char base, ≤ 3-char
+extension, no extra dots). `foo.c` → `FOO.COM`, run as `ntvcm FOO`. A source
+whose name violates 8.3 (e.g. `my_long_name.c`, `parse.test.c`) won't build —
+ntvcm reports `argument is not a valid CP/M 8.3 filename`; rename the file when
+you see that error.
 
-## Floating point: single precision only
+**Missing `<...>` headers are silently ignored** — calls fall back to implicit
+`int` and still link via the runtime, with no type-checking. A missing
+`"..."` header is fatal. If standard calls compile but misbehave, check that
+`-I` actually resolves the dcc headers.
 
-- `float` is 32-bit; there is no `double` or `long double`.
-- `<math.h>` provides a full single-precision library: rounding/remainder/roots
-  (`fabsf`, `floorf`, `ceilf`, `sqrtf`, `fmodf`, `nextafterf`), exp/log
-  (`expf`, `logf`, `log10f`, `powf`), trig (`sinf`, `cosf`, `tanf`, `asinf`,
-  `acosf`, `atanf`, `atan2f`), hyperbolic (`sinhf`, `coshf`, `tanhf`), and
-  decomposition (`frexpf`, `ldexpf`, `modff`) — each with an **unsuffixed alias**
-  (`sin`, `cos`, `exp`, `pow`, …) that stays single-precision. The
-  transcendentals are polynomial approximations (~5–6 digits), not full `float`
-  accuracy.
-- No `atof`/`strtod`. To parse decimals to `float`, write a small parser
-  (`strtol`/`strtoul` handle integers).
-- `printf("%f", x)` requires the `-ffloatio` compile flag and consumes a 32-bit
-  `float` (there is no float→double default promotion, because there's no double).
+## C99 conveniences dcc accepts (beyond C89)
+
+These behave as standard C99: `for`-init declarations with loop scope, `//` line
+comments, block-scoped declarations (inner blocks shadow outer names), and
+`inline` (parsed, ignored). `const`/`volatile`/`register`/`auto` are accepted
+but inert (`const` constant-folds initializers only — not read-only memory).
+K&R function definitions are still accepted; prefer prototypes for new code.
+
+Not present: any other C99/C11 feature (`restrict`, `_Bool`, VLAs, compound
+literals, designated initializers).
+
+**Identifiers:** full internal significance; externals stay distinct well past
+C89's 6-char minimum (verified to ~13 chars), and only ~16+ identical leading
+characters can silently collide at link time — make such a one-file helper
+`static` if it ever matters. (This is *not* BDS C's 7-char rule.)
 
 ## Build and run
 
@@ -129,6 +105,11 @@ export DCC=./dcc DCCPEEP=./dccpeep DCCRTLSTRIP=./dccrtlstrip
 ntvcm FOO             # run it (uppercase, no extension)
 ntvcm FOO ARG1 ARG2   # with CP/M command-line args
 ```
+
+> The source name passed to `ma.sh` must be 8.3-clean (base ≤ 8 chars,
+> extension ≤ 3, no extra dots). ntvcm reports
+> `argument is not a valid CP/M 8.3 filename` for a non-conforming name —
+> rename the file when you see it.
 
 **Useful `dcc` options:** `-o file` (output .mac), `-c`/`-module` (linkable
 module), `-f`/`-ffloatio` (float printf), `-stack N`/`-s N`/`--stack N` (reserve
@@ -155,37 +136,25 @@ resolves the dcc headers.
 Notes: M80 needs CRLF (`ma.sh` converts). `RTLMIN.MAC` is generated per-app by
 `dccrtlstrip` during the build — don't hand-edit it.
 
-## Top pitfalls (details in references/pitfalls.md)
+## Top pitfalls
 
-- **No `double`** — `float` is the only floating type; no `atof`/`strtod`.
-  (`<math.h>` *does* now provide single-precision transcendentals.)
-- **`%f` silently does nothing without `-ffloatio`.**
-- **16-bit `int`/`size_t` overflow** in sizes/indices/accumulators — promote to
-  `long` (and `%ld`).
-- **`char` is signed** — use `unsigned char` for bytes `>= 0x80` and table indices.
-- **CP/M filenames are 8.3** and ntvcm asserts on extensions `> 3` chars — delete
-  stray `.DS_Store` before running a directory-enumerating program.
-- **No stack/heap guard** — size the stack with `-stack N`; keep big buffers
-  `static`/global.
-
-See [references/pitfalls.md](./references/pitfalls.md) for worked examples and
-[references/library.md](./references/library.md) for the full function inventory,
-`printf`/`scanf` conversion tables, and which headers/functions are absent.
+The deviations above are the pitfalls. For worked examples (the `float` decimal
+parser, `%f`/`-ffloatio`, 16-bit overflow, signed `char`, CP/M 8.3 names, the
+stack/heap collision) see [references/pitfalls.md](./references/pitfalls.md);
+for the full function inventory and `printf`/`scanf` conversion tables see
+[references/library.md](./references/library.md).
 
 ## Workflow
 
-1. **Confirm the constraint surface.** If the code uses floating point, plan for
-   single precision (no `double`); if it parses decimals, plan a `float` parser
-   (no `atof`). If it needs `time`/`signal`/`locale`, those headers don't exist.
+1. **Plan for the deviations.** Floating point → single precision (no `double`);
+   decimal parsing → a `float` parser (no `atof`); `time`/`signal`/`locale` →
+   don't exist.
 2. **Check the library** in [references/library.md](./references/library.md)
-   before calling anything you haven't verified — a missing function is a link
-   error (`unresolved external`), not a compile error.
+   before calling anything unverified — a missing function is a link error,
+   not a compile error.
 3. **Match repo conventions.** Read a nearby working program first. In the dcc
-   repo, the authoritative, exhaustive reference is
+   repo, the exhaustive reference is
    [dcc-c89-reference-guide.md](dcc-c89-reference-guide.md) at the repo root.
-4. **Write idiomatic C89** for the 16-bit model; prefer `long`/`%ld` where range
-   matters; use `unsigned char` for byte work.
-5. **Build and run**: `./ma.sh <name> peep && ntvcm <NAME>`. Add `-ffloatio`
-   (via the program's build path) if you use `%f`.
-6. **Verify behaviour** by running the program under `ntvcm` (redirect stdin
-   for interactive apps). Compare against expected output for your own program.
+4. **Build and run**: `./ma.sh <name> peep && ntvcm <NAME>` (add the `-ffloatio`
+   path if you use `%f`); redirect stdin for interactive apps and compare
+   against expected output.

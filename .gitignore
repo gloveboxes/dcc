@@ -6,3 +6,9 @@
 ._*
 .Spotlight-V100
 .Trashes
+/dcc
+/dccpeep
+/dccrtlstrip
+test_dcc.txt
+test_dccu.txt
+build/

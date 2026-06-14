@@ -11,8 +11,8 @@
 #   sh src/dcc/build-dcc.sh            # build ./dcc at the repo root
 #   sh src/dcc/build-dcc.sh -o out/dcc # build to a custom path
 #
-# The companion peephole/runtime tools (dccpeep, dccrtlstrip) still live at the
-# repo root and are built by the existing mmacos.sh / m.sh scripts; this script
+# The companion peephole/runtime tools are built by mmacos.sh / m.sh / m.bat
+# from src/dccpeep/dccpeep.c and src/dccrtlstrip/dccrtlstrip.c; this script
 # only builds the modular dcc front end.
 
 set -e
@@ -28,6 +28,16 @@ if [ -z "$CC" ]; then
     esac
 fi
 CFLAGS=${CFLAGS:--std=c89 -Wall -Wextra -O2}
+
+# On macOS, clang can emit large tentative definitions into __DATA,__common
+# with very high alignment (for large objects), which triggers an ld warning
+# about reducing alignment. Force normal definitions to avoid __common.
+case "$(uname)" in
+    Darwin)
+        CFLAGS="$CFLAGS -fno-common"
+        ;;
+esac
+
 OUT="$REPO_ROOT/dcc"
 
 # Allow "-o <path>" to override the output location.

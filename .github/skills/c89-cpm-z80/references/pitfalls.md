@@ -1,19 +1,13 @@
-# dcc C89 pitfalls and idioms
+# dcc C89 pitfalls — worked examples
 
-Genuine, general gotchas when writing or porting C89 for dcc (CP/M 2.2 / Z80).
-Each has a symptom and a fix.
+SKILL.md lists the deviations from standard C; this file adds symptom→fix
+detail and code for the ones that need it. (Anything not covered behaves as
+standard C89.)
 
-## No `double` (the headline constraint)
+## Parsing a decimal string to `float` (no `atof`/`strtod`)
 
-- `double` is not a recognised keyword — using it is a **compile error**. Use
-  `float` (32-bit) everywhere.
-- Unsuffixed floating constants like `3.14` are already `float`, not `double`.
-- There is no `float`→`double` promotion in variadic calls (there is no
-  double), so `printf("%f", x)` consumes a 32-bit `float` directly.
-- No `atof`/`strtod` (both return `double`). `<math.h>` *does* provide the
-  single-precision transcendentals (`sinf`/`cosf`/`expf`/`logf`/`powf`/… with
-  unsuffixed aliases), and `strtol`/`strtoul` parse integers — but for
-  decimal-string→`float` you still parse it yourself:
+`atof`/`strtod` are absent (both return `double`). `strtol`/`strtoul` parse
+integers; for decimal-string→`float`, parse it yourself:
 
 ```c
 /* minimal signed decimal -> float */
@@ -32,43 +26,41 @@ static float parse_f(const char *s)
 
 ## `%f` needs the `-ffloatio` build flag
 
-Float `printf` formatting is only linked when you compile with `-f` /
-`-ffloatio`. Without it, `%f` produces nothing useful — so any program that
-prints floats must be built with that flag.
+Symptom: `printf("%f", x)` produces nothing useful. Float formatting is only
+linked when you compile with `-f` / `-ffloatio`, so any program that prints
+floats must be built with that flag.
 
 ## 16-bit `int` (and `size_t`)
 
-`int`/`short` are 16-bit (±32767), and `size_t` is 16-bit too, so a single
-object or allocation can't exceed ~64 KB.
-
-- Use `long` + `%ld` for counters, sizes, or accumulators that can exceed ±32767.
-- File offsets are `long` (`ftell`/`fseek`/`lseek`, `off_t`) — don't truncate
-  them into an `int`.
+Symptom: a loop counter, size, index, or accumulator silently wraps past
+±32767. `size_t` is 16-bit too, so a single object/allocation can't exceed
+~64 KB. Fixes: use `long` + `%ld` for anything that can exceed the range; keep
+file offsets in `long` (`ftell`/`fseek`/`lseek`, `off_t`) — never truncate them
+into an `int`.
 
 ## `char` is signed
 
-Bytes ≥ 0x80 read as negative, so `c == 0xE9` is never true and table
-indexing / sign-extension can misbehave. Use `unsigned char` for raw bytes and
-when indexing a table by character value.
+Symptom: a byte ≥ 0x80 reads as negative, so `c == 0xE9` is never true and
+table indexing / sign-extension misbehaves. Fix: use `unsigned char` for raw
+bytes and when indexing a table by character value.
 
 ## CP/M filenames: 8.3, uppercase, extension ≤ 3 chars
 
-- Source `foo.c` builds `FOO.COM`; run it as `ntvcm FOO` (uppercase, no ext).
-- ntvcm's filename mapper **asserts on any extension longer than 3 characters**,
-  so delete stray `.DS_Store` files before directory-enumeration tests or a full
-  `runall.sh` (VS Code / file search may hide them).
+**The source filename itself must conform to 8.3**, or the build fails.
+Symptom: a `.c` whose base name is longer than 8 chars, whose extension is
+longer than 3 chars, or that contains extra dots (e.g. `my_long_name.c`,
+`parse.test.c`) won't build — ntvcm prints
+`argument is not a valid CP/M 8.3 filename`. Fix: rename the source so its base
+≤ 8 chars and extension ≤ 3 chars before building. `foo.c` builds `FOO.COM`;
+run it as `ntvcm FOO` (uppercase, no ext).
 
-## printf / scanf are a subset
-
-- `printf`: no `+`, space, or `#` flags, and no `*` (run-time) width/precision —
-  bake widths into the format string (`%6d`, `%-8s`, `%.4d`); write `0x`
-  prefixes literally.
-- `scanf` / `sscanf` / `fscanf`: integer and string only — no `%f`/`%e`/`%g`,
-  scansets (`%[...]`), `%n`, or `%p`.
+ntvcm's filename mapper also **asserts on any on-disk extension longer than 3
+characters**, so delete stray `.DS_Store` files before directory-enumeration
+tests or a full `runall.sh` (VS Code / file search may hide them).
 
 ## No stack/heap guard
 
-The heap grows up from BSS, the stack grows down, and nothing stops them
-colliding. Reserve stack with `-stack N` (default 512) for deep recursion or
-large automatic arrays, and prefer `static`/global for big buffers.
-(`spsmash.c` shows an optional manual stack-depth check.)
+The heap grows up, the stack grows down, and nothing stops them colliding.
+Reserve stack with `-stack N` (default 512) for deep recursion or large
+automatic arrays, and prefer `static`/global for big buffers. (`spsmash.c`
+shows an optional manual stack-depth check.)

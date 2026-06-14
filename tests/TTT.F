@@ -4,15 +4,12 @@
 (  board: 0 1 2 )
 (         3 4 5 )
 (         6 7 8 )
-(  notes: )
-(      I tried using a DO loop in MINMAX but apparently "I" isn't preserved on recursion. )
-(      Also, breaking out of the DO loop broke out across recursion stack frames, which won't work. )
-(      That's why I use the "10 boardIndex !" hack to break out of the loop instead. )
 
 ( true global variables )
 VARIABLE board 9 ALLOT
 VARIABLE moves
 VARIABLE recursionDepth
+VARIABLE lastMove
 
 ( effectively locals in MINMAX )
 VARIABLE alpha
@@ -43,32 +40,81 @@ board 6 + CONSTANT B6
 board 7 + CONSTANT B7
 board 8 + CONSTANT B8
 
-: LOOKFORWINNER
-    B4 C@
-    DUP pieceBlank <> IF
-        DUP B0 C@ = IF DUP B8 C@ = IF EXIT THEN THEN
-        DUP B1 C@ = IF DUP B7 C@ = IF EXIT THEN THEN
-        DUP B2 C@ = IF DUP B6 C@ = IF EXIT THEN THEN
-        DUP B3 C@ = IF DUP B5 C@ = IF EXIT THEN THEN
-    THEN
-    DROP
+( Per-position winner words: only check lines through the last-played square. )
+( Returns winning piece, or pieceBlank if no winner on that square's lines.   )
 
+: WINNER0
     B0 C@
-    DUP pieceBlank <> IF
-        DUP B1 C@ = IF DUP B2 C@ = IF EXIT THEN THEN
-        DUP B3 C@ = IF DUP B6 C@ = IF EXIT THEN THEN
-    THEN
-    DROP
+    DUP B1 C@ = IF DUP B2 C@ = IF EXIT THEN THEN
+    DUP B3 C@ = IF DUP B6 C@ = IF EXIT THEN THEN
+    DUP B4 C@ = IF DUP B8 C@ = IF EXIT THEN THEN
+    DROP pieceBlank ;
 
+: WINNER1
+    B1 C@
+    DUP B0 C@ = IF DUP B2 C@ = IF EXIT THEN THEN
+    DUP B4 C@ = IF DUP B7 C@ = IF EXIT THEN THEN
+    DROP pieceBlank ;
+
+: WINNER2
+    B2 C@
+    DUP B0 C@ = IF DUP B1 C@ = IF EXIT THEN THEN
+    DUP B5 C@ = IF DUP B8 C@ = IF EXIT THEN THEN
+    DUP B4 C@ = IF DUP B6 C@ = IF EXIT THEN THEN
+    DROP pieceBlank ;
+
+: WINNER3
+    B3 C@
+    DUP B4 C@ = IF DUP B5 C@ = IF EXIT THEN THEN
+    DUP B0 C@ = IF DUP B6 C@ = IF EXIT THEN THEN
+    DROP pieceBlank ;
+
+: WINNER4
+    B4 C@
+    DUP B0 C@ = IF DUP B8 C@ = IF EXIT THEN THEN
+    DUP B2 C@ = IF DUP B6 C@ = IF EXIT THEN THEN
+    DUP B1 C@ = IF DUP B7 C@ = IF EXIT THEN THEN
+    DUP B3 C@ = IF DUP B5 C@ = IF EXIT THEN THEN
+    DROP pieceBlank ;
+
+: WINNER5
+    B5 C@
+    DUP B3 C@ = IF DUP B4 C@ = IF EXIT THEN THEN
+    DUP B2 C@ = IF DUP B8 C@ = IF EXIT THEN THEN
+    DROP pieceBlank ;
+
+: WINNER6
+    B6 C@
+    DUP B7 C@ = IF DUP B8 C@ = IF EXIT THEN THEN
+    DUP B0 C@ = IF DUP B3 C@ = IF EXIT THEN THEN
+    DUP B4 C@ = IF DUP B2 C@ = IF EXIT THEN THEN
+    DROP pieceBlank ;
+
+: WINNER7
+    B7 C@
+    DUP B6 C@ = IF DUP B8 C@ = IF EXIT THEN THEN
+    DUP B1 C@ = IF DUP B4 C@ = IF EXIT THEN THEN
+    DROP pieceBlank ;
+
+: WINNER8
     B8 C@
-    DUP pieceBlank <> IF
-        DUP B2 C@ = IF DUP B5 C@ = IF EXIT THEN THEN
-        DUP B6 C@ = IF DUP B7 C@ = IF EXIT THEN THEN
-    THEN
-    DROP
+    DUP B6 C@ = IF DUP B7 C@ = IF EXIT THEN THEN
+    DUP B2 C@ = IF DUP B5 C@ = IF EXIT THEN THEN
+    DUP B0 C@ = IF DUP B4 C@ = IF EXIT THEN THEN
+    DROP pieceBlank ;
 
-    pieceBlank
-    ;
+( Dispatch to the per-position winner word for the last-played square. )
+: CALLWINNER
+    lastMove @
+    DUP 0 = IF DROP WINNER0 EXIT THEN
+    DUP 1 = IF DROP WINNER1 EXIT THEN
+    DUP 2 = IF DROP WINNER2 EXIT THEN
+    DUP 3 = IF DROP WINNER3 EXIT THEN
+    DUP 4 = IF DROP WINNER4 EXIT THEN
+    DUP 5 = IF DROP WINNER5 EXIT THEN
+    DUP 6 = IF DROP WINNER6 EXIT THEN
+    DUP 7 = IF DROP WINNER7 EXIT THEN
+    DROP WINNER8 ;
 
 : dumpboard
     ." board: "
@@ -83,7 +129,7 @@ board 8 + CONSTANT B8
     0 val !
 
     recursionDepth @ 3 > IF
-        LOOKFORWINNER
+        CALLWINNER
         DUP pieceBlank <> IF
             pieceX = IF scoreWin ELSE scoreLose THEN
             val !
@@ -111,6 +157,7 @@ board 8 + CONSTANT B8
         BEGIN boardIndex @ 9 < WHILE
             boardIndex @ board + C@ 0 = IF
                 pieceMove @ board boardIndex @ + C!
+                boardIndex @ lastMove !
                 boardIndex @ pieceMove @ val @
                 1 recursionDepth +!
 
@@ -122,21 +169,31 @@ board 8 + CONSTANT B8
                 pieceBlank boardIndex @ board + C!
 
                 pieceX pieceMove @ = IF
-                    score @ val @ > IF
-                        score @ val !
-                        scoreWin val @ = val @ beta @ < INVERT OR IF
-                            10 boardIndex !
-                        ELSE
-                            val @ alpha @ > IF val @ alpha ! THEN
+                    score @ scoreWin = IF
+                        scoreWin val !
+                        10 boardIndex !
+                    ELSE
+                        score @ val @ > IF
+                            score @ val !
+                            val @ beta @ < INVERT IF
+                                10 boardIndex !
+                            ELSE
+                                val @ alpha @ > IF val @ alpha ! THEN
+                            THEN
                         THEN
                     THEN
                 ELSE
-                    score @ val @ < IF
-                        score @ val !
-                        scoreLose val @ = val @ alpha @ > INVERT OR IF
-                            10 boardIndex !
-                        ELSE
-                            val @ beta @ < IF val @ beta ! THEN
+                    score @ scoreLose = IF
+                        scoreLose val !
+                        10 boardIndex !
+                    ELSE
+                        score @ val @ < IF
+                            score @ val !
+                            val @ alpha @ > INVERT IF
+                                10 boardIndex !
+                            ELSE
+                                val @ beta @ < IF val @ beta ! THEN
+                            THEN
                         THEN
                     THEN
                 THEN
@@ -178,4 +235,3 @@ board 8 + CONSTANT B8
 
 TTT
 BYE
-

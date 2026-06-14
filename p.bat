@@ -19,19 +19,19 @@ if "%~1"=="" (
     call ma.bat mm nopeep
 )
 
-ntvcm -c -p tstring
-ntvcm -c -p sieve
-ntvcm -c -p e
-ntvcm -c -p tm
-ntvcm -c -p ttt 10
-ntvcm -c -p pihex
-ntvcm -c -p mm
+ntvcm -c -p build\tstring
+ntvcm -c -p build\sieve
+ntvcm -c -p build\e
+ntvcm -c -p build\tm
+ntvcm -c -p build\ttt 10
+ntvcm -c -p build\pihex
+ntvcm -c -p build\mm
 
 rem dir /OD tstring.com sieve.com e.com tm.com ttt.com pihex.com mm.com
 
 @echo off
 for %%i in (tstring.com sieve.com e.com tm.com ttt.com pihex.com mm.com) do (
-    for /f "tokens=*" %%a in ('dir /OD "%%i" ^| findstr /R "^[0-9]"') do echo %%a
+    for /f "tokens=*" %%a in ('dir /OD build\"%%i" ^| findstr /R "^[0-9]"') do echo %%a
 )
 
 

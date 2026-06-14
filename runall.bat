@@ -22,7 +22,7 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 ^
              tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom ^
              tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield ^
-             pint cobint forint bint fint cint tstretst tportio tlongidx tforsco ^
+             pint cobint forint bint fint cint adaint tstretst tportio tlongidx tforsco ^
              tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv tfarrsub
 
 echo --- optimized (ma peep) ---
@@ -71,6 +71,8 @@ for %%a in (%_applist%) do (
         pushd "%_builddir%" && %_emulator% %%a e.cob >>"%outabs%" & popd
     ) else if "%%a"=="forint" (
         pushd "%_builddir%" && %_emulator% %%a e.for >>"%outabs%" & popd
+    ) else if "%%a"=="adaint" (
+        pushd "%_builddir%" && %_emulator% %%a e.ada >>"%outabs%" & popd
     ) else if "%%a"=="bint" (
         pushd "%_builddir%" && %_emulator% %%a e.bas >>"%outabs%" & popd
     ) else if "%%a"=="fint" (
@@ -110,6 +112,11 @@ if exist "tests\E.FOR" (
     copy /Y "tests\E.FOR" "%_builddir%\E.FOR" >nul
 ) else if exist "E.FOR" (
     copy /Y "E.FOR" "%_builddir%\E.FOR" >nul
+)
+if exist "tests\E.ADA" (
+    copy /Y "tests\E.ADA" "%_builddir%\E.ADA" >nul
+) else if exist "E.ADA" (
+    copy /Y "E.ADA" "%_builddir%\E.ADA" >nul
 )
 if exist "tests\E.BAS" (
     copy /Y "tests\E.BAS" "%_builddir%\E.BAS" >nul

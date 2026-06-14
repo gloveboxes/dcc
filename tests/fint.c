@@ -9,11 +9,11 @@
 #include <string.h>
 #include <ctype.h>
 
-#define MAXSRC 5000L
+#define MAXSRC 8000L
 #define MAXTOK 64
 #define MAXNAME 18
-#define MAXWORDS 72
-#define MAXCODE 500
+#define MAXWORDS 80
+#define MAXCODE 700
 #define MAXSTR 8
 #define MAXPATCH 32
 #define MAXMEM 8200
@@ -100,8 +100,6 @@
 struct Ins { int op; int a; };
 struct Word { char name[MAXNAME]; int kind; int val; int end; };
 struct Ctl { int kind; int a; int b; };
-struct REnt { int kind; int a; int b; int c; };
-/* kind 1=return pc, 2=loop index/limit, c=previous loop frame */
 
 struct State {
     char *s_src;
@@ -117,7 +115,10 @@ struct State {
     char **s_strs;
     unsigned char *s_mem;
     int *s_st;
-    struct REnt *s_rs;
+    int *s_crs;      /* call return stack: flat int array of saved PCs */
+    int *s_lrs_idx;  /* loop index values */
+    int *s_lrs_lim;  /* loop limit values */
+    int *s_lrs_prv;  /* loop_top link (previous loop frame index) */
     int s_cp;
     int s_nw;
     int s_nc;
@@ -125,7 +126,8 @@ struct State {
     int s_mtop;
     int s_mcap;
     int s_sp;
-    int s_rp;
+    int s_crp;   /* call return stack pointer */
+    int s_lrp;   /* loop stack pointer */
     int s_verbose;
     int s_curword;
     int s_halt;
@@ -146,7 +148,10 @@ static struct State *G;
 #define strs G->s_strs
 #define mem G->s_mem
 #define st G->s_st
-#define rs G->s_rs
+#define crs G->s_crs
+#define lrs_idx G->s_lrs_idx
+#define lrs_lim G->s_lrs_lim
+#define lrs_prv G->s_lrs_prv
 #define cp G->s_cp
 #define nw G->s_nw
 #define nc G->s_nc
@@ -154,7 +159,8 @@ static struct State *G;
 #define mtop G->s_mtop
 #define mcap G->s_mcap
 #define sp G->s_sp
-#define rp G->s_rp
+#define crp G->s_crp
+#define lrp G->s_lrp
 #define opt_verbose G->s_verbose
 #define curword G->s_curword
 #define halted G->s_halt
@@ -468,132 +474,133 @@ static void prim(int p)
     }
 }
 
-static void rpush(int kind, int a, int b)
-{
-    struct REnt *re;
-    if (rp >= MAXRSTACK) die("return stack full");
-    re = rs + rp;
-    re->kind = kind;
-    re->a = a;
-    re->b = b;
-    re->c = 0;
-    rp++;
-}
-
-static void rpush_loop(int a, int b)
-{
-    struct REnt *re;
-    if (rp >= MAXRSTACK) die("return stack full");
-    re = rs + rp;
-    re->kind = 2;
-    re->a = a;
-    re->b = b;
-    re->c = loop_top;
-    loop_top = rp;
-    rp++;
-}
-
-static struct REnt rpop_kind(int kind)
-{
-    struct REnt e;
-    if (rp <= 0) die("return stack empty");
-    e = rs[--rp];
-    if (e.kind != kind) die("return stack mismatch");
-    return e;
-}
-
-static int current_i(void)
-{
-    if (loop_top < 0) die("I outside loop");
-    return (rs + loop_top)->a;
-}
 
 static void run_at(int pc)
 {
     struct Ins *in;
-    int a,b;
-    struct REnt e;
-    while (!halted) {
-        in = &code[pc++];
+    struct Ins *lcode;
+    unsigned char *lmem;
+    int *lst;
+    int *lcrs;
+    int *llrs_idx;
+    int *llrs_lim;
+    int *llrs_prv;
+    int lsp, lcrp, llrp, lltop, lmcap;
+    int a, b;
+
+    lcode   = code;
+    lmem    = mem;
+    lst     = st;
+    lcrs    = crs;
+    llrs_idx = lrs_idx;
+    llrs_lim = lrs_lim;
+    llrs_prv = lrs_prv;
+    lsp     = sp;
+    lcrp    = crp;
+    llrp    = lrp;
+    lltop   = loop_top;
+    lmcap   = mcap;
+
+    for (;;) {
+        in = lcode + pc++;
         switch (in->op) {
-        case OP_HALT: return;
-        case OP_LIT: push(in->a); break;
+        case OP_HALT:
+            sp = lsp; crp = lcrp; lrp = llrp; loop_top = lltop;
+            return;
+        case OP_LIT: lst[lsp++] = in->a; break;
         case OP_PRIM:
+            sp = lsp; crp = lcrp; lrp = llrp; loop_top = lltop;
             prim(in->a);
+            lsp = sp; lcrp = crp; llrp = lrp; lltop = loop_top;
             break;
         case OP_FETCHA:
-            push(cell_at(in->a));
+            { int _a = in->a; lst[lsp++] = (int)(short)(lmem[_a] | (lmem[_a+1] << 8)); }
             break;
         case OP_STOREA:
-            a = pop();
-            set_cell(in->a, a);
+            { int _a = in->a; int _v = lst[--lsp]; lmem[_a] = (unsigned char)_v; lmem[_a+1] = (unsigned char)(_v >> 8); }
             break;
         case OP_CFETCHA:
-            if (in->a < 0 || in->a >= mcap) die("bad address");
-            push(mem[in->a]);
+            lst[lsp++] = lmem[in->a];
             break;
         case OP_CSTOREA:
-            a = pop();
-            if (in->a < 0 || in->a >= mcap) die("bad address");
-            mem[in->a] = (unsigned char)a;
+            lmem[in->a] = (unsigned char)lst[--lsp];
             break;
         case OP_ADDSTOREA:
-            a = pop();
-            set_cell(in->a, cell_at(in->a) + a);
+            { int _a = in->a; int _v = (int)(short)(lmem[_a] | (lmem[_a+1] << 8)) + lst[--lsp]; lmem[_a] = (unsigned char)_v; lmem[_a+1] = (unsigned char)(_v >> 8); }
             break;
         case OP_CALL:
-            rpush(1, pc, 0);
+            if (lcrp >= MAXRSTACK) die("return stack full");
+            lcrs[lcrp++] = pc;
             pc = in->a;
             break;
         case OP_RET:
-            if (rp <= 0) return;
-            e = rpop_kind(1);
-            pc = e.a;
+            if (lcrp <= 0) {
+                sp = lsp; crp = lcrp; lrp = llrp; loop_top = lltop;
+                return;
+            }
+            pc = lcrs[--lcrp];
             break;
         case OP_JMP: pc = in->a; break;
-        case OP_JZ: a = pop(); if (!a) pc = in->a; break;
+        case OP_JZ: { int _v = lst[--lsp]; if (!_v) pc = in->a; } break;
         case OP_DO:
-            a = pop(); b = pop();
-            rpush_loop(a, b);
-            break; /* start, limit */
-        case OP_LOOP:
-            {
-                struct REnt *re;
-                if (rp <= 0) die("LOOP without DO");
-                re = rs + rp - 1;
-                if (re->kind != 2) die("LOOP without DO");
-                re->a = re->a + 1;
-                if (re->a < re->b) pc = in->a;
-                else { loop_top = re->c; rp--; }
-            }
+            a = lst[--lsp]; b = lst[--lsp];
+            if (llrp >= MAXRSTACK) die("loop stack full");
+            llrs_idx[llrp] = a;
+            llrs_lim[llrp] = b;
+            llrs_prv[llrp] = lltop;
+            lltop = llrp++;
             break;
-        case OP_I: push(current_i()); break;
-        case OP_DUP: push(peek()); break;
-        case OP_DROP: (void)pop(); break;
-        case OP_SWAP: a=pop(); b=pop(); push(a); push(b); break;
-        case OP_OVER: if (sp < 2) die("stack empty"); push(st[sp-2]); break;
-        case OP_ROT: if (sp < 3) die("stack empty"); { int c; c=pop(); b=pop(); a=pop(); push(b); push(c); push(a); } break;
-        case OP_ADD: b=pop(); a=pop(); push(a+b); break;
-        case OP_SUB: b=pop(); a=pop(); push(a-b); break;
-        case OP_MUL: b=pop(); a=pop(); push(a*b); break;
-        case OP_DIVMOD: b=pop(); a=pop(); if (b) { push(a % b); push(a / b); } else { push(0); push(0); } break;
-        case OP_MOD: b=pop(); a=pop(); push(b ? a % b : 0); break;
-        case OP_EQ: b=pop(); a=pop(); push(a==b); break;
-        case OP_NE: b=pop(); a=pop(); push(a!=b); break;
-        case OP_LT: b=pop(); a=pop(); push(a<b); break;
-        case OP_GT: b=pop(); a=pop(); push(a>b); break;
-        case OP_AND: b=pop(); a=pop(); push(a & b); break;
-        case OP_OR: b=pop(); a=pop(); push(a | b); break;
-        case OP_INVERT: a=pop(); push(!a); break;
-        case OP_FETCH: a=pop(); push(cell_at(a)); break;
-        case OP_STORE: a=pop(); b=pop(); set_cell(a,b); break;
-        case OP_CFETCH: a=pop(); if (a<0 || a>=mcap) die("bad address"); push(mem[a]); break;
-        case OP_CSTORE: a=pop(); b=pop(); if (a<0 || a>=mcap) die("bad address"); mem[a]=(unsigned char)b; break;
-        case OP_ADDSTORE: a=pop(); b=pop(); set_cell(a, cell_at(a)+b); break;
-        case OP_FILL: { int c,n; c=pop(); n=pop(); a=pop(); if(a<0||n<0||a+n>mcap) die("bad fill"); memset(mem+a, c & 255, (unsigned int)n); } break;
-        case OP_DOT: printf("%d ", pop()); break;
-        case OP_CR: printf("\n"); break;
-        case OP_EMIT: putchar(pop()); break;
+        case OP_LOOP:
+            { int _r = llrp - 1; int _i = llrs_idx[_r] + 1; llrs_idx[_r] = _i;
+              if (_i < llrs_lim[_r]) pc = in->a;
+              else { lltop = llrs_prv[_r]; llrp = _r; } }
+            break;
+        case OP_I: lst[lsp++] = llrs_idx[lltop]; break;
+        case OP_DUP: lst[lsp] = lst[lsp-1]; lsp++; break;
+        case OP_DROP: --lsp; break;
+        case OP_SWAP: { int _t = lst[lsp-1]; lst[lsp-1] = lst[lsp-2]; lst[lsp-2] = _t; } break;
+        case OP_OVER: lst[lsp] = lst[lsp-2]; lsp++; break;
+        case OP_ROT:  { int _t = lst[lsp-3]; lst[lsp-3] = lst[lsp-2]; lst[lsp-2] = lst[lsp-1]; lst[lsp-1] = _t; } break;
+        case OP_ADD:  { int _t = lst[--lsp]; lst[lsp-1] += _t; } break;
+        case OP_SUB:  { int _t = lst[--lsp]; lst[lsp-1] -= _t; } break;
+        case OP_MUL:  { int _t = lst[--lsp]; lst[lsp-1] *= _t; } break;
+        case OP_DIVMOD: b=lst[--lsp]; a=lst[--lsp]; if (b) { lst[lsp++]=a%b; lst[lsp++]=a/b; } else { lst[lsp++]=0; lst[lsp++]=0; } break;
+        case OP_MOD:  b=lst[--lsp]; a=lst[--lsp]; lst[lsp++]=(b ? a%b : 0); break;
+        case OP_EQ:   { int _t = lst[--lsp]; lst[lsp-1] = (lst[lsp-1] == _t); } break;
+        case OP_NE:   { int _t = lst[--lsp]; lst[lsp-1] = (lst[lsp-1] != _t); } break;
+        case OP_LT:   { int _t = lst[--lsp]; lst[lsp-1] = (lst[lsp-1] <  _t); } break;
+        case OP_GT:   { int _t = lst[--lsp]; lst[lsp-1] = (lst[lsp-1] >  _t); } break;
+        case OP_AND:  { int _t = lst[--lsp]; lst[lsp-1] &= _t; } break;
+        case OP_OR:   { int _t = lst[--lsp]; lst[lsp-1] |= _t; } break;
+        case OP_INVERT: lst[lsp-1] = !lst[lsp-1]; break;
+        case OP_FETCH:
+            { int _a = lst[lsp-1]; if (_a < 0 || _a+1 >= lmcap) die("bad address");
+              lst[lsp-1] = (int)(short)(lmem[_a] | (lmem[_a+1] << 8)); }
+            break;
+        case OP_STORE:
+            a = lst[--lsp]; if (a < 0 || a+1 >= lmcap) die("bad address");
+            b = lst[--lsp]; lmem[a] = (unsigned char)b; lmem[a+1] = (unsigned char)(b >> 8);
+            break;
+        case OP_CFETCH:
+            { int _a = lst[lsp-1]; if (_a < 0 || _a >= lmcap) die("bad address");
+              lst[lsp-1] = lmem[_a]; }
+            break;
+        case OP_CSTORE:
+            a = lst[--lsp]; if (a < 0 || a >= lmcap) die("bad address");
+            lmem[a] = (unsigned char)lst[--lsp];
+            break;
+        case OP_ADDSTORE:
+            a = lst[--lsp]; if (a < 0 || a+1 >= lmcap) die("bad address");
+            b = lst[--lsp];
+            { int _v = (int)(short)(lmem[a] | (lmem[a+1] << 8)) + b; lmem[a] = (unsigned char)_v; lmem[a+1] = (unsigned char)(_v >> 8); }
+            break;
+        case OP_FILL:
+            { int c, n; c=lst[--lsp]; n=lst[--lsp]; a=lst[--lsp];
+              if(a<0||n<0||a+n>lmcap) die("bad fill"); memset(lmem+a, c & 255, (unsigned int)n); }
+            break;
+        case OP_DOT:  printf("%d ", lst[--lsp]); break;
+        case OP_CR:   printf("\n"); break;
+        case OP_EMIT: putchar(lst[--lsp]); break;
         case OP_PSTR: printf("%s", strs[in->a]); break;
         default: die("bad op");
         }
@@ -710,7 +717,7 @@ static void top_level(void)
             need_name(name); base = mtop; grow_mem(base + CELL); add_word(name, W_VAR, base); set_cell(base, 0); mtop += CELL; next(); continue;
         }
         if (!strcmp(text, "ALLOT")) { n = pop(); if (n < 0) die("memory full"); grow_mem(mtop + n); mtop += n; next(); continue; }
-        if (!strcmp(text, "I")) { push(current_i()); next(); continue; }
+        if (!strcmp(text, "I")) { if (loop_top < 0) die("I outside loop"); push(lrs_idx[loop_top]); next(); continue; }
         w = find_word(text);
         if (w < 0) die("unknown word");
         exec_word(w);
@@ -751,7 +758,10 @@ static void init_state(void)
     mem = (unsigned char *)xcalloc(INITMEM, 1);
     mcap = INITMEM;
     st = (int *)xcalloc(MAXSTACK, sizeof(int));
-    rs = (struct REnt *)xcalloc(MAXRSTACK, sizeof(struct REnt));
+    crs = (int *)xcalloc(MAXRSTACK, sizeof(int));
+    lrs_idx = (int *)xcalloc(MAXRSTACK, sizeof(int));
+    lrs_lim = (int *)xcalloc(MAXRSTACK, sizeof(int));
+    lrs_prv = (int *)xcalloc(MAXRSTACK, sizeof(int));
     init_prims();
 }
 
@@ -765,7 +775,8 @@ static void print_stats(void)
     fprintf(stderr, "  Strings:               %d / %d\n", ns, MAXSTR);
     fprintf(stderr, "  Data memory bytes:     %d used, %d allocated, %d max\n", mtop, mcap, MAXMEM);
     fprintf(stderr, "  Data stack max:        %d\n", MAXSTACK);
-    fprintf(stderr, "  Return stack max:      %d\n", MAXRSTACK);
+    fprintf(stderr, "  Call return stack max: %d\n", MAXRSTACK);
+    fprintf(stderr, "  Loop stack max:        %d\n", MAXRSTACK);
 }
 
 int main(int argc, char **argv)

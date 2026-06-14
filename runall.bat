@@ -22,7 +22,8 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 ^
              tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom ^
              tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield ^
-             pint cobint forint bint fint cint tstretst tportio tlongidx tforsco tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv
+             pint cobint forint bint fint cint tstretst tportio tlongidx tforsco ^
+             tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv tfarrsub
 
 echo --- optimized (ma peep) ---
 set "outputfile=test_dcc.txt"
@@ -75,7 +76,7 @@ for %%a in (%_applist%) do (
     ) else if "%%a"=="fint" (
         pushd "%_builddir%" && %_emulator% %%a e.f >>"%outabs%" & popd
     ) else if "%%a"=="cint" (
-        pushd "%_builddir%" && %_emulator% %%a e.c >>"%outabs%" & popd
+        pushd "%_builddir%" && %_emulator% %%a eu.c >>"%outabs%" & popd
     ) else if "%%a"=="targs" (
         pushd "%_builddir%" && %_emulator% %%a a bb ccc dddd eeeee >>"%outabs%" & popd
     ) else (
@@ -120,9 +121,9 @@ if exist "tests\E.F" (
 ) else if exist "E.F" (
     copy /Y "E.F" "%_builddir%\E.F" >nul
 )
-if exist "tests\E.C" (
-    copy /Y "tests\E.C" "%_builddir%\E.C" >nul
-) else if exist "E.C" (
-    copy /Y "E.C" "%_builddir%\E.C" >nul
+if exist "tests\EU.C" (
+    copy /Y "tests\EU.C" "%_builddir%\EU.C" >nul
+) else if exist "EU.C" (
+    copy /Y "EU.C" "%_builddir%\EU.C" >nul
 )
 exit /b

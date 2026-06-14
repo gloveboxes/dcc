@@ -3066,9 +3066,9 @@ argv[ 4 ]: 'DDDD'
 argv[ 5 ]: 'EEEEE'
 targs completed with great success
 test tstdc
-__DATE__ Jun 12 2026
-__TIME__ 14:38:48
-__FILE__ tests/tstdc.c
+__DATE__ Jun 14 2026
+__TIME__ 05:56:36
+__FILE__ tests\tstdc.c
 __LINE__ 8
 __STDC__ 1
 test tstdc completed with great success
@@ -4248,3 +4248,5 @@ vprintf:x=7
 vfprintf:99
 checks=32 failures=0
 RESULT: PASS
+test tfarrsub
+PASS field_arr_subscript

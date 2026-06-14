@@ -21,7 +21,8 @@ APPLIST="sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong \
          tpostut tbug2 tlongsub treg tret tstructv tstructi tstructp tstri2 \
          tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom \
          tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield \
-         pint cobint forint bint fint cint tstretst tportio tlongidx tforsco tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv"
+         pint cobint forint bint fint cint tstretst tportio tlongidx tforsco \
+         tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv tfarrsub"
 
 run_args() {
     case "$1" in
@@ -31,7 +32,7 @@ run_args() {
         forint) echo "e.for" ;;
         bint) echo "e.bas" ;;
         fint) echo "e.f" ;;
-        cint) echo "e.c" ;;
+        cint) echo "eu.c" ;;
         wumpus|tchess) echo "-c" ;;
         targs) echo "a bb ccc dddd eeeee" ;;
         *) echo "" ;;
@@ -58,7 +59,7 @@ stage_fixture_inputs() {
     # Some tests read CP/M data files (E.*). Since test binaries run from
     # build/, ensure those files are present there. Prefer tests/ and keep
     # root fallback for compatibility.
-    for f in E.PAS E.COB E.FOR E.BAS E.F E.C; do
+    for f in E.PAS E.COB E.FOR E.BAS E.F EU.C; do
         if [ -f "tests/$f" ]; then
             cp -f "tests/$f" "${BUILD_DIR}/$f"
         elif [ -f "$f" ]; then

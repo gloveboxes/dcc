@@ -1353,7 +1353,7 @@ void gen_lvalue_addr(int *ptype)
 
                     if (try_parse_const_subscript(&const_index)) {
                         if (addr_is_array)
-                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                            elem_size = type_size(cur_type);
                         else
                             elem_size = type_index_elem_size(cur_type);
                         emit_add_const_to_hl(const_index * elem_size);
@@ -1366,7 +1366,7 @@ void gen_lvalue_addr(int *ptype)
                         expr_result_dead = old_dead;
                         expect(']');
                         if (addr_is_array)
-                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                            elem_size = type_size(cur_type);
                         else
                             elem_size = type_index_elem_size(cur_type);
                         scale_hl_by_elem_size(elem_size);
@@ -3156,7 +3156,7 @@ void gen_primary(void)
                 expect(']');
 
                 if (val_is_array) {
-                    elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                    elem_size = type_size(cur_type);
                     if (current_field_array_dim_count > 0) {
                         for (di = val_array_index_count + 1;
                              di < current_field_array_dim_count;
@@ -3227,7 +3227,7 @@ void gen_primary(void)
                         expect(']');
 
                         if (val_is_array) {
-                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
+                            elem_size = type_size(cur_type);
                             if (current_field_array_dim_count > 0) {
                                 for (di = val_array_index_count + 1;
                                      di < current_field_array_dim_count;

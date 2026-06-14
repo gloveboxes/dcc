@@ -84,7 +84,7 @@ example a `float` operand dropped to 16 bits, or a `long` high word lost). The
 branches around it then need post-generation fixups that trust the *actual*
 result type (`g_expr_type`) once the operand has finally been emitted.
 
-The **type oracle** in [`dcc_ops.c`](dcc_ops.c) replaces the shallow guess with
+The **type oracle** in [`dcc_type_oracle.c`](dcc_type_oracle.c) replaces the shallow guess with
 a complete answer. `typeof_conditional_arm()` and its internal `to_*` ladder
 (`to_postfix` → `to_unary` → `to_mul`/`to_add`/`to_shift`/`to_rel`/`to_eq` →
 the bitwise levels → `to_conditional` → `to_assign`/`to_comma`) walk the full
@@ -106,7 +106,7 @@ Two properties make this safe and cheap:
   whole-expression type information without a full AST/IR and without a second
   code-generating pass, preserving dcc's tiny single-pass character.
 
-The oracle is currently adopted narrowly — `gen_conditional` uses it to decide
+The oracle is currently adopted narrowly — `gen_conditional` in [`dcc_ops.c`](dcc_ops.c) uses it to decide
 whether a `?:` is a `float` expression (so the already-generated arm can be
 converted before the branches join). Other type-guess sites still use the
 shallow peek plus the `g_expr_type` post-generation fallback; routing more of
@@ -137,6 +137,7 @@ graph TB
         SYM["dcc_symbols.c<br/>symbol tables · access codegen"]
         CONST["dcc_constexpr.c<br/>integer const-expr parser"]
         FOLD["dcc_fold.c<br/>constant folding · sizeof/offsetof"]
+      ORACLE["dcc_type_oracle.c<br/>type-only expression oracle"]
     end
 
     subgraph CG["3 · Code generation"]
@@ -195,9 +196,10 @@ The arrows above show the dominant direction, not a hard layering restriction.
 | [`dcc_constexpr.c`](dcc_constexpr.c) | The `parse_const_long_*` precedence ladder that evaluates compile-time integer constant expressions for array bounds, enum values and case labels. |
 | [`dcc_symbols.c`](dcc_symbols.c) | Symbol tables (locals, parameters, globals), the string-literal pool, EXTRN bookkeeping, and code that loads/stores a symbol's address or value, including post-increment/decrement fast paths. |
 | [`dcc_fold.c`](dcc_fold.c) | The `cf_*` constant-folding engine (with C type/promotion rules), `sizeof`/`offsetof` evaluation, and emission of folded constant results. |
+| [`dcc_type_oracle.c`](dcc_type_oracle.c) | Side-effect-free type oracle used by expression codegen: `typeof_conditional_arm()` plus its internal `to_*` grammar walk (`to_postfix` through `to_comma`) that predicts expression result type without emitting code. |
 | [`dcc_expr.c`](dcc_expr.c) | Core expression code generation: `gen_primary`/`gen_unary`, casts, dereference/address-of, function-call argument marshalling (scalar/struct/variadic), and a large set of recognised fast-path peepholes. |
 | [`dcc_cmp.c`](dcc_cmp.c) | Relational/equality comparison codegen (signed/unsigned, 16- and 32-bit) and condition-to-branch lowering, including single-`cp` byte-operand comparators. |
-| [`dcc_ops.c`](dcc_ops.c) | Binary-operator/arithmetic codegen: `+ - * / %`, shifts, bitwise ops across 16/32-bit and unsigned variants, integer promotion, pointer element-size scaling, and power-of-two float scaling. Also hosts the **type oracle** (`typeof_conditional_arm` + the `to_*` ladder): a side-effect-free, type-only walk of the expression grammar used to resolve an operand's type without emitting code (see *Type resolution without an AST* above). |
+| [`dcc_ops.c`](dcc_ops.c) | Binary-operator/arithmetic codegen: `+ - * / %`, shifts, bitwise ops across 16/32-bit and unsigned variants, integer promotion, pointer element-size scaling, and power-of-two float scaling. Uses `typeof_conditional_arm()` from [`dcc_type_oracle.c`](dcc_type_oracle.c) when lowering mixed-type `?:`. |
 | [`dcc_assign.c`](dcc_assign.c) | Assignment lowering (plain/compound; scalar/struct/bitfield/array element), float literal and r-value materialisation, and the top-level `gen_expr` entry points. |
 | [`dcc_stmt_fast.c`](dcc_stmt_fast.c) | Whole-statement fast-path idioms: in-place `++`/`--`, self-add accumulation, and the CRC-update byte idiom. Each falls back to the generic path when unmatched. |
 | [`dcc_decl.c`](dcc_decl.c) | Local declaration and initializer codegen: scalars, arrays, structs/unions, bitfields, brace initializer lists, and const-scalar folding of local initializers. |
@@ -283,7 +285,7 @@ diff baseline_test_dcc.txt test_dcc.txt \
 - **After any change**, rebuild and run the regression suite. For pure
   refactors, the filtered diff must stay empty.
 - **Reaching for an operand's type before it is generated?** Prefer the type
-  oracle (`typeof_conditional_arm` in [`dcc_ops.c`](dcc_ops.c)) over the shallow
+  oracle (`typeof_conditional_arm` in [`dcc_type_oracle.c`](dcc_type_oracle.c)) over the shallow
   `peek_simple_unary_type` / `snippet_simple_type` lookahead. The shallow peeks
   only see the first token or two and are the source of the type blind-spot bug
   class (a float, `long`, or pointer hidden behind parens, a cast, a struct

@@ -35,6 +35,7 @@ set(DCC_SOURCES
     dcc_expr.c
     dcc_cmp.c
     dcc_ops.c
+    dcc_type_oracle.c
     dcc_assign.c
     dcc_stmt_fast.c
     dcc_decl.c

@@ -6,9 +6,8 @@
 ._*
 .Spotlight-V100
 .Trashes
+
+# Built host toolchain binaries
 /dcc
 /dccpeep
 /dccrtlstrip
-test_dcc.txt
-test_dccu.txt
-build/

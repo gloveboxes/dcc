@@ -41,6 +41,7 @@ get surprised by a link error.
   - [string.h — strings and memory blocks](#stringh--strings-and-memory-blocks)
   - [ctype.h — character classification](#ctypeh--character-classification)
   - [math.h — single-precision float](#mathh--single-precision-float)
+    - [Float precision and mixed-type gotchas](#float-precision-and-mixed-type-gotchas)
   - [setjmp.h — non-local jumps](#setjmph--non-local-jumps)
   - [stdarg.h — variadic arguments](#stdargh--variadic-arguments)
   - [stddef.h — common definitions](#stddefh--common-definitions)

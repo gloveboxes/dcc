@@ -89,3 +89,126 @@ I built the compiler using AI. I wanted to use Claude and ChatGPT on something r
 Why dcc? All compilers from that era were K&R since the first ANSI C standard was C89 (1989). I wanted a compiler with modern syntax for CP/M. I was also curious how hard it would be to generate better code than the older compilers. Turns out it's generally straightforward. It's easier than ever to code for old machines, and I think that's pretty cool.
 
 Compiler writers generally avoid adding optimizations for specific apps; that's long been considered "cheating" by those who run benchmarks. In this case, I encourage you to "cheat" for your app. Point Claude at your source code and dcc's soucrce code and tell it to make dcc optimize code generation for your app (size or speed). It's the future.
+
+## Setting up your environment
+
+To use the build scripts (`ma.sh`, `ma.bat`, `runall.sh`, `runall.bat`) without modifying your global PATH or environment, you can set project-local variables that point to the dcc tools and emulator. This is especially useful when working with multiple CP/M projects.
+
+### macOS (with ntvcm)
+
+Add this to your shell profile (e.g., `~/.zshrc` or `~/.bash_profile`), or set it in the terminal before running scripts:
+
+```bash
+# Path to ntvcm emulator directory
+export PATH="$PATH:/path/to/ntvcm"
+
+# Project-specific overrides for the DCC compiler toolchain
+export DCC=./dcc
+export DCCPEEP=./dccpeep
+export DCCRTLSTRIP=./dccrtlstrip
+```
+
+Replace `/path/to/ntvcm` with the actual path to your ntvcm clone (e.g., `~/GitHub/ntvcm` or `/opt/ntvcm`).
+
+### Linux (with ntvcm or other emulator)
+
+Add to your shell profile (e.g., `~/.bashrc` or `~/.zshrc`):
+
+```bash
+# Path to ntvcm emulator directory (adjust to your ntvcm location)
+export PATH="$PATH:/path/to/ntvcm"
+
+# Project-specific overrides for the DCC compiler toolchain
+export DCC=./dcc
+export DCCPEEP=./dccpeep
+export DCCRTLSTRIP=./dccrtlstrip
+```
+
+If you installed dcc itself globally via a package manager, you can omit the `DCC`, `DCCPEEP`, and `DCCRTLSTRIP` exports and let the scripts find the tools on your PATH.
+
+### Windows (native)
+
+Both dcc and ntvcm compile to native Windows executables. Set environment variables via System Properties → Environment Variables, or temporarily in your shell:
+
+**PowerShell:**
+```powershell
+$env:PATH += ";C:\path\to\ntvcm"
+$env:DCC = ".\dcc"
+$env:DCCPEEP = ".\dccpeep"
+$env:DCCRTLSTRIP = ".\dccrtlstrip"
+```
+
+**CMD:**
+```batch
+set PATH=%PATH%;C:\path\to\ntvcm
+set DCC=.\dcc
+set DCCPEEP=.\dccpeep
+set DCCRTLSTRIP=.\dccrtlstrip
+```
+
+Then use `ma.bat` and `runall.bat` to build and test your apps. Build the dcc tools themselves with `m.bat` (requires Visual Studio with C++ support).
+
+## Building dcc and ntvcm from source
+
+Both dcc and ntvcm are self-contained projects that can be built independently. You'll need them to compile and run CP/M apps.
+
+### Cloning the repositories
+
+```bash
+# Clone dcc compiler
+git clone https://github.com/davidly/dcc.git
+cd dcc
+
+# Clone ntvcm emulator (in a parallel directory, or wherever you prefer)
+cd ..
+git clone https://github.com/davidly/ntvcm.git
+```
+
+### Building dcc
+
+dcc compiles on Windows, Linux, and macOS. The build scripts are in the root directory:
+
+**macOS:**
+```bash
+chmod +x mmacos.sh
+./mmacos.sh
+```
+This produces `dcc`, `dccpeep`, and `dccrtlstrip` in the dcc directory.
+
+**Linux:**
+```bash
+chmod +x m.sh
+./m.sh
+```
+
+**Windows:**
+```batch
+m.bat
+```
+Requires Visual Studio with C++ build tools installed.
+
+### Building ntvcm
+
+ntvcm is a C++ project that compiles on Windows, Linux, and macOS.
+
+**macOS:**
+```bash
+cd ntvcm
+chmod +x mmac.sh
+./mmac.sh
+```
+This produces the `ntvcm` executable in the ntvcm directory.
+
+**Linux:**
+```bash
+cd ntvcm
+chmod +x m.sh
+./m.sh
+```
+
+**Windows:**
+Check the ntvcm repository for Windows build instructions (typically via Visual Studio or a batch script).
+
+### After building
+
+Once both projects are built, update your environment as shown in the [Setting up your environment](#setting-up-your-environment) section above, pointing `PATH` to your ntvcm build directory and setting the `DCC`, `DCCPEEP`, and `DCCRTLSTRIP` variables to the dcc binaries.

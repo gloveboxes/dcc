@@ -114,7 +114,7 @@
              MOVE 0 TO VAL.
 
              IF DEPTH > 3
-                 PERFORM WINNER
+                 PERFORM POSCHK
                  IF WI NOT = 0
                      IF WI = 1 MOVE 6 TO VAL ELSE MOVE 4 TO VAL
                  ELSE IF DEPTH = 8 MOVE 5 TO VAL.
@@ -165,4 +165,67 @@
                  MOVE 0 TO B( X )
 
                  PERFORM UPDATESTATE.
+
+         POSCHK.
+             MOVE 0 TO WI.
+             IF X = 1 PERFORM POS1CHK.
+             IF X = 2 PERFORM POS2CHK.
+             IF X = 3 PERFORM POS3CHK.
+             IF X = 4 PERFORM POS4CHK.
+             IF X = 5 PERFORM POS5CHK.
+             IF X = 6 PERFORM POS6CHK.
+             IF X = 7 PERFORM POS7CHK.
+             IF X = 8 PERFORM POS8CHK.
+             IF X = 9 PERFORM POS9CHK.
+
+         POS1CHK.
+             MOVE B( 1 ) TO T.
+             IF 0 NOT = T AND T=B(2) AND T=B(3) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(4) AND T=B(7) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(5) AND T=B(9) MOVE T TO WI.
+
+         POS2CHK.
+             MOVE B( 2 ) TO T.
+             IF 0 NOT = T AND T=B(1) AND T=B(3) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(5) AND T=B(8) MOVE T TO WI.
+
+         POS3CHK.
+             MOVE B( 3 ) TO T.
+             IF 0 NOT = T AND T=B(1) AND T=B(2) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(6) AND T=B(9) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(5) AND T=B(7) MOVE T TO WI.
+
+         POS4CHK.
+             MOVE B( 4 ) TO T.
+             IF 0 NOT = T AND T=B(5) AND T=B(6) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(1) AND T=B(7) MOVE T TO WI.
+
+         POS5CHK.
+             MOVE B( 5 ) TO T.
+             IF 0 NOT = T AND T=B(4) AND T=B(6) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(2) AND T=B(8) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(1) AND T=B(9) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(3) AND T=B(7) MOVE T TO WI.
+
+         POS6CHK.
+             MOVE B( 6 ) TO T.
+             IF 0 NOT = T AND T=B(4) AND T=B(5) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(3) AND T=B(9) MOVE T TO WI.
+
+         POS7CHK.
+             MOVE B( 7 ) TO T.
+             IF 0 NOT = T AND T=B(8) AND T=B(9) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(1) AND T=B(4) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(3) AND T=B(5) MOVE T TO WI.
+
+         POS8CHK.
+             MOVE B( 8 ) TO T.
+             IF 0 NOT = T AND T=B(7) AND T=B(9) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(2) AND T=B(5) MOVE T TO WI.
+
+         POS9CHK.
+             MOVE B( 9 ) TO T.
+             IF 0 NOT = T AND T=B(7) AND T=B(8) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(3) AND T=B(6) MOVE T TO WI.
+             IF 0 = WI AND 0 NOT = T AND T=B(1) AND T=B(5) MOVE T TO WI.
 

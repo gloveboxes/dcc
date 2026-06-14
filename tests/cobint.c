@@ -575,60 +575,12 @@ static int ttt_winner(void)
     return 0;
 }
 
-static int ttt_minmax(int alpha, int beta)
-{
-    int depth, wi, val, pm, x, sc;
-    setv0("MOVECOUNT", getv0("MOVECOUNT") + 1);
-    depth = getv0("DEPTH");
-    val = 0;
-    if (depth > 3) {
-        wi = ttt_winner();
-        if (wi) val = (wi == 1) ? 6 : 4;
-        else if (depth == 8) val = 5;
-    }
-    if (!val) {
-        if (depth & 1) { val = 2; pm = 1; }
-        else { val = 9; pm = 2; }
-        for (x = 1; x <= 9; x++) {
-            if (geta1("B", x) == 0) {
-                seta1("B", x, pm);
-                setv0("DEPTH", depth + 1);
-                sc = ttt_minmax(alpha, beta);
-                setv0("DEPTH", depth);
-                seta1("B", x, 0);
-                if (pm == 1) {
-                    if (sc > val) val = sc;
-                    if (val == 6 || val >= beta) break;
-                    if (val > alpha) alpha = val;
-                } else {
-                    if (sc < val) val = sc;
-                    if (val == 4 || val <= alpha) break;
-                    if (val < beta) beta = val;
-                }
-            }
-        }
-    }
-    setv0("SC", val);
-    return val;
-}
-
-static int maybe_special_perform_i(int p)
-{
-    if (!strcmp(para[p].name, "MINMAX") && has_var_name("MOVECOUNT") &&
-        has_var_name("B")) {
-        ttt_minmax(getv0("ALPHA"), getv0("BETA"));
-        return 1;
-    }
-    return 0;
-}
-
 static void do_perform(void)
 {
     int p, q, vname, fromv, byv, times, limit;
     tp++;
     if (tpeek() != TK_PARA) die("perform name");
     tp++; p = tget();
-    if (maybe_special_perform_i(p)) return;
     q = p; times = 1;
     if (acc(KW_THRU)) { if (tpeek() != TK_PARA) die("thru name"); tp++; q = tget(); }
     if (tpeek() == TK_NUM) { tp++; times = tget(); need(KW_TIMES); }
@@ -684,6 +636,7 @@ static void exec_stmt_tokens(void)
     int k;
     while (tp < tend && !stopped && !jumped) {
         k = tpeek();
+        if (k == KW_ELSE) return;
         if (k == KW_MOVE) do_move();
         else if (k == KW_COMPUTE) do_compute();
         else if (k == KW_ADD) do_add();

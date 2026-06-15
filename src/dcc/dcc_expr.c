@@ -1157,6 +1157,37 @@ int try_parse_const_subscript(long *out)
     return 0;
 }
 
+/*
+ * Snapshot the current_field_array_* dimension metadata into caller-owned
+ * locals.  An index expression evaluated via gen_expr() may perform its own
+ * struct field accesses, which overwrite these globals; capturing them before
+ * any index is evaluated keeps multidimensional field-array strides correct.
+ */
+static void snapshot_field_array_dims(int *dim_count, int *dims)
+{
+    int di;
+    *dim_count = current_field_array_dim_count;
+    for (di = 0; di < 4; ++di)
+        dims[di] = current_field_array_dims[di];
+}
+
+/*
+ * Byte stride of array index `index_count` (0-based) for a field array whose
+ * base element size is `base_size` and whose dimensions are the snapshot
+ * `dim_count`/`dims`.  For a[d0][d1]...[dn-1], advancing index k moves by
+ * base_size * d[k+1] * ... * d[n-1] bytes.
+ */
+static int field_array_index_stride(int base_size, int dim_count,
+                                    const int *dims, int index_count)
+{
+    int stride;
+    int di;
+    stride = base_size;
+    for (di = index_count + 1; di < dim_count; ++di)
+        stride *= dims[di];
+    return stride;
+}
+
 void gen_lvalue_addr(int *ptype)
 {
     current_field_bit_width = 0;
@@ -1174,6 +1205,8 @@ void gen_lvalue_addr(int *ptype)
     int cur_type;
     int arrow;
     int field_is_array;
+    int fa_dimc;
+    int fa_dims[4];
 
     if (tok.kind == TOK_ID) {
         strncpy(name, tok.text, sizeof(name) - 1);
@@ -1273,6 +1306,7 @@ void gen_lvalue_addr(int *ptype)
             }
         }
 
+        snapshot_field_array_dims(&fa_dimc, fa_dims);
         while (accept('[')) {
             cur_type = ptype ? *ptype : s->type;
 
@@ -1285,7 +1319,9 @@ void gen_lvalue_addr(int *ptype)
                 if (try_parse_const_subscript(&const_index)) {
 
                 if (addr_is_array)
-                    elem_size = type_size(cur_type);
+                    elem_size = field_array_index_stride(type_size(cur_type),
+                                                         fa_dimc, fa_dims,
+                                                         addr_array_index_count);
                 else
                     elem_size = sym_pointer_array_index_elem_size(s, cur_type, addr_array_index_count);
 
@@ -1300,7 +1336,9 @@ void gen_lvalue_addr(int *ptype)
                 expect(']');
 
                 if (addr_is_array)
-                    elem_size = type_size(cur_type);
+                    elem_size = field_array_index_stride(type_size(cur_type),
+                                                         fa_dimc, fa_dims,
+                                                         addr_array_index_count);
                 else
                     elem_size = sym_pointer_array_index_elem_size(s, cur_type, addr_array_index_count);
 
@@ -1313,7 +1351,7 @@ void gen_lvalue_addr(int *ptype)
 
             if (addr_is_array) {
                 addr_array_index_count++;
-                if (addr_array_index_count >= current_field_array_dim_count)
+                if (addr_array_index_count >= fa_dimc)
                     addr_is_array = 0;
             } else {
                 cur_type = type_decay_ptr(cur_type);
@@ -1342,6 +1380,7 @@ void gen_lvalue_addr(int *ptype)
                 ptype[0] = cur_type;
             }
 
+            snapshot_field_array_dims(&fa_dimc, fa_dims);
             while (accept('[')) {
                 cur_type = ptype ? *ptype : s->type;
 
@@ -1353,7 +1392,9 @@ void gen_lvalue_addr(int *ptype)
 
                     if (try_parse_const_subscript(&const_index)) {
                         if (addr_is_array)
-                            elem_size = type_size(cur_type);
+                            elem_size = field_array_index_stride(type_size(cur_type),
+                                                                 fa_dimc, fa_dims,
+                                                                 addr_array_index_count);
                         else
                             elem_size = type_index_elem_size(cur_type);
                         emit_add_const_to_hl(const_index * elem_size);
@@ -1366,7 +1407,9 @@ void gen_lvalue_addr(int *ptype)
                         expr_result_dead = old_dead;
                         expect(']');
                         if (addr_is_array)
-                            elem_size = type_size(cur_type);
+                            elem_size = field_array_index_stride(type_size(cur_type),
+                                                                 fa_dimc, fa_dims,
+                                                                 addr_array_index_count);
                         else
                             elem_size = type_index_elem_size(cur_type);
                         scale_hl_by_elem_size(elem_size);
@@ -1378,7 +1421,7 @@ void gen_lvalue_addr(int *ptype)
 
                 if (addr_is_array) {
                     addr_array_index_count++;
-                    if (addr_array_index_count >= current_field_array_dim_count)
+                    if (addr_array_index_count >= fa_dimc)
                         addr_is_array = 0;
                 } else {
                     cur_type = type_decay_ptr(cur_type);
@@ -2671,7 +2714,8 @@ void gen_primary(void)
     int cur_type;
     int arrow;
     int field_is_array;
-    int di;
+    int fa_dimc;
+    int fa_dims[4];
 
     if (tok.kind == TOK_ID && strcmp(tok.text, "__offsetof") == 0) {
         int ov;
@@ -3125,6 +3169,7 @@ void gen_primary(void)
             val_array_index_count = 0;
         }
 
+        snapshot_field_array_dims(&fa_dimc, fa_dims);
         while (accept('[')) {
             indexed = 1;
             cur_type = val_type;
@@ -3138,13 +3183,9 @@ void gen_primary(void)
                 if (try_parse_const_subscript(&const_index)) {
 
                 if (val_is_array) {
-                    elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
-                    if (current_field_array_dim_count > 0) {
-                        for (di = val_array_index_count + 1;
-                             di < current_field_array_dim_count;
-                             ++di)
-                            elem_size *= current_field_array_dims[di];
-                    }
+                    elem_size = field_array_index_stride(type_size(cur_type),
+                                                         fa_dimc, fa_dims,
+                                                         val_array_index_count);
                 } else {
                     elem_size = type_index_elem_size(cur_type);
                 }
@@ -3156,13 +3197,9 @@ void gen_primary(void)
                 expect(']');
 
                 if (val_is_array) {
-                    elem_size = type_size(cur_type);
-                    if (current_field_array_dim_count > 0) {
-                        for (di = val_array_index_count + 1;
-                             di < current_field_array_dim_count;
-                             ++di)
-                            elem_size *= current_field_array_dims[di];
-                    }
+                    elem_size = field_array_index_stride(type_size(cur_type),
+                                                         fa_dimc, fa_dims,
+                                                         val_array_index_count);
                 } else {
                     elem_size = type_index_elem_size(cur_type);
                 }
@@ -3176,7 +3213,7 @@ void gen_primary(void)
 
             if (val_is_array) {
                 val_array_index_count++;
-                if (val_array_index_count >= current_field_array_dim_count)
+                if (val_array_index_count >= fa_dimc)
                     val_is_array = 0;
             } else {
                 val_type = type_decay_ptr(cur_type);
@@ -3198,6 +3235,7 @@ void gen_primary(void)
             val_is_array = field_is_array;
             val_array_index_count = 0;
 
+            snapshot_field_array_dims(&fa_dimc, fa_dims);
             while (accept('[')) {
                 indexed = 1;
                 cur_type = val_type;
@@ -3210,13 +3248,9 @@ void gen_primary(void)
 
                     if (try_parse_const_subscript(&const_index)) {
                         if (val_is_array) {
-                            elem_size = current_field_array_elem_size ? current_field_array_elem_size : type_size(cur_type);
-                            if (current_field_array_dim_count > 0) {
-                                for (di = val_array_index_count + 1;
-                                     di < current_field_array_dim_count;
-                                     ++di)
-                                    elem_size *= current_field_array_dims[di];
-                            }
+                            elem_size = field_array_index_stride(type_size(cur_type),
+                                                                 fa_dimc, fa_dims,
+                                                                 val_array_index_count);
                         } else {
                             elem_size = type_index_elem_size(cur_type);
                         }
@@ -3227,13 +3261,9 @@ void gen_primary(void)
                         expect(']');
 
                         if (val_is_array) {
-                            elem_size = type_size(cur_type);
-                            if (current_field_array_dim_count > 0) {
-                                for (di = val_array_index_count + 1;
-                                     di < current_field_array_dim_count;
-                                     ++di)
-                                    elem_size *= current_field_array_dims[di];
-                            }
+                            elem_size = field_array_index_stride(type_size(cur_type),
+                                                                 fa_dimc, fa_dims,
+                                                                 val_array_index_count);
                         } else {
                             elem_size = type_index_elem_size(cur_type);
                         }
@@ -3247,7 +3277,7 @@ void gen_primary(void)
 
                 if (val_is_array) {
                     val_array_index_count++;
-                    if (val_array_index_count >= current_field_array_dim_count)
+                    if (val_array_index_count >= fa_dimc)
                         val_is_array = 0;
                 } else {
                     val_type = type_decay_ptr(cur_type);

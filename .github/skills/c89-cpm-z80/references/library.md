@@ -6,8 +6,12 @@ function (implicit `int`), referencing something the runtime doesn't provide
 fails at **link** time (`unresolved external`), not compile time. The shipped
 headers are a hand-written minimal subset, so an entry point can exist in the
 runtime without a prototype (the heap symbols `_brk`/`_hlimit` are the deliberate
-case) — declare those yourself. This file lists what the runtime actually
-provides, plus the `printf`/`scanf` conversion subset.
+case) — declare those yourself.
+
+**Assume standard C89 behaviour for every function listed as implemented.** This
+file documents only the deviations: the subset boundary (what's present /
+absent), dcc **extensions** beyond C89, the supported `printf`/`scanf`
+conversions, and a few behavioural quirks.
 
 > Inside the dcc repo, `dcc-c89-reference-guide.md` at the repo root is the
 > exhaustive source; this file is the portable summary for use anywhere.
@@ -20,35 +24,16 @@ provides, plus the `printf`/`scanf` conversion subset.
 > found is **silently ignored** (calls fall back to implicit `int`), whereas a
 > missing `"..."` header is fatal.
 
-## Type sizes
+## Type sizes and byte order
 
-| Type            | Size    | Notes                                            |
-| --------------- | ------- | ------------------------------------------------ |
-| `char`          | 8 bits  | **signed** by default                            |
-| `short`, `int`  | 16 bits | `int` is 16-bit — overflow at ±32767             |
-| `long`          | 32 bits | use `%ld` / the `l` length modifier              |
-| `float`         | 32 bits | **the only floating type — no `double`**         |
-| pointer         | 16 bits | flat CP/M address space                          |
-| `size_t`        | 16 bits | unsigned `int`                                   |
-| `ptrdiff_t`     | 16 bits | `int`                                            |
-| `wchar_t`       | 16 bits | `unsigned int` (for `L"..."`)                    |
-| `FILE`          | 16 bits | `typedef int FILE` — streams are small handles   |
+The full type table is in SKILL.md (16-bit `int`/ptr/`size_t`, 32-bit `long`,
+32-bit `float` as the only floating type, signed `char`, `FILE` is `int`).
+`wchar_t` is 16-bit (`unsigned int`, for `L"..."`).
 
-### Byte order (endianness)
-
-All multi-byte types are stored **little-endian** in memory (Z80-native): the
-least-significant byte is at the lowest address.
-
-- `short`/`int`/pointer (2 bytes): byte 0 = bits 0–7, byte 1 = bits 8–15.
-- `long` (4 bytes): byte 0 = bits 0–7 … byte 3 = bits 24–31.
-- `float` (4-byte IEEE-754 single): byte 0 = least-significant mantissa byte;
-  byte 3 = sign bit + top exponent bits.
-
-So `((unsigned char *)&n)[0]` is always the low byte. This matters when you
-`fread`/`fwrite` binary records (on-disk order is little-endian), alias a value
-through a `union` or `char *`, or hand-build multi-byte BDOS/FCB fields. (The
-runtime's internal `DE:HL` register pairing with `DE` = high word is just a
-calling convention, not the memory layout.)
+Multi-byte values are **little-endian** (Z80-native): `((unsigned char *)&n)[0]`
+is the low byte. Matters for `fread`/`fwrite` of binary records, `union`/`char *`
+aliasing, and hand-built BDOS/FCB fields. (The runtime's internal `DE:HL`
+pairing with `DE` = high word is a calling convention, not the memory layout.)
 
 ## Useful constants
 
@@ -117,17 +102,10 @@ formatting engine and conversion subset as `printf`, so you can write your own
 `rand`, `srand`. `div_t`/`ldiv_t`, `EXIT_SUCCESS`/`EXIT_FAILURE`, `RAND_MAX`
 (32767).
 
-- Heap shares memory with the stack — there is **no stack/heap guard** (size the
-  stack with `-stack`; keep big buffers `static`/global).
-- `realloc(NULL,n)` == `malloc(n)`; `realloc(p,0)` frees and returns `NULL`.
-- `qsort`/`bsearch` take the standard comparator `int cmp(const void *a, const void *b)`;
-  on equal keys `bsearch` may return any matching element.
-- `atoi`/`atol` skip leading space, accept `+`/`-`, stop at first non-digit;
-  overflow wraps modulo the type width.
-- `strtol`/`strtoul` are the full C89 conversions: base 2..36 (0 = auto-detect
-  `0x`/`0` prefixes), optional sign, `endptr` reports the unused tail, and they
-  set `errno` to `ERANGE` and clamp to `LONG_MAX`/`LONG_MIN`/`ULONG_MAX` on
-  overflow. `strtoul` also accepts a leading `-` (value negated modulo 2^32).
+- These behave per standard C89 (`malloc`/`realloc`/`free`, `qsort`/`bsearch`
+  with `int cmp(const void *, const void *)`, `atoi`/`atol`, `strtol`/`strtoul`
+  full base-2..36 conversions). Quirk: heap shares memory with the stack —
+  **no stack/heap guard** (size with `-stack`; keep big buffers `static`/global).
 - `inp(port)`/`outp(port,val)` are a **dcc extension** (declared in
   `<stdlib.h>`, not C89): direct Z80 8-bit port I/O. `inp` runs `IN A,(port)`
   and returns the byte zero-extended to `int` (0..255); `outp` runs
@@ -227,10 +205,10 @@ integers, or a small hand-written `float` parser for decimals.
 
 ## setjmp.h / stdarg.h / stddef.h
 
-- `setjmp`/`longjmp`; `jmp_buf` is 8 bytes (return address, SP, IX).
-- `va_start`, `va_arg`, `va_end`; `va_list` is a `char *` walking the frame.
-- `size_t`, `ptrdiff_t`, `wchar_t`, `NULL`, `offsetof(type, member)`
-  (compiler builtin `__offsetof`; supports nested members and constant indexes).
+Standard C89 (`setjmp`/`longjmp`, `va_start`/`va_arg`/`va_end`, `size_t`/
+`ptrdiff_t`/`wchar_t`/`NULL`/`offsetof`). dcc specifics: `jmp_buf` is 8 bytes
+(return address, SP, IX); `va_list` is a `char *` walking the frame; `offsetof`
+is the builtin `__offsetof` (supports nested members and constant indexes).
 
 ## unistd.h / fcntl.h (low-level CP/M file I/O)
 
@@ -245,9 +223,8 @@ Flags from `<fcntl.h>`: `O_RDONLY` (0), `O_WRONLY` (1), `O_RDWR` (2),
 
 ## errno.h / assert.h
 
-- `extern int errno;` (single-threaded). Pair with `perror`/`strerror`.
-- `assert(expr)` prints to `stderr` and `exit(1)` when false; `#define NDEBUG`
-  to compile out.
+Standard C89: `extern int errno;`, `assert(expr)` (compile out with `NDEBUG`).
+File errnos: `ENOENT`, `EACCES`, `EMFILE`, `ENOSPC`, … (plus `EDOM`/`ERANGE`).
 
 ## CP/M BDOS escape hatch
 

@@ -13,7 +13,7 @@
              03 K PIC 9(4) COMP.
              03 TOTAL-PRIME-COUNT PIC 9(4) COMP.
          02 TABLE.
-             04 FLAGS PIC 9 COMP OCCURS 1023 TIMES.
+             04 FLAGS PIC 9 COMP OCCURS 8190 TIMES.
          01 NUM-DISP PIC 9999.
 
          PROCEDURE DIVISION.
@@ -25,8 +25,8 @@
 
          ITER-ROUTINE.
              MOVE ZEROES TO TOTAL-PRIME-COUNT.
-             PERFORM TFR VARYING I FROM 1 BY 1 UNTIL I = 1023.
-             PERFORM DCP THRU DCE VARYING I FROM 0 BY 1 UNTIL I = 1022.
+             PERFORM TFR VARYING I FROM 1 BY 1 UNTIL I = 8191.
+             PERFORM DCP THRU DCE VARYING I FROM 0 BY 1 UNTIL I = 8191.
 
          TFR.
              MOVE 1 TO FLAGS(I).
@@ -38,7 +38,7 @@
              COMPUTE K = I + PRIME.
 
          FIRST1.
-             IF K > 1023 GO TO NEXT1.
+             IF K > 8190 GO TO NEXT1.
              MOVE 0 TO FLAGS( K + 1 ).
              COMPUTE K = PRIME + K.
              GO TO FIRST1.

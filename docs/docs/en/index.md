@@ -10,6 +10,8 @@ scripts, you will normally use them to build your **own** CP/M / Z80 C apps in
 independent projects. Once the tools are on your `PATH`, you can compile and run
 from any directory — you don't need to work inside the dcc repo.
 
+![dcc compiler banner](images/dcc-retro-banner.svg)
+
 This documentation is a practical guide to the language dcc accepts and the C
 runtime library it ships with. It is split into focused topics so you can jump
 straight to the area you need:

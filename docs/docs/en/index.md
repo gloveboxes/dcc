@@ -40,7 +40,7 @@ assembly (M80/L80 syntax) for size and speed and provides:
 
 - the `start` entrypoint that sets up the heap and parses the command line into
   `argc` / `argv` before calling your `main`,
-- a small subset of the C89 library (documented across these pages),
+- a near complete coverage of the C89 library (documented across these pages),
 - 16-/32-bit integer and 32-bit float arithmetic helpers that the compiler
   calls implicitly.
 

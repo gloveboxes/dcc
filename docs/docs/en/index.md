@@ -93,3 +93,21 @@ The benchmark groups are:
 Rows labelled `dcc C89 v1.0 win/linux/mac xcomp` show dcc cross-compiled output
 without the peephole optimizer. Rows labelled `dcc C89 v1.0 dccpeep optimized`
 show the same compiler output after the `dccpeep` optimizer pass.
+
+## Agentic engineering
+
+dcc was built with AI assistance, but not by tossing prompts over the wall and
+hoping for the best. Agentic engineering is the deliberate version: AI can write
+code quickly, but the human still owns the architecture, constraints, review,
+and definition of "working." That matters for a CP/M compiler, where every
+change has to fit a tiny memory model, old toolchain limits, and `.COM` size
+pressure.
+
+The key habit is tight feedback: plan the change, keep it small, build it, run
+it under the emulator, and review the result. Automated regression tests are
+essential; dcc rebuilds and runs its test programs in optimized and unoptimized
+modes, then compares output against the baseline so compiler and runtime changes
+do not quietly break older programs. For more on the style, see Simon Willison's
+[Vibe Engineering](https://simonwillison.net/2025/Oct/7/vibe-engineering/) and
+Andrew Orobator's
+[Vibe Engineering: From Random Code to Deterministic Systems](https://medium.com/@andreworobator/vibe-engineering-from-random-code-to-deterministic-systems-06e2bf87c144).

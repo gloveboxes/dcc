@@ -14,3 +14,16 @@
 /build
 /test_dcc.txt
 /test_dccu.txt
+
+# Generated MkDocs site
+/docs/site/
+/docs/docs/en/images/table.jpg
+
+# Python cache artifacts
+__pycache__/
+*.py[cod]
+
+# Generated runtime size reports
+/dccrtl-size-report.md
+/dccrtl-all-publics.md
+/dccrtl-all-publics.json

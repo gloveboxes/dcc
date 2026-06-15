@@ -17,3 +17,7 @@
 
 # Generated MkDocs site
 /docs/site/
+
+# Python cache artifacts
+__pycache__/
+*.py[cod]

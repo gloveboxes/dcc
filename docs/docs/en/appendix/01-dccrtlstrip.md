@@ -263,3 +263,59 @@ amount of support code. Reach for the console functions, integer-only `printf`,
 and the self-contained string helpers when binary size matters, and treat float
 formatting and the transcendental math functions as deliberate, budgeted
 choices.
+
+## Regenerating the size report
+
+Run the report generator whenever a change can alter runtime reachability or
+block sizes. That includes:
+
+- editing `DCCRTL.MAC`, especially adding/removing `public` labels, moving block
+   boundaries, or changing helper calls inside runtime routines,
+- adding, removing, or renaming runtime functions in the C headers,
+- changing compiler runtime-name mapping in `src/dcc/dcc_asmname.c`,
+- changing arithmetic/codegen helper emission in the compiler or peephole
+   optimizer,
+- changing `dccrtlstrip` reachability logic.
+
+From the repo root, generate a full Markdown report:
+
+```sh
+python3 scripts/dccrtl_size_report.py > /tmp/dccrtl-size-report.md
+```
+
+Use that output to refresh the tables in this appendix. The default report is
+grouped for documentation updates and includes `self`, `marginal`, and pulled-in
+blocks for the runtime symbols most likely to matter to C programmers.
+
+For targeted checks while editing a particular section, pass runtime public
+symbols directly:
+
+```sh
+python3 scripts/dccrtl_size_report.py --symbols _printf,_pffio,_malloc,_powf
+```
+
+To inspect every public runtime symbol, sort by largest marginal cost:
+
+```sh
+python3 scripts/dccrtl_size_report.py --all-publics --sort marginal \
+   > /tmp/dccrtl-all-publics.md
+```
+
+Agents can request structured output for comparison or automated updates:
+
+```sh
+python3 scripts/dccrtl_size_report.py --all-publics --format json \
+   > /tmp/dccrtl-all-publics.json
+```
+
+After updating this appendix, rebuild the docs in strict mode:
+
+```sh
+cd docs/docs
+mkdocs build --strict
+```
+
+The script parses `public`-delimited runtime blocks, computes the baseline
+reachable from `start`, and reports each symbol's self and marginal line counts
+using the same reachability model as `dccrtlstrip`. The counts are still a
+relative source-line proxy, not exact `.COM` bytes.

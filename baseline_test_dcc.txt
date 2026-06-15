@@ -4253,3 +4253,5 @@ checks=32 failures=0
 RESULT: PASS
 test tfarrsub
 PASS field_arr_subscript
+test t2darr
+PASS multidim_array

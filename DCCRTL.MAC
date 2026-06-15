@@ -382,9 +382,7 @@ __putc:
 
         public  __fgetc
 __fgetc:
-        public  __getc
-__getc:
-        ; int getc(FILE *fp)
+        ; int fgetc(FILE *fp) / int getc(FILE *fp)
         push    ix
         ld      ix,0
         add     ix,sp
@@ -424,6 +422,10 @@ getc_bad:
 
 ___getc_ch:
         db      0
+
+        public  __getc
+__getc:
+        jp      __fgetc
 
         public  _remove
 _remove:

@@ -2108,7 +2108,8 @@ static int pass_store_word_const_hl(void)
         if (peep_parse_ld_de_0_to_255(lines[i], &imm) &&
             eq(i + 1, "ld (hl),e") &&
             eq(i + 2, "inc hl") &&
-            eq(i + 3, "ld (hl),d")) {
+            eq(i + 3, "ld (hl),d") &&
+            !(i + 5 < nlines && eq(i + 4, "pop hl") && eq(i + 5, "ld (hl),e"))) {
             sprintf(line, "ld (hl),%d", imm & 255);
             replace1_tagged(i, line, "store_word_const");
             replace1(i + 1, "inc hl");

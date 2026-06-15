@@ -40,11 +40,16 @@ void perror(const char *s);
 int getchar(void);
 int scanf(const char *format, ...);
 
+/* Non-echoing / polling console input (compiler maps kbhit->__kbht, getch->__gtch) */
+int kbhit(void);
+int getch(void);
+
 /* Single-character stream I/O.  The compiler maps these C names to runtime
  * entry points (getc->__getc, putc->__putc, fputc->__fpc), so calls link
  * regardless; these prototypes add type-checking and editor/IntelliSense
- * resolution.  Note: there is no fgetc in this runtime. */
+ * resolution. */
 int getc(FILE *stream);
+int fgetc(FILE *stream);
 int putc(int c, FILE *stream);
 int fputc(int c, FILE *stream);
 

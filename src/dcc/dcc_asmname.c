@@ -104,7 +104,10 @@ const char *asm_name_for_runtime(const char *cname)
     if (!strcmp(cname, "fputc"))   return "__fpc";
     if (!strcmp(cname, "fputs"))   return "__fps";
     if (!strcmp(cname, "getc"))    return "__getc";
+    if (!strcmp(cname, "fgetc"))   return "__fgetc";
     if (!strcmp(cname, "getchar")) return "__gchr";
+    if (!strcmp(cname, "kbhit"))   return "__kbht";
+    if (!strcmp(cname, "getch"))   return "__gtch";
 
     return NULL;
 }

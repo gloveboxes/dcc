@@ -114,10 +114,10 @@ test tprintf
 12345
 32767
 0000
-00FF
+00ff
 0123
-0ABC
-7FFF
+0abc
+7fff
 A
 a
 0
@@ -132,8 +132,8 @@ world
 [    42]
 [   abc]
 [ hello]
-[  00FF]
-[  0ABC]
+[  00ff]
+[  0abc]
 1 2 3
 ans=42
 ABC
@@ -147,31 +147,31 @@ tprintf ok
 test ts
 top of app
 print an int 27
-sizeof uint8_t: 1, result 00FF
-sizeof uint8_t: 1, result 00FF
-sizeof uint8_t: 1, result 007F
-sizeof uint8_t: 1, result 007F
-sizeof uint16_t: 2, result FFFF
-sizeof uint16_t: 2, result FFFF
-sizeof uint16_t: 2, result 7FFF
-sizeof uint16_t: 2, result 7FFF
-sizeof long: 4, result FFFFFFFF
-sizeof long: 4, result FFFFFFFF
-sizeof ulong: 4, result 7FFFFFFF
-sizeof ulong: 4, result 7FFFFFFF
+sizeof uint8_t: 1, result 00ff
+sizeof uint8_t: 1, result 00ff
+sizeof uint8_t: 1, result 007f
+sizeof uint8_t: 1, result 007f
+sizeof uint16_t: 2, result ffff
+sizeof uint16_t: 2, result ffff
+sizeof uint16_t: 2, result 7fff
+sizeof uint16_t: 2, result 7fff
+sizeof long: 4, result ffffffff
+sizeof long: 4, result ffffffff
+sizeof ulong: 4, result 7fffffff
+sizeof ulong: 4, result 7fffffff
 now test left shifts
-sizeof uint8_t: 1, result 00FE
-sizeof uint8_t: 1, result 00FE
-sizeof uint8_t: 1, result 00FE
-sizeof uint8_t: 1, result 00FE
-sizeof uint16_t: 2, result FFFE
-sizeof uint16_t: 2, result FFFE
-sizeof uint16_t: 2, result FFFE
-sizeof uint16_t: 2, result FFFE
-sizeof long: 4, result FFFFFFFE
-sizeof long: 4, result FFFFFFFE
-sizeof ulong: 4, result FFFFFFFE
-sizeof ulong: 4, result FFFFFFFE
+sizeof uint8_t: 1, result 00fe
+sizeof uint8_t: 1, result 00fe
+sizeof uint8_t: 1, result 00fe
+sizeof uint8_t: 1, result 00fe
+sizeof uint16_t: 2, result fffe
+sizeof uint16_t: 2, result fffe
+sizeof uint16_t: 2, result fffe
+sizeof uint16_t: 2, result fffe
+sizeof long: 4, result fffffffe
+sizeof long: 4, result fffffffe
+sizeof ulong: 4, result fffffffe
+sizeof ulong: 4, result fffffffe
 now test comparisons
 t, f, t, f, t
 t, f, t, f, t
@@ -183,8 +183,8 @@ f, f, f, t, t
 testing printf
   string: 'hello'
   char: 'h'
-  int: 27, 001B
-  negative int: -27, FFE5
+  int: 27, 001b
+  negative int: -27, ffe5
 ts completed with great success
 test tcmp
 uint8_t:
@@ -3479,65 +3479,65 @@ finding XYZ files
 cp/m enumerate directory completed with great success
 test tbits
 uint8_t:
-  and 0003, or 0007, xor 0004, nota 00F8, notb 00FC
-  and 0005, or 00FF, xor 00FA, nota 00F8, notb 0002
-  and 0001, or 00FB, xor 00FA, nota 0006, notb 00FC
-  and 00F9, or 00FD, xor 0004, nota 0006, notb 0002
-  and 00FF, or 00FF, xor 0000, nota 0000, notb 0000
-  and 0003, or 00F7, xor 00F4, nota 0008, notb 00FC
-  and 00F5, or 00FF, xor 000A, nota 0008, notb 0002
-  and 0001, or 000B, xor 000A, nota 00F6, notb 00FC
-  and 0009, or 0009, xor 0000, nota 00F6, notb 00F6
+  and 0003, or 0007, xor 0004, nota 00f8, notb 00fc
+  and 0005, or 00ff, xor 00fa, nota 00f8, notb 0002
+  and 0001, or 00fb, xor 00fa, nota 0006, notb 00fc
+  and 00f9, or 00fd, xor 0004, nota 0006, notb 0002
+  and 00ff, or 00ff, xor 0000, nota 0000, notb 0000
+  and 0003, or 00f7, xor 00f4, nota 0008, notb 00fc
+  and 00f5, or 00ff, xor 000a, nota 0008, notb 0002
+  and 0001, or 000b, xor 000a, nota 00f6, notb 00fc
+  and 0009, or 0009, xor 0000, nota 00f6, notb 00f6
 int8_t:
-  and 0003, or 0007, xor 0004, nota FFF8, notb FFFC
-  and 0005, or FFFF, xor FFFA, nota FFF8, notb 0002
-  and 0001, or FFFB, xor FFFA, nota 0006, notb FFFC
-  and FFF9, or FFFD, xor 0004, nota 0006, notb 0002
-  and FFFF, or FFFF, xor 0000, nota 0000, notb 0000
-  and 0003, or FFF7, xor FFF4, nota 0008, notb FFFC
-  and FFF5, or FFFF, xor 000A, nota 0008, notb 0002
-  and 0001, or 000B, xor 000A, nota FFF6, notb FFFC
-  and 0009, or 0009, xor 0000, nota FFF6, notb FFF6
+  and 0003, or 0007, xor 0004, nota fff8, notb fffc
+  and 0005, or ffff, xor fffa, nota fff8, notb 0002
+  and 0001, or fffb, xor fffa, nota 0006, notb fffc
+  and fff9, or fffd, xor 0004, nota 0006, notb 0002
+  and ffff, or ffff, xor 0000, nota 0000, notb 0000
+  and 0003, or fff7, xor fff4, nota 0008, notb fffc
+  and fff5, or ffff, xor 000a, nota 0008, notb 0002
+  and 0001, or 000b, xor 000a, nota fff6, notb fffc
+  and 0009, or 0009, xor 0000, nota fff6, notb fff6
 uint16_t:
-  and 0003, or 0007, xor 0004, nota FFF8, notb FFFC
-  and 0005, or FFFF, xor FFFA, nota FFF8, notb 0002
-  and 0001, or FFFB, xor FFFA, nota 0006, notb FFFC
-  and FFF9, or FFFD, xor 0004, nota 0006, notb 0002
-  and FFFF, or FFFF, xor 0000, nota 0000, notb 0000
-  and 0003, or 00F7, xor 00F4, nota FF08, notb FFFC
-  and 00F5, or FFFF, xor FF0A, nota FF08, notb 0002
-  and 0001, or FF0B, xor FF0A, nota 00F6, notb FFFC
-  and FF09, or FF09, xor 0000, nota 00F6, notb 00F6
+  and 0003, or 0007, xor 0004, nota fff8, notb fffc
+  and 0005, or ffff, xor fffa, nota fff8, notb 0002
+  and 0001, or fffb, xor fffa, nota 0006, notb fffc
+  and fff9, or fffd, xor 0004, nota 0006, notb 0002
+  and ffff, or ffff, xor 0000, nota 0000, notb 0000
+  and 0003, or 00f7, xor 00f4, nota ff08, notb fffc
+  and 00f5, or ffff, xor ff0a, nota ff08, notb 0002
+  and 0001, or ff0b, xor ff0a, nota 00f6, notb fffc
+  and ff09, or ff09, xor 0000, nota 00f6, notb 00f6
 int16_t:
-  and 0003, or 0007, xor 0004, nota FFF8, notb FFFC
-  and 0005, or FFFF, xor FFFA, nota FFF8, notb 0002
-  and 0001, or FFFB, xor FFFA, nota 0006, notb FFFC
-  and FFF9, or FFFD, xor 0004, nota 0006, notb 0002
-  and FFFF, or FFFF, xor 0000, nota 0000, notb 0000
-  and 0003, or 00F7, xor 00F4, nota FF08, notb FFFC
-  and 00F5, or FFFF, xor FF0A, nota FF08, notb 0002
-  and 0001, or FF0B, xor FF0A, nota 00F6, notb FFFC
-  and FF09, or FF09, xor 0000, nota 00F6, notb 00F6
+  and 0003, or 0007, xor 0004, nota fff8, notb fffc
+  and 0005, or ffff, xor fffa, nota fff8, notb 0002
+  and 0001, or fffb, xor fffa, nota 0006, notb fffc
+  and fff9, or fffd, xor 0004, nota 0006, notb 0002
+  and ffff, or ffff, xor 0000, nota 0000, notb 0000
+  and 0003, or 00f7, xor 00f4, nota ff08, notb fffc
+  and 00f5, or ffff, xor ff0a, nota ff08, notb 0002
+  and 0001, or ff0b, xor ff0a, nota 00f6, notb fffc
+  and ff09, or ff09, xor 0000, nota 00f6, notb 00f6
 uint32_t:
-  and 00000003, or 00000007, xor 00000004, nota FFFFFFF8, notb FFFFFFFC
-  and 00000005, or FFFFFFFF, xor FFFFFFFA, nota FFFFFFF8, notb 00000002
-  and 00000001, or FFFFFFFB, xor FFFFFFFA, nota 00000006, notb FFFFFFFC
-  and FFFFFFF9, or FFFFFFFD, xor 00000004, nota 00000006, notb 00000002
-  and FFFFFFFF, or FFFFFFFF, xor 00000000, nota 00000000, notb 00000000
-  and 00000003, or 000000F7, xor 000000F4, nota FFFFFF08, notb FFFFFFFC
-  and 000000F5, or FFFFFFFF, xor FFFFFF0A, nota FFFFFF08, notb 00000002
-  and 00000001, or FFFFFF0B, xor FFFFFF0A, nota 000000F6, notb FFFFFFFC
-  and FFFFFF09, or FFFFFF09, xor 00000000, nota 000000F6, notb 000000F6
+  and 00000003, or 00000007, xor 00000004, nota fffffff8, notb fffffffc
+  and 00000005, or ffffffff, xor fffffffa, nota fffffff8, notb 00000002
+  and 00000001, or fffffffb, xor fffffffa, nota 00000006, notb fffffffc
+  and fffffff9, or fffffffd, xor 00000004, nota 00000006, notb 00000002
+  and ffffffff, or ffffffff, xor 00000000, nota 00000000, notb 00000000
+  and 00000003, or 000000f7, xor 000000f4, nota ffffff08, notb fffffffc
+  and 000000f5, or ffffffff, xor ffffff0a, nota ffffff08, notb 00000002
+  and 00000001, or ffffff0b, xor ffffff0a, nota 000000f6, notb fffffffc
+  and ffffff09, or ffffff09, xor 00000000, nota 000000f6, notb 000000f6
 int32_t:
-  and 00000003, or 00000007, xor 00000004, nota FFFFFFF8, notb FFFFFFFC
-  and 00000005, or FFFFFFFF, xor FFFFFFFA, nota FFFFFFF8, notb 00000002
-  and 00000001, or FFFFFFFB, xor FFFFFFFA, nota 00000006, notb FFFFFFFC
-  and FFFFFFF9, or FFFFFFFD, xor 00000004, nota 00000006, notb 00000002
-  and FFFFFFFF, or FFFFFFFF, xor 00000000, nota 00000000, notb 00000000
-  and 00000003, or 000000F7, xor 000000F4, nota FFFFFF08, notb FFFFFFFC
-  and 000000F5, or FFFFFFFF, xor FFFFFF0A, nota FFFFFF08, notb 00000002
-  and 00000001, or FFFFFF0B, xor FFFFFF0A, nota 000000F6, notb FFFFFFFC
-  and FFFFFF09, or FFFFFF09, xor 00000000, nota 000000F6, notb 000000F6
+  and 00000003, or 00000007, xor 00000004, nota fffffff8, notb fffffffc
+  and 00000005, or ffffffff, xor fffffffa, nota fffffff8, notb 00000002
+  and 00000001, or fffffffb, xor fffffffa, nota 00000006, notb fffffffc
+  and fffffff9, or fffffffd, xor 00000004, nota 00000006, notb 00000002
+  and ffffffff, or ffffffff, xor 00000000, nota 00000000, notb 00000000
+  and 00000003, or 000000f7, xor 000000f4, nota ffffff08, notb fffffffc
+  and 000000f5, or ffffffff, xor ffffff0a, nota ffffff08, notb 00000002
+  and 00000001, or ffffff0b, xor ffffff0a, nota 000000f6, notb fffffffc
+  and ffffff09, or ffffff09, xor 00000000, nota 000000f6, notb 000000f6
 tbits completed with great success
 test tfo
 filelen: 0
@@ -4255,3 +4255,22 @@ test tfarrsub
 PASS field_arr_subscript
 test t2darr
 PASS multidim_array
+test too
+too: OO-style C stress test for dcc
+shapes:
+  #1 Rectangle area=24.00 perim=20.00
+  #2 Circle    area=78.54 perim=31.41
+  #3 Triangle  area=6.00 perim=12.00
+dispatch table:
+  query[0]=area query[1]=perim
+world:
+  total area before scale=108.54
+  total area after 200% scale=434.16
+multidim:
+  board weight=138 cells checksum=222
+aggregates:
+  list area sum=108.54 bst sum=45 height=4
+ran 25 checks, 0 failures
+too passed with great success
+test tzpad
+tzpad passed with great success

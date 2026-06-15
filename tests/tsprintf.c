@@ -54,16 +54,16 @@ int main()
     check("0000", buf);
 
     sprintf(buf, "%x", 255);
-    check("00FF", buf);
+    check("00ff", buf);
 
     sprintf(buf, "%x", 291);
     check("0123", buf);
 
     sprintf(buf, "%x", 2748);
-    check("0ABC", buf);
+    check("0abc", buf);
 
     sprintf(buf, "%x", 32767);
-    check("7FFF", buf);
+    check("7fff", buf);
 
     /* %c */
     sprintf(buf, "%c", 65);
@@ -112,10 +112,10 @@ int main()
     check("[ hello]", buf);
 
     sprintf(buf, "[%6x]", 255);
-    check("[  00FF]", buf);
+    check("[  00ff]", buf);
 
     sprintf(buf, "[%6x]", 2748);
-    check("[  0ABC]", buf);
+    check("[  0abc]", buf);
 
     /* multiple arguments */
     sprintf(buf, "%d %d %d", 1, 2, 3);

@@ -813,14 +813,38 @@ int keyword_kind(const char *s)
 int read_escape(void)
 {
     int c;
+    int v;
     c = getc_src();
     if (c == 'n') return '\n';
     if (c == 'r') return '\r';
     if (c == 't') return '\t';
-    if (c == '0') return 0;
+    if (c == 'b') return '\b';
+    if (c == 'f') return '\f';
+    if (c == 'v') return '\v';
+    if (c == 'a') return 7;
+    if (c == '?') return '?';
     if (c == '\\') return '\\';
     if (c == '\'') return '\'';
     if (c == '"') return '"';
+    if (c >= '0' && c <= '7') {
+        v = c - '0';
+        if (peekc() >= '0' && peekc() <= '7') {
+            v = v * 8 + (getc_src() - '0');
+            if (peekc() >= '0' && peekc() <= '7')
+                v = v * 8 + (getc_src() - '0');
+        }
+        return v & 255;
+    }
+    if (c == 'x') {
+        v = 0;
+        while (isxdigit((unsigned char)peekc())) {
+            int d = getc_src();
+            if (d >= '0' && d <= '9') v = v * 16 + (d - '0');
+            else if (d >= 'a' && d <= 'f') v = v * 16 + (d - 'a' + 10);
+            else v = v * 16 + (d - 'A' + 10);
+        }
+        return v & 255;
+    }
     return c;
 }
 

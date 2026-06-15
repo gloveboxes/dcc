@@ -75,7 +75,7 @@
 
     <g transform="translate(0 138)">
       <rect x="0" y="0" width="185" height="92" rx="12" fill="url(#paper)" stroke="#fff6d6" stroke-width="2"/>
-      <text x="24" y="34" class="mono dark" font-size="24">main.c</text>
+      <text x="24" y="34" class="mono dark" font-size="24">hello.c</text>
       <text x="24" y="64" class="mono dark" font-size="18">C source</text>
 
       <path d="M206 46 H284" stroke="#ffc857" stroke-width="6" stroke-linecap="round"/>
@@ -83,7 +83,7 @@
       <text x="218" y="18" class="mono amber" font-size="16">dcc</text>
 
       <rect x="330" y="0" width="185" height="92" rx="12" fill="#1b2d36" stroke="#6ee7f5" stroke-width="2"/>
-      <text x="354" y="34" class="mono cyan" font-size="24">MAIN.MAC</text>
+      <text x="354" y="34" class="mono cyan" font-size="24">HELLO.MAC</text>
       <text x="354" y="64" class="mono muted" font-size="18">M80 assembly</text>
 
       <path d="M536 46 H614" stroke="#7dff9a" stroke-width="6" stroke-linecap="round"/>
@@ -91,7 +91,7 @@
       <text x="528" y="18" class="mono green" font-size="16">strip + link</text>
 
       <rect x="660" y="0" width="185" height="92" rx="12" fill="#20331f" stroke="#7dff9a" stroke-width="2"/>
-      <text x="684" y="34" class="mono green" font-size="24">APP.COM</text>
+      <text x="684" y="34" class="mono green" font-size="24">HELLO.COM</text>
       <text x="684" y="64" class="mono muted" font-size="18">CP/M program</text>
     </g>
 

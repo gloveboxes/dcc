@@ -3,6 +3,22 @@
 Include [`stdio.h`](05-stdio.md). The predefined streams `stdin`, `stdout`, and
 `stderr` are available.
 
+## Types, streams, and constants
+
+| Name | Meaning |
+| --- | --- |
+| `FILE` | Stream handle type; `typedef int FILE`. |
+| `stdin`, `stdout`, `stderr` | Predefined console stream pointers. |
+| `NULL` | Null pointer constant, defined as `0` if not already defined. |
+| `EOF` | End-of-file / error return value, `-1`. |
+| `SEEK_SET`, `SEEK_CUR`, `SEEK_END` | `fseek` origins: beginning, current position, end. |
+| `BUFSIZ` | Default buffer size, `256`. |
+| `FOPEN_MAX` | Maximum C89 stream count exposed by the header, `8`. |
+
+`stdin`, `stdout`, and `stderr` are console pseudo-streams. They are available
+for portable-looking code, but console-only output is smaller when you use
+`putchar`, `puts`, or integer `printf` directly.
+
 !!! tip "Console output is cheap"
     `putchar`, `puts`, and integer `printf` write through the console routine
     that is already part of every program. The file-stream functions
@@ -90,12 +106,69 @@ precision. Use fixed widths in the format string.
 | `int puts(const char *s)` | Write a string plus a newline to the console. |
 | `int fputs(const char *s, FILE *fp)` | Write a string (no newline) to a stream. |
 
+`putc` and `fputc` are separate C names that map to stream-character output;
+there is no `fgetc` alias in this runtime.
+
 ## Character input
 
 | Function | Summary |
 | --- | --- |
-| `int getchar(void)` | Read one character from the console. |
+| `int getchar(void)` | Read one character from the console; blocks until a character is available. For non-blocking keyboard polling, check BDOS function 11, then read with BDOS function 6 (`E = 0xff`). |
 | `int getc(FILE *fp)` | Read one character from a stream. |
+
+`getchar` is the console input form. In the runtime it calls CP/M BDOS function
+1 (console input), so it waits for a character and returns that character as a
+non-negative `int`. `getc` reads from a stream through the `_read` path. The
+runtime does not provide `fgetc`. See
+[CP/M extensions](10-system-and-cpm.md#non-blocking-console-input) for a
+non-blocking polling convention.
+
+For non-blocking console input on CP/M 2.2, use the BDOS calls directly:
+
+- `bdos(11, 0)` is console status. It returns `0` if no character is waiting and
+  nonzero if one is ready.
+- `bdos(6, 0xff)` is direct console input. With `E = 0xff`, it returns the next
+  character without echoing, or `0` if no character is ready.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+static int key_ready(void)
+{
+  return bdos(11, 0) != 0;
+}
+
+static int read_key_nonblocking(void)
+{
+  return bdos(6, 0xff);       /* returns 0 if no key is ready */
+}
+
+int main(void)
+{
+  int ch;
+
+  puts("Press Q to quit.");
+  for (;;) {
+    if (key_ready()) {
+      ch = read_key_nonblocking();
+      if (ch == 'q' || ch == 'Q')
+        break;
+      if (ch)
+        putchar(ch);
+    }
+
+    /* do other periodic work here */
+  }
+  return 0;
+}
+```
+
+Because BDOS function 6 uses `0` as the "no character" sentinel, this convention
+is best for keyboard polling and command loops, not for input protocols where a
+NUL byte is meaningful. Avoid mixing direct console I/O with buffered console
+input in the same code path, because direct BDOS calls can bypass console
+buffers used by other input functions.
 
 ## File streams
 

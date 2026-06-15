@@ -20,7 +20,9 @@ sh ./ma.sh foo nopeep     # same, but skip the dccpeep optimizer
 ```
 
 Under the hood this runs the compiler, the optional `dccpeep` peephole
-optimizer, the `dccrtlstrip` runtime trimmer, then M80 and L80. The script
+optimizer, the `dccrtlstrip` runtime trimmer, then M80 and L80. Runtime
+trimming is part of the normal build path because it keeps the final `.COM`
+file from carrying unused library routines. The script
 resolves each tool from your `PATH` (or the `DCC` / `DCCPEEP` / `DCCRTLSTRIP`
 environment variables), so it does not need to live next to the dcc binaries.
 
@@ -32,7 +34,7 @@ system — the full pipeline for `foo.c` is:
 ```sh
 dcc foo.c -o FOO.MAC                 # compile C -> M80 assembly
 dccpeep -Ot FOO.MAC FOO.MAC          # optional peephole optimization
-dccrtlstrip -r DCCRTL.MAC -o RTLMIN.MAC FOO.MAC   # trim the runtime
+dccrtlstrip -r DCCRTL.MAC -o RTLMIN.MAC FOO.MAC   # standard runtime trimming
 m80 =FOO                             # assemble FOO.MAC -> FOO.REL
 l80 FOO,RTLMIN,FOO/N/E               # link -> FOO.COM
 ```

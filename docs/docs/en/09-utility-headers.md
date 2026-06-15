@@ -59,6 +59,9 @@ data-structure code.
 | Name | Summary |
 | --- | --- |
 | `size_t` | Unsigned 16-bit size type. |
+| `ptrdiff_t` | Signed 16-bit pointer-difference type. |
+| `wchar_t` | Unsigned 16-bit wide-character type. |
+| `NULL` | Null pointer constant, defined as `0` if not already defined. |
 | `offsetof(type, member)` | Compile-time byte offset of a struct/union member. |
 
 `offsetof` accepts struct and union member designators, including nested member
@@ -86,6 +89,7 @@ typedef and macros:
 | `bool` | `typedef unsigned char bool` |
 | `true` | `1` |
 | `false` | `0` |
+| `__bool_true_false_are_defined` | `1` |
 
 Because `bool` is just `unsigned char`, it stores one byte and follows the
 normal integer-conversion rules. It does **not** carry C99 `_Bool` semantics:

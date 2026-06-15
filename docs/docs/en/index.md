@@ -44,17 +44,10 @@ assembly (M80/L80 syntax) for size and speed and provides:
 - 16-/32-bit integer and 32-bit float arithmetic helpers that the compiler
   calls implicitly.
 
-Most library names in the standard headers are ordinary C identifiers. The
-compiler maps well-known library calls to short internal assembler labels (for
-example `memcpy` becomes `__mcpy`, `strlen` becomes `__slen`). You never write
-those short names yourself — you just call the standard C functions and include
-the matching header.
-
-The optional `dccrtlstrip` pass scans your program and removes the runtime
-routines you don't use, producing a smaller `RTLMIN.MAC` that is linked instead
-of the whole runtime. It follows symbol references automatically, so you only
-pay for what you call. See the [appendix](appendix/01-dccrtlstrip.md) for the
-full picture and the size implications.
+For normal application builds, the runtime is trimmed before linking so unused
+library code does not inflate the final `.COM` file. The build workflow covers
+that step in [Building and linking](02-build-and-link.md), and the internals and
+size trade-offs are kept in the [appendix](appendix/01-dccrtlstrip.md).
 
 !!! note "Single source of truth"
     Functions that are declared in the standard headers but are **not** part of

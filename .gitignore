@@ -14,3 +14,6 @@
 /build
 /test_dcc.txt
 /test_dccu.txt
+
+# Generated MkDocs site
+/docs/site/

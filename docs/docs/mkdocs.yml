@@ -1,5 +1,5 @@
 site_name: dcc C89 Reference
-site_author: Dave Glover
+site_author: David Lee
 site_description: >-
   MkDocs documentation for the dcc compiler, runtime, and dccrtlstrip size analysis.
 
@@ -10,7 +10,7 @@ repo_name: dcc
 repo_url: https://github.com/davidly/dcc
 
 copyright: >-
-  Copyright &copy; 2026 Dave Glover
+  Copyright &copy; 2026 David Lee
 
 nav:
   - Introduction: en/index.md
@@ -42,6 +42,9 @@ plugins:
           name: English
           default: true
           site_name: dcc C89 Reference
+
+hooks:
+  - hooks/copy_assets.py
 
 theme:
   name: material

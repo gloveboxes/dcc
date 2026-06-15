@@ -280,7 +280,7 @@ block sizes. That includes:
 From the repo root, generate a full Markdown report:
 
 ```sh
-python3 scripts/dccrtl_size_report.py > /tmp/dccrtl-size-report.md
+python3 scripts/dccrtl_size_report.py > dccrtl-size-report.md
 ```
 
 Use that output to refresh the tables in this appendix. The default report is
@@ -298,14 +298,14 @@ To inspect every public runtime symbol, sort by largest marginal cost:
 
 ```sh
 python3 scripts/dccrtl_size_report.py --all-publics --sort marginal \
-   > /tmp/dccrtl-all-publics.md
+   > dccrtl-all-publics.md
 ```
 
 Agents can request structured output for comparison or automated updates:
 
 ```sh
 python3 scripts/dccrtl_size_report.py --all-publics --format json \
-   > /tmp/dccrtl-all-publics.json
+   > dccrtl-all-publics.json
 ```
 
 After updating this appendix, rebuild the docs in strict mode:

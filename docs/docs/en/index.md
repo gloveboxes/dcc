@@ -54,3 +54,40 @@ size trade-offs are kept in the [appendix](appendix/01-dccrtlstrip.md).
     the linked runtime are called out explicitly in
     [Limitations](11-limitations.md) so a missing function never surprises you
     at link time.
+
+## Compiler performance snapshot
+
+The chart below compares `.COM` programs produced by dcc with other CP/M-era
+and modern CP/M-targeting compilers. The timing column uses `ntvcm -p` cycle
+counts converted to the emulator's `approx ms at 4Mhz` value for Z80-mode runs.
+Sizes are CP/M file sizes rounded to the next 128-byte record. Lower numbers are
+better for both `ms` and `bytes`.
+
+![CP/M 2.2 benchmark comparison](images/table.jpg)
+
+The chart columns mean:
+
+| Label | Meaning |
+| --- | --- |
+| `compiler` | Compiler, interpreter, or hand-written assembly implementation being compared. |
+| `year` | Release year, or benchmark row year for dcc-built interpreters. |
+| `ms` | `ntvcm -p` cycle-count timing converted to `approx ms at 4Mhz` for Z80-mode runs. |
+| `bytes` | Final CP/M `.COM` file size, rounded by the filesystem to 128-byte records. |
+| `runtime, size / notes` | Required runtime/interpreter size or special notes such as missing float support, benchmark hacks, or failures. |
+| `cpu` | Instruction set targeted by the generated program: `8080` means 8080-compatible code; `Z80` means Z80-specific code. |
+
+The benchmark groups are:
+
+| Label | What it measures |
+| --- | --- |
+| `tstring` | String/memory runtime performance: `strlen`, `strchr`, `strrchr`, `strstr`, `memcmp`, `memcpy`, `memset`, `memchr`, plus `rand` and integer modulus. |
+| `sieve` | BYTE magazine Sieve of Eratosthenes benchmark; mostly loop and array performance. |
+| `e` | Computes digits of `e`; stresses integer division, modulus, loops, arrays, and formatted output. |
+| `tm` | Allocator benchmark using `malloc`, `calloc`, `free`, and `memset`. |
+| `ttt` | Tic-tac-toe search; stresses function calls, branching, loops, arrays, and small integer work. |
+| `pihex` | Computes hexadecimal digits of pi; stresses unsigned long modular arithmetic and single-precision float math. |
+| `mm` | 20x20 matrix multiply benchmark; stresses float initialization, addition, multiplication, and array indexing. |
+
+Rows labelled `dcc C89 v1.0 win/linux/mac xcomp` show dcc cross-compiled output
+without the peephole optimizer. Rows labelled `dcc C89 v1.0 dccpeep optimized`
+show the same compiler output after the `dccpeep` optimizer pass.

@@ -552,29 +552,6 @@ static void seta1(const char *name, int ix, int v)
     var[find_var(name)].v[ix] = v;
 }
 
-static int ttt_winner(void)
-{
-    int t;
-    t = geta1("B", 5);
-    if (t) {
-        if (t == geta1("B", 1) && t == geta1("B", 9)) return t;
-        if (t == geta1("B", 3) && t == geta1("B", 7)) return t;
-        if (t == geta1("B", 2) && t == geta1("B", 8)) return t;
-        if (t == geta1("B", 4) && t == geta1("B", 6)) return t;
-    }
-    t = geta1("B", 1);
-    if (t) {
-        if (t == geta1("B", 2) && t == geta1("B", 3)) return t;
-        if (t == geta1("B", 4) && t == geta1("B", 7)) return t;
-    }
-    t = geta1("B", 9);
-    if (t) {
-        if (t == geta1("B", 3) && t == geta1("B", 6)) return t;
-        if (t == geta1("B", 7) && t == geta1("B", 8)) return t;
-    }
-    return 0;
-}
-
 static void do_perform(void)
 {
     int p, q, vname, fromv, byv, times, limit;

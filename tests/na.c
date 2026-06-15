@@ -1,5 +1,5 @@
 /*
- * na_cpm.c
+ * na.c Named after TWICE's Nayeon and definitely not GNU's nano text editor.
  * Small VT-100 text editor for CP/M 2.2, converted from the uploaded
  * Linux/C++ single-file editor.
  *
@@ -35,13 +35,13 @@
 
 #define SCREEN_ROWS 24
 #define SCREEN_COLS 80
-#define DRAW_COLS   (SCREEN_COLS - 4)
+#define DRAW_COLS   (SCREEN_COLS - 1)
 #define TEXT_ROWS   (SCREEN_ROWS - 2)
 
-#define MAX_LINES   512
+#define LINES_INIT  16
 #define MAX_LINE    254
 #define STATUS_LEN  96
-#define NAME_LEN    64
+#define NAME_LEN    16
 #define TAB_STOP    8
 
 #define KEY_NULL       0
@@ -78,18 +78,21 @@
 
 struct editor {
     char filename[NAME_LEN];
-    char *line[MAX_LINES];
+    char **line;
     int nlines;
+    int line_cap;
     int cx;
     int cy;
     int rowoff;
     int coloff;
     int dirty;
     char status[STATUS_LEN];
-    char *cut[MAX_LINES];
+    char **cut;
     int ncut;
+    int cut_cap;
     int last_was_cut;
     int crlf;
+    int redraw;     /* 0=cursor+status, 1=current row, 2=full */
 };
 
 static struct editor E;
@@ -110,20 +113,11 @@ const char *s;
     fputs(s, stdout);
 }
 
-/* DCC silently converts \033 in string literals to \0 (null terminator),
-   so ESC must be emitted as putchar(27) rather than a string escape. */
-static void outesc(seq)
-const char *seq;
-{
-    putchar(27);
-    outstr(seq);
-}
-
 static void vt_clear()
 {
-    outesc("[0m");
-    outesc("[2J");
-    outesc("[1;1H");
+    outstr("\033[0m");
+    outstr("\033[2J");
+    outstr("\033[1;1H");
     fflush(stdout);
 }
 
@@ -159,6 +153,36 @@ static void free_line(p)
 char *p;
 {
     if (p != NULL) free(p);
+}
+
+static void grow_lines(need)
+int need;
+{
+    char **nw;
+    int new_cap;
+    int i;
+    new_cap = E.line_cap ? E.line_cap * 2 : LINES_INIT;
+    if (new_cap < need) new_cap = need;
+    nw = (char **)xmalloc((unsigned)new_cap * sizeof(char *));
+    for (i = 0; i < E.nlines; i++) nw[i] = E.line[i];
+    free(E.line);
+    E.line = nw;
+    E.line_cap = new_cap;
+}
+
+static void grow_cut(need)
+int need;
+{
+    char **nw;
+    int new_cap;
+    int i;
+    new_cap = E.cut_cap ? E.cut_cap * 2 : 8;
+    if (new_cap < need) new_cap = need;
+    nw = (char **)xmalloc((unsigned)new_cap * sizeof(char *));
+    for (i = 0; i < E.ncut; i++) nw[i] = E.cut[i];
+    free(E.cut);
+    E.cut = nw;
+    E.cut_cap = new_cap;
 }
 
 static char *make_line(s, len)
@@ -197,15 +221,13 @@ const char *s;
 
 static void init_editor()
 {
-    int i;
     memset(&E, 0, sizeof(E));
     E.crlf = 1;               /* CP/M text files default to CRLF. */
-    for (i = 0; i < MAX_LINES; i++) {
-        E.line[i] = NULL;
-        E.cut[i] = NULL;
-    }
+    E.line_cap = LINES_INIT;
+    E.line = (char **)xmalloc((unsigned)LINES_INIT * sizeof(char *));
     E.line[0] = xstrdup("");
     E.nlines = 1;
+    E.redraw = 2;
 }
 
 
@@ -230,13 +252,17 @@ static void free_cutbuf()
         free_line(E.cut[i]);
         E.cut[i] = NULL;
     }
+    free(E.cut);
+    E.cut = NULL;
     E.ncut = 0;
+    E.cut_cap = 0;
 }
 
 static void ensure_cursor()
 {
     int len;
     if (E.nlines <= 0) {
+        if (E.line_cap < 1) grow_lines(1);
         E.line[0] = xstrdup("");
         E.nlines = 1;
     }
@@ -324,11 +350,7 @@ int pos;
 char *s;
 {
     int i;
-    if (E.nlines >= MAX_LINES) {
-        set_status0("too many lines");
-        free_line(s);
-        return;
-    }
+    if (E.nlines >= E.line_cap) grow_lines(E.nlines + 1);
     pos = clampi(pos, 0, E.nlines);
     for (i = E.nlines; i > pos; i--) E.line[i] = E.line[i - 1];
     E.line[pos] = s;
@@ -415,6 +437,7 @@ const char *name;
     fclose(fp);
     ensure_cursor();
     E.dirty = 0;
+    E.redraw = 2;
     set_status("opened %s %d lines", E.filename, E.nlines);
 }
 
@@ -464,9 +487,7 @@ int col;
     if (row > SCREEN_ROWS) row = SCREEN_ROWS;
     if (col < 1) col = 1;
     if (col > SCREEN_COLS) col = SCREEN_COLS;
-    putchar(27);
-    putchar('[');
-    sprintf(pos, "%d;%dH", row, col);
+    sprintf(pos, "\033[%d;%dH", row, col);
     outstr(pos);
 }
 
@@ -476,9 +497,9 @@ static void clear_draw_cols()
     for (i = 0; i < DRAW_COLS; i++) putchar(' ');
 }
 
-static void draw_rows()
+static void draw_row(y)
+int y;
 {
-    int y;
     int filerow;
     int col;
     int i;
@@ -487,44 +508,48 @@ static void draw_rows()
     char *s;
     char ch;
 
-    for (y = 0; y < TEXT_ROWS; y++) {
-        vt_goto(y + 1, 1);
-        filerow = y + E.rowoff;
-        drawn = 0;
-        if (filerow >= E.nlines) {
-            putchar('~');
-            drawn = 1;
-        } else {
-            s = E.line[filerow];
-            len = (int)strlen(s);
-            col = 0;
-            for (i = 0; i < len && drawn < DRAW_COLS; i++) {
-                ch = s[i];
-                if (ch == '\t') {
-                    int spaces;
-                    spaces = TAB_STOP - (col % TAB_STOP);
-                    while (spaces-- > 0) {
-                        if (col >= E.coloff && drawn < DRAW_COLS) {
-                            putchar(' ');
-                            drawn++;
-                        }
-                        col++;
-                    }
-                } else {
+    vt_goto(y + 1, 1);
+    filerow = y + E.rowoff;
+    drawn = 0;
+    if (filerow >= E.nlines) {
+        putchar('~');
+        drawn = 1;
+    } else {
+        s = E.line[filerow];
+        len = (int)strlen(s);
+        col = 0;
+        for (i = 0; i < len && drawn < DRAW_COLS; i++) {
+            ch = s[i];
+            if (ch == '\t') {
+                int spaces;
+                spaces = TAB_STOP - (col % TAB_STOP);
+                while (spaces-- > 0) {
                     if (col >= E.coloff && drawn < DRAW_COLS) {
-                        if (ch >= 32 && ch <= 126) putchar(ch);
-                        else putchar('?');
+                        putchar(' ');
                         drawn++;
                     }
                     col++;
                 }
+            } else {
+                if (col >= E.coloff && drawn < DRAW_COLS) {
+                    if (ch >= 32 && ch <= 126) putchar(ch);
+                    else putchar('?');
+                    drawn++;
+                }
+                col++;
             }
         }
-        while (drawn < DRAW_COLS) {
-            putchar(' ');
-            drawn++;
-        }
     }
+    while (drawn < DRAW_COLS) {
+        putchar(' ');
+        drawn++;
+    }
+}
+
+static void draw_rows()
+{
+    int y;
+    for (y = 0; y < TEXT_ROWS; y++) draw_row(y);
 }
 
 static void draw_status()
@@ -552,7 +577,7 @@ static void draw_status()
     if (l > DRAW_COLS) l = DRAW_COLS;
 
     vt_goto(SCREEN_ROWS - 1, 1);
-    outesc("[7m");
+    outstr("\033[7m");
 
     n = 0;
     for (i = 0; i < l && n < DRAW_COLS; i++, n++) putchar(left[i]);
@@ -571,7 +596,7 @@ static void draw_status()
         putchar(' ');
         n++;
     }
-    outesc("[0m");
+    outstr("\033[0m");
 }
 
 static void draw_help()
@@ -581,30 +606,41 @@ static void draw_help()
     int i;
 
     vt_goto(SCREEN_ROWS, 1);
-    outesc("[7m");
+    outstr("\033[7m");
     for (i = 0; i < DRAW_COLS; i++) {
         if (help[i] == '\0') putchar(' ');
         else putchar(help[i]);
     }
-    outesc("[0m");
+    outstr("\033[0m");
 }
 
 static void refresh_screen()
 {
     int rx;
     int ry;
+    int prev_rowoff;
+    int prev_coloff;
 
+    prev_rowoff = E.rowoff;
+    prev_coloff = E.coloff;
     scroll_editor();
+    if (E.rowoff != prev_rowoff || E.coloff != prev_coloff) E.redraw = 2;
 
-    /* Use explicit row/column positioning throughout.  Do not rely on \r\n
-       or on ESC[H, because both interact badly with autowrap on some
-       VT100-ish CP/M consoles. */
-    outesc("[0m");
-    vt_goto(1, 1);
+    outstr("\033[0m");
 
-    draw_rows();
-    draw_status();
-    draw_help();
+    if (E.redraw >= 2) {
+        vt_goto(1, 1);
+        draw_rows();
+        draw_status();
+        draw_help();
+    } else if (E.redraw == 1) {
+        ry = E.cy - E.rowoff;
+        ry = clampi(ry, 0, TEXT_ROWS - 1);
+        draw_row(ry);
+        draw_status();
+    } else {
+        draw_status();
+    }
 
     rx = E.cx - E.coloff;
     ry = E.cy - E.rowoff;
@@ -612,6 +648,7 @@ static void refresh_screen()
     ry = clampi(ry, 0, TEXT_ROWS - 1);
     vt_goto(ry + 1, rx + 1);
     fflush(stdout);
+    E.redraw = 0;
 }
 
 static int prompt_text(prompt, out, outsz)
@@ -672,6 +709,7 @@ int c;
     replace_line(E.cy, nw);
     E.cx++;
     E.dirty = 1;
+    E.redraw = 1;
 }
 
 static void insert_soft_tab()
@@ -689,10 +727,6 @@ static void insert_newline()
     int len;
     mark_non_cut();
     ensure_cursor();
-    if (E.nlines >= MAX_LINES) {
-        set_status0("too many lines");
-        return;
-    }
     old = E.line[E.cy];
     len = (int)strlen(old);
     left = make_line(old, E.cx);
@@ -702,6 +736,7 @@ static void insert_newline()
     E.cy++;
     E.cx = 0;
     E.dirty = 1;
+    E.redraw = 2;
 }
 
 static void del_backspace()
@@ -721,6 +756,7 @@ static void del_backspace()
         strcpy(nw + E.cx - 1, old + E.cx);
         replace_line(E.cy, nw);
         E.cx--;
+        E.redraw = 1;
     } else {
         plen = (int)strlen(E.line[E.cy - 1]);
         len = plen + (int)strlen(E.line[E.cy]);
@@ -735,6 +771,7 @@ static void del_backspace()
         delete_line_at(E.cy);
         E.cy--;
         E.cx = plen;
+        E.redraw = 2;
     }
     E.dirty = 1;
 }
@@ -755,6 +792,7 @@ static void del_at_cursor()
         strcpy(nw + E.cx, old + E.cx + 1);
         replace_line(E.cy, nw);
         E.dirty = 1;
+        E.redraw = 1;
         return;
     }
     if (E.cy + 1 < E.nlines) {
@@ -769,6 +807,7 @@ static void del_at_cursor()
         replace_line(E.cy, nw);
         delete_line_at(E.cy + 1);
         E.dirty = 1;
+        E.redraw = 2;
     }
 }
 
@@ -777,6 +816,7 @@ static void copy_line()
     mark_non_cut();
     ensure_cursor();
     free_cutbuf();
+    if (E.cut_cap < 1) grow_cut(1);
     E.cut[0] = xstrdup(E.line[E.cy]);
     E.ncut = 1;
     set_status0("copied line");
@@ -786,12 +826,14 @@ static void cut_line()
 {
     ensure_cursor();
     if (!E.last_was_cut) free_cutbuf();
-    if (E.ncut < MAX_LINES) E.cut[E.ncut++] = xstrdup(E.line[E.cy]);
+    if (E.ncut >= E.cut_cap) grow_cut(E.ncut + 1);
+    E.cut[E.ncut++] = xstrdup(E.line[E.cy]);
     delete_line_at(E.cy);
     if (E.cy >= E.nlines) E.cy = E.nlines - 1;
     E.cx = clampi(E.cx, 0, (int)strlen(E.line[E.cy]));
     E.last_was_cut = 1;
     E.dirty = 1;
+    E.redraw = 2;
     set_status("cut %s%d lines", "", E.ncut);
 }
 
@@ -807,12 +849,12 @@ static void paste_below()
     }
     pos = E.cy + 1;
     for (i = 0; i < E.ncut; i++) {
-        if (E.nlines >= MAX_LINES) break;
         insert_line_at(pos + i, xstrdup(E.cut[i]));
     }
     E.cy = pos;
     E.cx = 0;
     E.dirty = 1;
+    E.redraw = 2;
     set_status("pasted %s%d lines", "", i);
 }
 
@@ -988,5 +1030,6 @@ char **argv;
     vt_clear();
     free_cutbuf();
     clear_lines();
+    free(E.line);
     return 0;
 }

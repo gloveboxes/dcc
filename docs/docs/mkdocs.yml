@@ -1,0 +1,82 @@
+site_name: dcc C89 Reference
+site_author: Dave Glover
+site_description: >-
+  MkDocs documentation for the dcc compiler, runtime, and dccrtlstrip size analysis.
+
+docs_dir: en
+site_dir: ../site
+
+repo_name: dcc
+repo_url: https://github.com/davidly/dcc
+
+copyright: >-
+  Copyright &copy; 2026 Dave Glover
+
+nav:
+  - Introduction: en/index.md
+  - Setting up the toolchain: en/00-setup-toolchain.md
+  - Agent skills: en/00-agent-skills.md
+  - C89 conformance and C99 extensions: en/01-c89-conformance.md
+  - Building and linking: en/02-build-and-link.md
+  - Types and conventions: en/03-types-and-conventions.md
+  - Operators: en/04-operators.md
+  - Console and file I/O (stdio.h): en/05-stdio.md
+  - Memory and utilities (stdlib.h): en/06-stdlib.md
+  - Strings and characters: en/07-strings-and-ctype.md
+  - Floating point math (math.h): en/08-math.md
+  - Utility headers: en/09-utility-headers.md
+  - System and CP/M services: en/10-system-and-cpm.md
+  - Limitations: en/11-limitations.md
+  - Worked examples: en/12-examples.md
+  - Appendix:
+      - How dccrtlstrip works and code size: en/appendix/01-dccrtlstrip.md
+
+plugins:
+  - search
+  - glightbox
+  - include-markdown
+  - i18n:
+      docs_structure: folder
+      languages:
+        - locale: en
+          name: English
+          default: true
+          site_name: dcc C89 Reference
+
+theme:
+  name: material
+  features:
+    - navigation.footer
+    - content.code.copy
+    - navigation.tabs.sticky
+    - content.tabs.link
+  font:
+    code: Roboto Mono
+    text: Roboto
+  palette:
+    - scheme: default
+      primary: black
+      accent: pink
+      toggle:
+        icon: material/brightness-2
+        name: Switch to dark mode
+    - scheme: slate
+      primary: amber
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+
+markdown_extensions:
+  - toc:
+      permalink: true
+      toc_depth: 2
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - attr_list
+  - md_in_html

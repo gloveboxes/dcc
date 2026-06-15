@@ -36,6 +36,7 @@ dcc foo.c -o FOO.MAC                 # compile C -> M80 assembly
 dccpeep -Ot FOO.MAC FOO.MAC          # optional peephole optimization
 dccrtlstrip -r DCCRTL.MAC -o RTLMIN.MAC FOO.MAC   # standard runtime trimming
 m80 =FOO                             # assemble FOO.MAC -> FOO.REL
+m80 =RTLMIN                          # assemble RTLMIN.MAC -> RTLMIN.REL
 l80 FOO,RTLMIN,FOO/N/E               # link -> FOO.COM
 ```
 

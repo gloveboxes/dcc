@@ -122,3 +122,30 @@ has the same effect.
 srand(1);
 int roll = rand() % 6 + 1;     /* a die roll */
 ```
+
+The runtime generator is a 16-bit xorshift with parameters 7, 9, and 8. The
+state is 16-bit, `srand(seed)` stores the state directly, and `rand()` clears
+bit 15 of the updated state so the result stays in the C89 `0 .. RAND_MAX`
+range. In C-equivalent form:
+
+```c
+static unsigned int s_rnd = 1;
+
+void srand(unsigned int seed)
+{
+    s_rnd = seed;
+}
+
+int rand(void)
+{
+    s_rnd ^= s_rnd << 7;
+    s_rnd ^= s_rnd >> 9;
+    s_rnd ^= s_rnd << 8;
+    return (int)(s_rnd & 0x7fff);
+}
+```
+
+That deterministic sequence is useful for benchmarks: if another CP/M compiler
+uses the same C equivalent, tests that depend on `rand()` can compare runtime
+library and code-generation performance without being skewed by different
+pseudo-random sequences.

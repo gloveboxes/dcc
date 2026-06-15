@@ -55,12 +55,12 @@ int main()
     printf("%u\n", 12345);
     printf("%u\n", 32767);
 
-    /* %x hex -- always 4 digits, uppercase A-F */
+    /* %x hex -- always 4 digits, lowercase a-f (C89) */
     printf("%x\n", 0);
-    printf("%x\n", 255);       /* 00FF */
+    printf("%x\n", 255);       /* 00ff */
     printf("%x\n", 291);       /* 0123 */
-    printf("%x\n", 2748);      /* 0ABC */
-    printf("%x\n", 32767);     /* 7FFF */
+    printf("%x\n", 2748);      /* 0abc */
+    printf("%x\n", 32767);     /* 7fff */
 
     /* %c character */
     printf("%c\n", 65);        /* A */
@@ -83,8 +83,8 @@ int main()
     printf("[%6u]\n", 42);     /* [    42] */
     printf("[%6s]\n", "abc");  /* [   abc] */
     printf("[%6s]\n", "hello");/* [ hello] */
-    printf("[%6x]\n", 255);    /* [  00FF] */
-    printf("[%6x]\n", 2748);   /* [  0ABC] */
+    printf("[%6x]\n", 255);    /* [  00ff] */
+    printf("[%6x]\n", 2748);   /* [  0abc] */
 
     /* multiple arguments */
     printf("%d %d %d\n", 1, 2, 3);

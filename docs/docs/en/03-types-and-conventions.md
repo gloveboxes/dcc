@@ -7,9 +7,12 @@ overflow and precision surprises.
 
 | Type | Size | Notes |
 | --- | --- | --- |
-| `char` | 8 bits | signed by default |
-| `int`, `short` | 16 bits | `int` is 16-bit; watch for overflow |
-| `long` | 32 bits | use `%ld` and the `l` length modifier |
+| `char` | 8 bits | signed by default; range -128..127 |
+| `unsigned char` | 8 bits | range 0..255; useful for raw bytes and table indexes |
+| `int`, `short` | 16 bits | signed range -32768..32767; `int` is 16-bit, so watch for overflow |
+| `unsigned int`, `unsigned short` | 16 bits | range 0..65535; use `%u` / `%x` / `%X` for formatted output |
+| `long` | 32 bits | signed range -2147483648..2147483647; use `%ld` and the `l` length modifier |
+| `unsigned long` | 32 bits | range 0..4294967295; use `%lu` / `%lx` / `%lX` |
 | `float` | 32 bits | the only floating type — **no `double`** |
 | pointer | 16 bits | flat CP/M address space |
 | `size_t` | 16 bits | unsigned `int` |
@@ -20,6 +23,8 @@ overflow and precision surprises.
 The practical consequences:
 
 - Use `long` (and `%ld`) whenever a value can exceed ±32767.
+- Use `unsigned` / `unsigned long` when you need wraparound arithmetic or a
+  logical right shift; signed right shift sign-extends.
 - `float` carries about 7 decimal digits (a 24-bit significand). Integers up to
   2<sup>24</sup> (16,777,216) are exact; beyond that, converting a large `long`
   to `float` rounds to the nearest single. See [Floating point math](08-math.md)

@@ -100,9 +100,11 @@ still compiles, but they intentionally reflect the single-precision target:
 
 ## Zero-initialized data
 
-Objects with static storage duration (globals and `static` locals) live in BSS,
-which the `start` entrypoint zeroes before `main` runs. So an uninitialized
-global array is guaranteed to be all zeros, as C89 requires:
+In a normal final application build, uninitialized globals and uninitialized
+function-scope `static` objects are backed by dcc's synthetic BSS range. The
+compiler emits the range as `__bssb .. __bsse`, and the runtime `start`
+entrypoint zeroes that range before calling `main`. So an uninitialized global
+array is guaranteed to be all zeros, as C89 requires:
 
 ```c
 char buffer[4096];   /* in BSS, guaranteed zero at program start */
@@ -112,3 +114,20 @@ int main(void)
     return buffer[0]; /* always 0 */
 }
 ```
+
+  Function-scope `static` objects use the same storage model: the compiler gives
+  them hidden global backing storage, then ordinary references inside the function
+  refer to that backing object.
+
+  ```c
+  int next_id(void)
+  {
+    static int counter;     /* zero before the first call */
+    return ++counter;
+  }
+  ```
+
+  Separately compiled helper modules (`dcc -c` / `-module`) use ordinary `DS`
+  storage for their uninitialized globals so multiple modules do not overlap the
+  final application's synthetic BSS range. The zeroing guarantee above describes
+  the normal final app translation unit linked with `DCCRTL.MAC` / `RTLMIN.MAC`.

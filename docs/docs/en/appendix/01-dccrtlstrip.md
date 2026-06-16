@@ -142,17 +142,3 @@ amount of support code. Reach for the console functions, integer-only `printf`,
 and the self-contained string helpers when binary size matters, and treat float
 formatting and the transcendental math functions as deliberate, budgeted
 choices.
-
-## Keeping the size numbers current
-
-The companion [*Runtime function sizes*](02-runtime-sizes.md) page is
-**generated at build time** by the `docs/docs/hooks/runtime_sizes.py` MkDocs
-hook, which analyses the current `DCCRTL.MAC` directly. There is no table to
-update by hand — editing the runtime and rebuilding the docs is enough to
-refresh every figure.
-
-The hook parses `public`-delimited runtime blocks, computes the baseline
-reachable from `start`, and reports each symbol's self and marginal line counts
-using the same reachability model as `dccrtlstrip`. The counts are a relative
-source-line proxy, not exact `.COM` bytes.
-

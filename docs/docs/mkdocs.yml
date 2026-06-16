@@ -89,5 +89,11 @@ markdown_extensions:
       alternate_style: true
   - pymdownx.tasklist:
       custom_checkbox: true
+  - pymdownx.snippets:
+      # base_path is relative to docs_dir (en/); '../../' reaches the repo root
+      # so snippets can pull verbatim source from tests/ (single source of truth).
+      base_path:
+        - "../.."
+      check_paths: true
   - attr_list
   - md_in_html

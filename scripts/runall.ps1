@@ -177,7 +177,7 @@ function Get-IgnoreApp {
 # these files from the current working directory, and apps are run from the
 # build dir (below), so the fixtures must live there too.
 function Stage-FixtureInputs {
-    $fixtures = @("E.PAS", "E.COB", "E.FOR", "E.ADA", "E.BAS", "E.F", "EU.C")
+    $fixtures = @("E.PAS", "E.COB", "E.FOR", "E.ADA", "E.BAS", "E.F", "eu.c", "DATA.TXT")
     foreach ($f in $fixtures) {
         $src = Join-Path "tests" $f
         if (Test-Path $src) {
@@ -290,7 +290,8 @@ function Invoke-AppTest {
             }
         }
         else {
-            $lines.Add("    (No baseline, output recorded)")
+            $lines.Add("    ERROR: no baseline at $BaselineDir/$AppName.txt (every app must have one)")
+            $appPassed = $false
         }
     }
 
@@ -383,7 +384,7 @@ $skipped = 0
 $failedApps = @()
 
 $modes = if ($Mode -eq "both") { @("peep", "nopeep") } else { @($Mode) }
-$fixtureList = @("E.PAS", "E.COB", "E.FOR", "E.ADA", "E.BAS", "E.F", "EU.C")
+$fixtureList = @("E.PAS", "E.COB", "E.FOR", "E.ADA", "E.BAS", "E.F", "eu.c", "DATA.TXT")
 
 # Build the list of work items up front (resolving per-app args/stack in the
 # parent), so parallel workers don't need the $appOverrides table.
@@ -419,7 +420,6 @@ function Show-AppResult {
     foreach ($line in $result.Lines) {
         $color = if ($line -match 'FAILED|MISMATCH|WARNING|ERROR') { 'Red' }
                  elseif ($line -match 'matches baseline') { 'Green' }
-                 elseif ($line -match 'No baseline') { 'Gray' }
                  else { 'Gray' }
         Write-Host $line -ForegroundColor $color
     }

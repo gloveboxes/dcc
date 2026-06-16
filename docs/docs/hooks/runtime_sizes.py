@@ -40,6 +40,12 @@ DOC_GROUPS: List[Tuple[str, List[str]]] = [
         "_pffio", "_fprintf", "_printf", "_sprintf", "_vprintf", "_vsprintf",
         "_vfprintf", "_puts", "__fpc", "__fps", "__pchr",
     ]),
+    ("Console buffering control (stdio.h)", [
+        "_setvbuf", "_setbuf", "_fflush",
+    ]),
+    ("Console input (stdio.h)", [
+        "__gchr", "__gtch", "__kbht",
+    ]),
     ("Formatted input (scanf family)", ["_fscanf", "_scanf", "_sscanf"]),
     ("Low-level file I/O", [
         "_fread", "_fwrite", "_fgets", "_fopen", "_write", "_lseek", "_read",

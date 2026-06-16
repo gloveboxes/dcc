@@ -48,19 +48,8 @@ fprintf(stderr, "error %d\n", errno);
 
 The `v…` variants take a `va_list` (from
 [`stdarg.h`](09-utility-headers.md#stdargh-variadic-arguments)) so you can write
-your own `printf`-style wrappers that forward a format string:
-
-```c
-#include <stdarg.h>
-
-void logmsg(const char *fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
-}
-```
+your own `printf`-style wrappers that forward a format string — see the worked
+[logging-wrapper example](12-examples.md#a-printf-style-logging-wrapper).
 
 ### printf conversions
 
@@ -109,40 +98,87 @@ precision. Use fixed widths in the format string.
 `putc` and `fputc` are separate C names that map to stream-character output;
 there is no `fgetc` alias in this runtime.
 
-## Character input
+## Console output buffering
+
+Console output (`printf`, `puts`, `putchar`, `fputs`/`fwrite`/`fprintf` to
+`stdout`/`stderr`) is **buffered**. Characters accumulate in a buffer and are
+sent to CP/M in batches, which is far faster than one BDOS call per character.
+The buffer is drained automatically:
+
+- when it fills,
+- when a newline is written (in the default line-buffered mode),
+- on `fflush()`,
+- before any blocking console **input** (`getchar`, `getch`, `scanf`, `fgets`),
+  so a prompt printed just before input is always visible first,
+- and at normal program exit (`main` return, `exit()`).
 
 | Function | Summary |
 | --- | --- |
-| `int getchar(void)` | Read one character from the console; blocks until a character is available. For non-blocking keyboard polling, check BDOS function 11, then read with BDOS function 6 (`E = 0xff`). |
-| `int getc(FILE *fp)` | Read one character from a stream. |
+| `int fflush(FILE *fp)` | Drain any buffered console output now. `fflush(NULL)`, `fflush(stdout)`, and `fflush(stderr)` all flush the console. Returns `0`. |
+| `int setvbuf(FILE *fp, char *buf, int mode, size_t size)` | Choose the buffering mode for `stdout`/`stderr`, optionally adopting your own buffer. Returns `0` on success, non-zero only for an invalid `mode`. |
+| `void setbuf(FILE *fp, char *buf)` | Shorthand: `setvbuf(fp, buf, buf ? _IOFBF : _IONBF, BUFSIZ)`. |
 
-`getchar` is the console input form. In the runtime it calls CP/M BDOS function
-1 (console input), so it waits for a character and returns that character as a
-non-negative `int`. `getc` reads from a stream through the `_read` path. The
-runtime does not provide `fgetc`. See
-[CP/M extensions](10-system-and-cpm.md#non-blocking-console-input) for a
-non-blocking polling convention.
+`setvbuf` must be called **before** any output on the stream. The `mode` is one
+of:
 
-For non-blocking console input on CP/M 2.2, use the BDOS calls directly:
+| Mode | Meaning |
+| --- | --- |
+| `_IOFBF` | Fully buffered — drain only when the buffer fills, on `fflush`, before input, or at exit. |
+| `_IOLBF` | Line buffered — additionally drain at each newline. This is the default. |
+| `_IONBF` | Unbuffered — drain after every character. |
 
-- `bdos(11, 0)` is console status. It returns `0` if no character is waiting and
-  nonzero if one is ready.
-- `bdos(6, 0xff)` is direct console input. With `E = 0xff`, it returns the next
-  character without echoing, or `0` if no character is ready.
+If you pass a non-`NULL` `buf` (with `size >= 2`), the runtime **adopts your
+buffer**: console output is accumulated there and a larger buffer means fewer
+BDOS calls. One byte of `size` is reserved internally, so the usable capacity is
+`size - 1`. A `NULL` `buf` (or `size < 2`) uses the runtime's small internal
+buffer instead.
+
+!!! warning "Buffer lifetime"
+    An adopted buffer must remain valid for as long as the stream uses it. Before
+    freeing it, detach it first — e.g. `setvbuf(stdout, NULL, _IOLBF, 0)` — so
+    the automatic exit-time flush does not touch freed memory.
+
+`setvbuf`/`setbuf` only configure the **console** (`stdout`/`stderr`). Called on
+a file stream they are accepted but have no effect (file writes are
+write-through). `stdout` and `stderr` share the one console buffer, so their
+output is interleaved in the exact order written.
 
 ```c
 #include <stdio.h>
 #include <stdlib.h>
 
-static int key_ready(void)
-{
-  return bdos(11, 0) != 0;
-}
+char *buf = malloc(4096);
+setvbuf(stdout, buf, _IOFBF, 4096);  /* batch up to ~4 KB before each flush */
 
-static int read_key_nonblocking(void)
-{
-  return bdos(6, 0xff);       /* returns 0 if no key is ready */
-}
+for (i = 0; i < 1000; i++)
+    printf("line %d\n", i);          /* accumulates; few BDOS calls */
+
+setvbuf(stdout, NULL, _IOLBF, 0);    /* detach before freeing */
+free(buf);
+```
+
+## Character input
+
+| Function | Summary |
+| --- | --- |
+| `int getchar(void)` | Read one character from the console; blocks until a character is available. For non-blocking keyboard polling use `kbhit()` / `getch()` (see below). |
+| `int getc(FILE *fp)` | Read one character from a stream. |
+| `int kbhit(void)` | Console status poll: returns nonzero if a key is waiting, `0` otherwise. Does **not** block and does **not** consume the character. |
+| `int getch(void)` | Read one key from the console without echo. Blocks (polls) until a key is available; guard it with `kbhit()` for non-blocking use. |
+
+`getchar` is the console input form. In the runtime it calls CP/M BDOS function
+1 (console input), so it waits for a character and returns that character as a
+non-negative `int`. `getc` reads from a stream through the `_read` path. The
+runtime does not provide `fgetc`. See
+[CP/M extensions](10-system-and-cpm.md#non-blocking-console-input) for more on
+the non-blocking convention.
+
+For non-blocking console input, use `kbhit()` to test whether a key is waiting,
+then `getch()` to read it. `kbhit()` never blocks; `getch()` only blocks if you
+call it when no key is ready, so the two are normally paired:
+
+```c
+#include <stdio.h>
 
 int main(void)
 {
@@ -150,12 +186,11 @@ int main(void)
 
   puts("Press Q to quit.");
   for (;;) {
-    if (key_ready()) {
-      ch = read_key_nonblocking();
+    if (kbhit()) {              /* non-blocking: a key is waiting */
+      ch = getch();             /* safe: will not block here */
       if (ch == 'q' || ch == 'Q')
         break;
-      if (ch)
-        putchar(ch);
+      putchar(ch);
     }
 
     /* do other periodic work here */
@@ -164,11 +199,11 @@ int main(void)
 }
 ```
 
-Because BDOS function 6 uses `0` as the "no character" sentinel, this convention
-is best for keyboard polling and command loops, not for input protocols where a
-NUL byte is meaningful. Avoid mixing direct console I/O with buffered console
-input in the same code path, because direct BDOS calls can bypass console
-buffers used by other input functions.
+Because `getch()` builds on BDOS function 6 (which uses `0` as its "no
+character" sentinel), this convention is best for keyboard polling and command
+loops, not for input protocols where a NUL byte is meaningful. `getch()` and
+`getchar()` flush any pending buffered console output before they block, so a
+prompt printed just before them is always visible first.
 
 ## File streams
 
@@ -176,7 +211,7 @@ buffers used by other input functions.
 | --- | --- |
 | `FILE *fopen(const char *path, const char *mode)` | Open a file. Modes: `"r"`, `"w"`, `"a"`, with optional `"+"` / `"b"`. |
 | `int fclose(FILE *fp)` | Flush and close a stream. |
-| `int fflush(FILE *fp)` | Flush buffered writes to disk. |
+| `int fflush(FILE *fp)` | Flush buffered output (see [Console output buffering](#console-output-buffering)). |
 | `char *fgets(char *buf, int n, FILE *fp)` | Read a line (up to `n-1` chars). |
 | `size_t fread(void *buf, size_t sz, size_t n, FILE *fp)` | Read `n` elements of `sz` bytes. |
 | `size_t fwrite(const void *buf, size_t sz, size_t n, FILE *fp)` | Write `n` elements of `sz` bytes. |
@@ -186,19 +221,13 @@ buffers used by other input functions.
 | `int feof(FILE *fp)` | Non-zero after end-of-file is reached. |
 | `int ferror(FILE *fp)` | Non-zero if an error flag is set. |
 | `void clearerr(FILE *fp)` | Clear the EOF and error flags. |
-| `void setbuf(FILE *fp, char *buf)` | Set a stream buffer. |
+| `void setbuf(FILE *fp, char *buf)` | Configure console buffering (see [above](#console-output-buffering)). |
+| `int setvbuf(FILE *fp, char *buf, int mode, size_t size)` | Configure console buffering (see [above](#console-output-buffering)). |
 | `int remove(const char *path)` | Delete a file. |
 | `void perror(const char *s)` | Print `s` plus the current error text. |
 
-```c
-FILE *fp = fopen("DATA.TXT", "r");
-if (fp) {
-    char line[128];
-    while (fgets(line, sizeof line, fp))
-        fputs(line, stdout);
-    fclose(fp);
-}
-```
+For a complete program, see the worked
+[file-reading example](12-examples.md#reading-a-text-file-line-by-line).
 
 ## scanf-family input
 
@@ -231,6 +260,9 @@ long big;
 sscanf("-12 hello 0x2a", "%d %s %i", &value, word, &value);
 sscanf("123456", "%ld", &big);
 ```
+
+For a complete, tested program, see the worked
+[`sscanf` parsing example](12-examples.md#parsing-input-with-sscanf).
 
 Not supported: floating input (`%f`, `%e`, `%g`), scansets (`%[...]`), `%n`, and
 `%p`.

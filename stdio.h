@@ -17,6 +17,11 @@
 
 #define BUFSIZ 256 /* C89 (7.9.2) minimum */
 
+/* setvbuf() buffering modes (C89 7.9.1). */
+#define _IOFBF 0 /* full buffering */
+#define _IOLBF 1 /* line buffering */
+#define _IONBF 2 /* no buffering   */
+
 /* Max streams open at once.  C89 (7.9.3) requires FOPEN_MAX >= 8 including the
  * three standard streams.  In this runtime stdin/stdout/stderr are console
  * pseudo-FILEs that do not use a real-file slot, and NFILES real files (fd 3..)
@@ -71,6 +76,7 @@ int    feof(FILE *stream);
 int    ferror(FILE *stream);
 void   clearerr(FILE *stream);
 void   setbuf(FILE *stream, char *buf);
+int    setvbuf(FILE *stream, char *buf, int mode, size_t size);
 
 /* Formatted-string helpers */
 int sprintf(char *s, const char *format, ...);

@@ -155,46 +155,48 @@ through the memory `dearg` points at, not in the return value.
 
 ### Non-blocking console input
 
-The standard input calls (`getchar`, `getc`, `fgets`, `scanf`) should be treated
-as blocking C-style input. For games, menus, terminal UIs, and other polling
-loops, use CP/M BDOS directly:
+The standard input calls (`getchar`, `getc`, `fgets`, `scanf`) are blocking
+C-style input. For games, menus, terminal UIs, and other polling loops, use the
+runtime's `kbhit()` and `getch()` (declared in `stdio.h`):
 
-- `bdos(11, 0)` checks console status and returns nonzero when a character is
-    waiting.
-- `bdos(6, 0xff)` performs direct console input and returns `0` when no
-    character is ready, otherwise the character value. It does not echo.
+- `int kbhit(void)` returns nonzero when a key is waiting and `0` otherwise. It
+  never blocks and does not consume the character.
+- `int getch(void)` reads one key without echo. It blocks until a key is ready,
+  so it is normally guarded by `kbhit()`.
 
 ```c
-#include <stdlib.h>
-
-int cpm_kbhit(void)
-{
-    return bdos(11, 0) != 0;
-}
-
-int cpm_getch_nonblock(void)
-{
-    return bdos(6, 0xff);       /* 0 means no character is ready */
-}
+#include <stdio.h>
 
 int main(void)
 {
     int ch;
 
-    if (cpm_kbhit()) {
-    ch = cpm_getch_nonblock();
-    if (ch)
-        handle_key(ch);
+    if (kbhit()) {          /* non-blocking test */
+        ch = getch();       /* safe: a key is already waiting */
+        if (ch)
+            handle_key(ch);
     }
     return 0;
 }
 ```
 
+Under the hood `kbhit()` is CP/M BDOS function 11 (console status) and `getch()`
+is BDOS function 6 (direct console input, `E = 0xff`). You can call those
+directly through `bdos()` if you need the raw behaviour, but the named functions
+are clearer and also flush pending buffered output before blocking:
+
+```c
+#include <stdlib.h>
+
+int raw_kbhit(void)        { return bdos(11, 0) != 0; }
+int raw_getch_nonblock(void) { return bdos(6, 0xff); }  /* 0 = no key ready */
+```
+
 BDOS function 6 uses `0` as the "no character" sentinel, so it is best for
 keyboard-style console input rather than protocols where NUL is meaningful.
-Avoid mixing direct console I/O with buffered console input in the same code
-path, because direct BDOS calls can bypass console buffers used by other input
-functions.
+Avoid mixing raw `bdos()` console I/O with the buffered console functions in the
+same code path, because direct BDOS calls bypass the console output buffer that
+`printf`/`puts` drain through.
 
 ### Direct port I/O
 

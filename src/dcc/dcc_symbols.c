@@ -397,25 +397,13 @@ void emit_extrn_if_needed(struct Sym *s)
         return;
 
     /*
-     * M80 wants EXTRN before the first reference.  For SC_EXTERN objects
-     * (stdin/stdout/stderr/errno or extern data declarations), the reference
-     * itself proves it is needed, so emit immediately.  Function prototypes
-     * still use deferred EXTRN so a later definition in this translation unit
-     * does not create EXTRN/PUBLIC conflicts.
+     * Defer all EXTRNs to emit_deferred_extrns() at the end of the file.
+     * M80 resolves externals in two passes, so EXTRN can appear after the
+     * first reference.  Deferring avoids emitting EXTRN for symbols that are
+     * later defined in the same translation unit (e.g. an extern declaration
+     * in a header followed by a definition in an #included .c file), which
+     * would otherwise cause an EXTRN/PUBLIC conflict in M80.
      */
-    if (s->storage == SC_EXTERN && !asm_name_is_internal_public(s->name)) {
-        /*
-         * In scan_mode we are only computing locals/frame size.  Do not mark
-         * the EXTRN as emitted here, because scan_mode suppresses output; the
-         * real generation pass must still print it before the first reference.
-         */
-        if (!scan_mode) {
-            fprintf(outf, "\textrn %s\n", asm_name_for(sym_asm_name(s)));
-            s->needs_extrn = 0;
-        }
-        return;
-    }
-
     for (i = 0; i < nused_extrns; ++i)
         if (used_extrns[i] == s)
             return;

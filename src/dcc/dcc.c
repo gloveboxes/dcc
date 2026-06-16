@@ -133,12 +133,58 @@ void append_mem(char **outp, long *lenp, long *capp,
     (*outp)[*lenp] = 0;
 }
 
+int path_is_absolute(const char *p)
+{
+    if (!p || !p[0])
+        return 0;
+
+    /* Unix, CP/M-ish, and Windows rooted paths. */
+    if (p[0] == '/' || p[0] == '\\')
+        return 1;
+
+    /* Windows drive-rooted paths, e.g. C:\foo or C:/foo.  A bare "C:foo"
+     * is drive-relative, so leave it searchable like an ordinary relative
+     * path. */
+    if (isalpha((unsigned char)p[0]) && p[1] == ':' &&
+        (p[2] == '/' || p[2] == '\\'))
+        return 1;
+
+    return 0;
+}
+
+const char *path_last_sep(const char *p)
+{
+    const char *slash;
+    const char *backslash;
+
+    if (!p)
+        return NULL;
+
+    slash = strrchr(p, '/');
+    backslash = strrchr(p, '\\');
+
+    if (!slash)
+        return backslash;
+    if (!backslash)
+        return slash;
+    return slash > backslash ? slash : backslash;
+}
+
+int path_needs_sep(const char *dir)
+{
+    int len;
+
+    if (!dir || !dir[0])
+        return 0;
+
+    len = (int)strlen(dir);
+    return dir[len - 1] != '/' && dir[len - 1] != '\\';
+}
+
 void make_include_path(const char *base, const char *inc,
                               char *out, int outsz)
 {
     int i;
-
-    (void)base;
 
     /* First try the name as given (current directory or absolute path). */
     strncpy(out, inc, (size_t)outsz - 1);
@@ -146,13 +192,33 @@ void make_include_path(const char *base, const char *inc,
     if (file_exists(out))
         return;
 
+    /* Then try relative to the directory of the including file, so that
+     * headers next to the source file are found without requiring -I.
+     * Accept both Unix '/' and DOS/Windows '\\' separators.  ma.bat passes
+     * source names like tests\a1.c; looking only for '/' misses that source
+     * directory and makes #include "m6502.h" fall back to the current
+     * working directory. */
+    if (base && !path_is_absolute(inc)) {
+        const char *slash = path_last_sep(base);
+        if (slash) {
+            int dirlen = (int)(slash - base) + 1;
+            if (dirlen + (int)strlen(inc) < outsz) {
+                strncpy(out, base, (size_t)dirlen);
+                out[dirlen] = 0;
+                strcat(out, inc);
+                if (file_exists(out))
+                    return;
+            }
+        }
+    }
+
     /* Then search each -I directory in command-line order; use the first
      * that contains the header.  Absolute include names are left untouched. */
-    if (inc[0] != '/') {
+    if (!path_is_absolute(inc)) {
         for (i = 0; i < num_include_dirs; ++i) {
             const char *dir = include_dirs[i];
             int len = (int)strlen(dir);
-            int need_slash = (len > 0 && dir[len - 1] != '/');
+            int need_slash = path_needs_sep(dir);
 
             if (len + (need_slash ? 1 : 0) + (int)strlen(inc) >= outsz)
                 continue;

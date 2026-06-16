@@ -71,13 +71,19 @@ void emit_init_label_or_number(const char *p, int bytes)
 
     /*
      * Symbolic initializers are addresses.  String literal labels are
-     * compiler-generated assembly labels (S0, S1, ...), while C symbol
-     * names still need normal target name mapping.
+     * compiler-generated assembly labels (S0, S1, ...).  Labels that contain
+     * '+' or '-' are already-mangled asm arithmetic expressions of the form
+     * "_sym±offset" (produced for pointer±constant initialisers); emit them
+     * verbatim so M80 can compute the relocatable value.  Ordinary C symbol
+     * names still need the normal target name mapping.
      */
-    if (init_label_is_string_literal_label(p))
+    if (init_label_is_string_literal_label(p)) {
         fprintf(outf, "\tdw %s\n", p);
-    else
+    } else if (strchr(p, '+') || strchr(p, '-')) {
+        fprintf(outf, "\tdw %s\n", p);
+    } else {
         fprintf(outf, "\tdw %s\n", asm_name_for(p));
+    }
 
     if (bytes > 2)
         fprintf(outf, "\tds %d\n", bytes - 2);

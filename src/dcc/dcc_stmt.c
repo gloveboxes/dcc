@@ -1297,7 +1297,7 @@ void gen_switch_chain(void)
         line_no = save_line_no;
         tok_line = save_tok_line;
         tok = save_tok;
-        /* Best effort: parse the syntax and fall through to the end. */
+        fatal("switch has too many cases or unsupported syntax; increase MAX_SWITCH_CASES");
     } else {
         posi = save_posi;
         tok_start_pos = save_tok_start_pos;
@@ -1497,7 +1497,7 @@ int scan_switch_cases_for_table(int *case_vals, int *case_labs,
      * dense range is still a good space/time tradeoff for interpreter
      * dispatch and keeps sparse switches on the chain path below.
      */
-    if ((maxv - minv) > 127)
+    if ((maxv - minv) > 255)
         return 0;
 
     if ((maxv - minv + 1) > ncase * 2)

@@ -83,7 +83,7 @@
 #define MAX_FLOW       128
 #define MAX_SNAPSHOT   256
 #define MAX_PROTO_PARAMS 16
-#define MAX_SWITCH_CASES 128
+#define MAX_SWITCH_CASES 512
 #define MAX_ASM_NAMES 2048
 #define MAX_TYPEDEFS   512
 #define MAX_STRUCTS    256
@@ -207,8 +207,9 @@ struct Sym {
     int has_init;
     long init_value;
     int init_count;
-    char init_labels[256][64];
-    int init_sizes[256];
+    int init_cap;
+    char (*init_labels)[64];
+    int *init_sizes;
     int is_array;
     int array_len;
     int elem_size; /* stride per first-dimension element */
@@ -464,6 +465,7 @@ const char *sym_asm_name(struct Sym *s);
 /* ---- diag_emit ---- */
 void fatal(const char *msg);
 void init_predefined_macro_texts(void);
+void dcc_copy_str(char *dst, size_t dstsz, const char *src);
 void source_location_at(long ofs, char *filebuf, int filebufsz, int *linep);
 void error_here(const char *msg);
 void *xmalloc(size_t n);

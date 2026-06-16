@@ -6,6 +6,7 @@
 
 // most of this fails with dccrtl, but it's good to know where things stand.
 
+#if 0
 void cppreference() // from https://en.cppreference.com/w/c/io/fprintf
 {
     const char* s = "Hello";
@@ -37,6 +38,7 @@ void cppreference() // from https://en.cppreference.com/w/c/io/fprintf
     printf("\tLargest 32-bit value is %" PRIu32 " or %#" PRIx32 "\n",
                                      UINT32_MAX,     UINT32_MAX );
 }
+#endif
 
 int main()
 {

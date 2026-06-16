@@ -29,8 +29,8 @@ int main(void)
     /* hex: %x is lowercase, %X uppercase; both zero-pad to a fixed width */
     sprintf(b, "%04x", 0x2aU);   eq(b, "002a", "x");
     sprintf(b, "%04X", 0x2aU);   eq(b, "002A", "X");
-    sprintf(b, "%lx", 0xdeadUL); eq(b, "0000dead", "lx");
-    sprintf(b, "%lX", 0xdeadUL); eq(b, "0000DEAD", "lX");
+    sprintf(b, "%lx", 0xdeadUL); eq(b, "dead", "lx");
+    sprintf(b, "%lX", 0xdeadUL); eq(b, "DEAD", "lX");
 
     /* 32-bit signed long */
     sprintf(b, "%05ld", 42L);    eq(b, "00042", "ld pos");

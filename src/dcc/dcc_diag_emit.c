@@ -11,6 +11,24 @@
  */
 
 #include "dcc.h"
+
+void dcc_copy_str(char *dst, size_t dstsz, const char *src)
+{
+    size_t i;
+
+    if (!dst || dstsz == 0)
+        return;
+    if (!src)
+        src = "";
+
+    i = 0;
+    while (i + 1 < dstsz && src[i]) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = 0;
+}
+
 void fatal(const char *msg)
 {
     fprintf(stderr, "dcc: fatal: %s\n", msg);

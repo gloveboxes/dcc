@@ -40,7 +40,7 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield ^
              pint cobint forint bint fint cint adaint tstretst tportio tlongidx tforsco ^
              tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv tfarrsub t2darr too tzpad tesc ^
-             tkbd tstackov
+             tkbd tstackov a1
 
 echo --- optimized (ma peep) ---
 set "outputfile=test_dcc.txt"
@@ -96,6 +96,8 @@ for %%a in (%_applist%) do (
         pushd "%_builddir%" && %_emulator% %%a 10 >>"%outabs%" & popd
     ) else if "%%a"=="tkbd" (
         pushd "%_builddir%" && echo x | %_emulator% %%a >>"%outabs%" & popd
+    ) else if "%%a"=="a1" (
+        pushd "%_builddir%" && %_emulator% %%a -l:HELLO.BAS >>"%outabs%" & popd
     ) else if "%%a"=="wumpus" (
         pushd "%_builddir%" && %_emulator% %%a -c >>"%outabs%" & popd
     ) else if "%%a"=="tchess" (
@@ -162,6 +164,11 @@ if exist "tests\E.F" (
     copy /Y "tests\E.F" "%_builddir%\E.F" >nul
 ) else if exist "E.F" (
     copy /Y "E.F" "%_builddir%\E.F" >nul
+)
+if exist "tests\HELLO.BAS" (
+    copy /Y "tests\HELLO.BAS" "%_builddir%\HELLO.BAS" >nul
+) else if exist "HELLO.BAS" (
+    copy /Y "HELLO.BAS" "%_builddir%\HELLO.BAS" >nul
 )
 if exist "tests\EU.C" (
     copy /Y "tests\EU.C" "%_builddir%\EU.C" >nul

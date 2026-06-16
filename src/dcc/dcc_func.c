@@ -1037,15 +1037,46 @@ int parse_global_init_atom(long *val, char *label, int labelsz)
             return 1;
         }
 
-        if (label && labelsz > 0) {
+        {
             struct Sym *ls;
             const char *lname;
             ls = find_sym(tok.text);
             lname = ls ? sym_asm_name(ls) : tok.text;
-            strncpy(label, lname, labelsz - 1);
-            label[labelsz - 1] = 0;
+            if (label && labelsz > 0) {
+                strncpy(label, lname, labelsz - 1);
+                label[labelsz - 1] = 0;
+            }
+            next_token();
+
+            /* pointer +/- constant: e.g. buf - 0x4000
+             * Emit as a raw asm arithmetic expression so M80 can relocate it. */
+            if (label && (tok.kind == '-' || tok.kind == '+')) {
+                int neg = (tok.kind == '-');
+                long save_pos2 = posi;
+                long save_tok_start2 = tok_start_pos;
+                int save_line2 = line_no;
+                int save_tok_line2 = tok_line;
+                struct Token save_tok2 = tok;
+                next_token();
+                if (tok.kind == TOK_NUM) {
+                    char tmp[64];
+                    const char *aname = asm_name_for(lname);
+                    if (neg)
+                        sprintf(tmp, "%s-%ld", aname, tok.val);
+                    else
+                        sprintf(tmp, "%s+%ld", aname, tok.val);
+                    strncpy(label, tmp, labelsz - 1);
+                    label[labelsz - 1] = 0;
+                    next_token();
+                } else {
+                    posi = save_pos2;
+                    tok_start_pos = save_tok_start2;
+                    line_no = save_line2;
+                    tok_line = save_tok_line2;
+                    tok = save_tok2;
+                }
+            }
         }
-        next_token();
         return 2;       /* symbolic address */
     }
 
@@ -1073,12 +1104,21 @@ int parse_global_init_atom(long *val, char *label, int labelsz)
 
 
 
+static void grow_init_cap(struct Sym *s, int need)
+{
+    int newcap;
+    if (need <= s->init_cap) return;
+    newcap = s->init_cap ? s->init_cap * 2 : 16;
+    while (newcap < need) newcap *= 2;
+    s->init_labels = (char (*)[64])realloc(s->init_labels, (size_t)newcap * sizeof(s->init_labels[0]));
+    s->init_sizes  = (int *)realloc(s->init_sizes,  (size_t)newcap * sizeof(s->init_sizes[0]));
+    if (!s->init_labels || !s->init_sizes) fatal("out of memory for initializer");
+    s->init_cap = newcap;
+}
+
 void append_global_init(struct Sym *s, const char *label, long v, int bytes, int is_label)
 {
-    if (s->init_count >= 256) {
-        error_here("too many initializer elements");
-        return;
-    }
+    grow_init_cap(s, s->init_count + 1);
     if (bytes <= 0) bytes = 2;
     if (is_label) {
         strncpy(s->init_labels[s->init_count], label, sizeof(s->init_labels[0]));
@@ -1373,12 +1413,7 @@ void parse_global_scalar_array_init_scalar(struct Sym *s, int *np)
     int elem_bytes;
 
     n = np[0];
-    if (n >= 256) {
-        error_here("too many initializer elements");
-        if (tok.kind != ',' && tok.kind != '}')
-            next_token();
-        return;
-    }
+    grow_init_cap(s, n + 1);
 
     s->init_labels[n][0] = 0;
 
@@ -1422,7 +1457,8 @@ void parse_global_scalar_array_zero_to(struct Sym *s, int *np, int limit)
     if (elem_bytes <= 0)
         elem_bytes = 2;
 
-    while (np[0] < limit && np[0] < 256) {
+    while (np[0] < limit) {
+        grow_init_cap(s, np[0] + 1);
         sprintf(s->init_labels[np[0]], "0");
         s->init_sizes[np[0]] = elem_bytes;
         np[0] = np[0] + 1;
@@ -1484,10 +1520,7 @@ void parse_global_init_list(struct Sym *s)
         while (tok.kind == TOK_STR) {
             int si;
             for (si = 0; tok.text[si]; ++si) {
-                if (n >= 256) {
-                    error_here("too many initializer elements");
-                    break;
-                }
+                grow_init_cap(s, n + 1);
                 sprintf(s->init_labels[n], "%u", (unsigned char)tok.text[si]);
                 s->init_sizes[n] = 1;
                 n++;
@@ -1502,21 +1535,22 @@ void parse_global_init_list(struct Sym *s)
          * size/array_len left as zero.
          */
         if (s->size == 0 || s->array_len == 0) {
-            if (n < 256) {
-                sprintf(s->init_labels[n], "0");
-                s->init_sizes[n] = 1;
-                n++;
-            }
+            grow_init_cap(s, n + 1);
+            sprintf(s->init_labels[n], "0");
+            s->init_sizes[n] = 1;
+            n++;
             s->size = n;
             s->array_len = n;
             s->elem_size = 1;
-        } else if (n < s->size && n < 256) {
+        } else if (n < s->size) {
+            grow_init_cap(s, n + 1);
             sprintf(s->init_labels[n], "0");
             s->init_sizes[n] = 1;
             n++;
         }
 
-        while (s->size > 0 && n < s->size && n < 256) {
+        while (s->size > 0 && n < s->size) {
+            grow_init_cap(s, n + 1);
             sprintf(s->init_labels[n], "0");
             s->init_sizes[n] = 1;
             n++;
@@ -1555,6 +1589,7 @@ void parse_global_init_list(struct Sym *s)
                 return;
             }
             s->has_init = 1;
+            grow_init_cap(s, 1);
             if ((s->type & 15) == TYPE_FLOAT && type_ptr_depth(s->type) == 0) {
                 unsigned long bits;
                 if (parse_float_init_literal(&bits)) {
@@ -1884,6 +1919,8 @@ void parse_function_or_global(int base_type)
             }
 
             s = add_global(name, type, SC_GLOBAL);
+            if (s->storage == SC_EXTERN)
+                s->storage = SC_GLOBAL;
             s->is_defined = 1;
             s->needs_extrn = 0;
             if (decl_is_static)

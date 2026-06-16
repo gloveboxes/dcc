@@ -853,9 +853,22 @@ int skip_lvalue_syntax(void)
                 return 0;
             /* This may have been a cast in a dereference lvalue, e.g.
              *     *(struct S *)p = rhs;
-             * Consume the simple cast operand so lookahead reaches '='. */
+             *     *(uint8_t *)get_mem(addr) = val;
+             * Consume the cast operand (and any function call) so lookahead reaches '='. */
             if (tok.kind == TOK_ID) {
                 next_token();
+                /* Also consume a following function call: *(T*)func(args) = rhs */
+                if (tok.kind == '(') {
+                    depth = 1;
+                    next_token();
+                    while (tok.kind != TOK_EOF && depth > 0) {
+                        if (tok.kind == '(' || tok.kind == '[') depth++;
+                        else if (tok.kind == ')' || tok.kind == ']') depth--;
+                        next_token();
+                    }
+                    if (depth != 0)
+                        return 0;
+                }
             } else if (tok.kind == '(') {
                 depth = 1;
                 next_token();
@@ -3522,6 +3535,13 @@ void emit_incdec_value_in_dehl(int type, int op)
             emit("\tinc hl\n");
         else
             emit("\tdec hl\n");
+
+        /* The Z80 update is done in 16-bit HL even for 8-bit objects.
+         * For ++uint8_t at 0xff this leaves HL == 0x0100 unless we narrow
+         * it back to the stored object type.  That corrupts expressions such
+         * as m[0x100 + ++sp], where the stored byte wraps to 0 but the
+         * returned expression value was still 0x0100. */
+        emit_promote_byte_to_int(type);
     }
 }
 

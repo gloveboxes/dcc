@@ -309,7 +309,7 @@ int add_struct_def(const char *name)
 
     id = ++nstruct_defs;
     memset(&struct_defs[id - 1], 0, sizeof(struct_defs[id - 1]));
-    strncpy(struct_defs[id - 1].name, name, sizeof(struct_defs[id - 1].name) - 1);
+    dcc_copy_str(struct_defs[id - 1].name, sizeof(struct_defs[id - 1].name), name);
     struct_defs[id - 1].first_field = nfield_defs;
     return id;
 }
@@ -363,8 +363,7 @@ void parse_struct_definition(int struct_id)
                 break;
             }
 
-            strncpy(fname, tok.text, sizeof(fname) - 1);
-            fname[sizeof(fname) - 1] = 0;
+            dcc_copy_str(fname, sizeof(fname), tok.text);
             next_token();
 
             if (tok.kind == ':') {
@@ -398,8 +397,7 @@ void parse_struct_definition(int struct_id)
                 }
 
                 memset(&field_defs[nfield_defs], 0, sizeof(field_defs[nfield_defs]));
-                strncpy(field_defs[nfield_defs].name, fname, sizeof(field_defs[nfield_defs].name));
-                field_defs[nfield_defs].name[sizeof(field_defs[nfield_defs].name) - 1] = '\0';
+                dcc_copy_str(field_defs[nfield_defs].name, sizeof(field_defs[nfield_defs].name), fname);
                 if ((ftype & 15) != TYPE_INT || type_ptr_depth(ftype) != 0)
                     error_here("bitfield type must be int or unsigned int");
                 field_defs[nfield_defs].type = (ftype & TYPE_UNSIGNED) ?
@@ -427,8 +425,7 @@ void parse_struct_definition(int struct_id)
             bytes = type_size(ftype);
 
             memset(&field_defs[nfield_defs], 0, sizeof(field_defs[nfield_defs]));
-            strncpy(field_defs[nfield_defs].name, fname, sizeof(field_defs[nfield_defs].name));
-            field_defs[nfield_defs].name[sizeof(field_defs[nfield_defs].name) - 1] = '\0';
+            dcc_copy_str(field_defs[nfield_defs].name, sizeof(field_defs[nfield_defs].name), fname);
             field_defs[nfield_defs].type = ftype;
             field_defs[nfield_defs].parent_struct_id = struct_id;
             /* union: all fields at offset 0; struct: cumulative */
@@ -554,8 +551,7 @@ int parse_base_type(void)
             is_union_kw = (tok.kind == TOK_UNION);
             next_token();
             if (tok.kind == TOK_ID) {
-                strncpy(sname, tok.text, sizeof(sname) - 1);
-                sname[sizeof(sname) - 1] = 0;
+                dcc_copy_str(sname, sizeof(sname), tok.text);
                 next_token();
                 sid = add_struct_def(sname);
             } else if (tok.kind == '{') {
@@ -585,8 +581,7 @@ int parse_base_type(void)
                     int ei;
                     int dup;
                     if (tok.kind != TOK_ID) { error_here("enum constant name expected"); break; }
-                    strncpy(ename, tok.text, sizeof(ename) - 1);
-                    ename[sizeof(ename) - 1] = 0;
+                    dcc_copy_str(ename, sizeof(ename), tok.text);
                     next_token();
 
                     /* C89 enumerator values are integer constant expressions,
@@ -604,8 +599,7 @@ int parse_base_type(void)
                         }
                     }
                     if (!dup && nenum_consts < MAX_ENUM_CONSTS) {
-                        strncpy(enum_const_names[nenum_consts], ename, sizeof(enum_const_names[nenum_consts]));
-                        enum_const_names[nenum_consts][sizeof(enum_const_names[nenum_consts]) - 1] = '\0';
+                        dcc_copy_str(enum_const_names[nenum_consts], sizeof(enum_const_names[nenum_consts]), ename);
                         enum_const_values[nenum_consts] = cur_val;
                         nenum_consts++;
                     }

@@ -2641,6 +2641,7 @@ pf_percent:
         xor     a
         ld      (pf_width),a
         ld      (pf_prec),a
+        ld      (pf_haveprec),a
         ld      (pf_left),a
         ld      (pf_zero),a
 
@@ -2708,6 +2709,11 @@ pf_pct_left:
 pf_pct_dot:
         ; Parse digits after '.' into pf_prec (e.g. %.4d  prec=4).
         ; '.' was already consumed by inc hl in pf_pct_next.
+        ; Track that precision was explicitly specified so %.0x can differ
+        ; from plain %x, and so the '0' flag is ignored for all integer
+        ; conversions even when the explicit precision is zero.
+        ld      a,1
+        ld      (pf_haveprec),a
 pf_pct_prec_loop:
         ld      a,(hl)
         or      a
@@ -2819,7 +2825,7 @@ pf_zsetup:
         ld      a,(pf_left)
         or      a
         jr      nz,pf_zs_done   ; '-' flag overrides '0'
-        ld      a,(pf_prec)
+        ld      a,(pf_haveprec)
         or      a
         jr      nz,pf_zs_done   ; explicit precision -> '0' ignored
         ld      a,(pf_width)
@@ -2846,6 +2852,29 @@ pf_efflen:
         cp      e
         ret     nc              ; digit count >= prec
         ld      a,e             ; prec is larger
+        ret
+
+; pf_zero_prec_blank: implement the C89 integer rule that an explicit
+; precision of zero with a zero value emits no digits.  Call after building a
+; minimal digit string.  If pf_haveprec && pf_prec==0 && digits are exactly "0",
+; set pf_digit=0 and point HL at the terminating NUL.  This is most visible for
+; %.0x, but is shared safely by decimal and unsigned integer conversions too.
+pf_zero_prec_blank:
+        ld      a,(pf_haveprec)
+        or      a
+        ret     z
+        ld      a,(pf_prec)
+        or      a
+        ret     nz
+        ld      a,(pf_digit)
+        cp      1
+        ret     nz
+        ld      a,(hl)
+        cp      '0'
+        ret     nz
+        xor     a
+        ld      (pf_digit),a
+        inc     hl
         ret
 
 ; pf_zfd: emit precision zero-fill then the prebuilt decimal digits.
@@ -2931,6 +2960,7 @@ pf_u:
         push    de
         call    pf_build_u      ; A = digit count, HL -> first digit (built once)
         ld      (pf_digit),a
+        call    pf_zero_prec_blank
         push    hl
         xor     a               ; unsigned: no sign
         call    pf_zsetup       ; honour the '0' zero-pad flag
@@ -2960,6 +2990,7 @@ pf_d:
         ld      h,a
         call    pf_build_u
         ld      (pf_digit),a    ; save digit count of |value|
+        call    pf_zero_prec_blank
         push    hl              ; save pointer to first digit
         ld      a,1             ; sign length = 1 ('-')
         call    pf_zsetup       ; honour the '0' zero-pad flag
@@ -2972,6 +3003,7 @@ pf_d:
 pf_d_pos:
         call    pf_build_u
         ld      (pf_digit),a    ; save digit count
+        call    pf_zero_prec_blank
         push    hl              ; save pointer to first digit
         xor     a               ; sign length = 0
         call    pf_zsetup
@@ -2995,9 +3027,16 @@ pf_x:
         push    hl
         call    pf_arg_hl
         push    de
-        ld      a,4
-        call    pf_pad_a
-        call    pf_print_x
+        call    pf_build_hex16  ; A = digit count, HL -> first hex digit
+        ld      (pf_digit),a
+        call    pf_zero_prec_blank
+        push    hl
+        xor     a               ; unsigned: no sign
+        call    pf_zsetup       ; honour the '0' zero-pad flag
+        call    pf_efflen       ; A = max(digits, precision)
+        call    pf_pad_a        ; emit leading spaces when needed
+        pop     hl
+        call    pf_zfd          ; precision/zero-fill then emit digits
         pop     de
         pop     hl
         jp      pf_loop
@@ -3075,6 +3114,7 @@ pf_ld:
         call    pf_neg32
         call    pf_build_u32    ; A = count, HL -> first digit
         ld      (pf_digit),a
+        call    pf_zero_prec_blank
         push    hl
         ld      a,1             ; sign length = 1 ('-')
         call    pf_zsetup       ; honour the '0' zero-pad flag
@@ -3087,6 +3127,7 @@ pf_ld:
 pf_ld_pos:
         call    pf_build_u32    ; A = count, HL -> first digit
         ld      (pf_digit),a
+        call    pf_zero_prec_blank
         push    hl
         xor     a               ; sign length = 0
         call    pf_zsetup
@@ -3106,6 +3147,7 @@ pf_lu:
         push    de
         call    pf_build_u32    ; A = count, HL -> first digit
         ld      (pf_digit),a
+        call    pf_zero_prec_blank
         push    hl
         xor     a               ; unsigned: no sign
         call    pf_zsetup
@@ -3125,14 +3167,21 @@ pf_lxl:
         xor     a                       ; %lx -> lowercase a-f
         ld      (pf_hexup),a
 pf_lx:
-        ; Unsigned 32-bit hex (%lx): 8 hex digits, high word first
+        ; Unsigned 32-bit hex (%lx/%lX): minimum-width hex digits.
+        ; Width still works normally, so %08lx emits eight digits.
         push    hl
         call    pf_arg_dehl     ; loads __pf32_l/__pf32_h, advances DE by 4
         push    de
-        ld      hl,(__pf32_h)
-        call    pf_print_x      ; high word (4 hex digits)
-        ld      hl,(__pf32_l)
-        call    pf_print_x      ; low word (4 hex digits)
+        call    pf_build_hex32  ; A = digit count, HL -> first hex digit
+        ld      (pf_digit),a
+        call    pf_zero_prec_blank
+        push    hl
+        xor     a               ; unsigned: no sign
+        call    pf_zsetup       ; honour the '0' zero-pad flag
+        call    pf_efflen       ; A = max(digits, precision)
+        call    pf_pad_a        ; emit leading spaces when needed
+        pop     hl
+        call    pf_zfd          ; precision/zero-fill then emit digits
         pop     de
         pop     hl
         jp      pf_loop
@@ -3252,6 +3301,142 @@ pf_emit_z:
         call    pf_emit_a
         jr      pf_emit_z
 
+; pf_build_hex16: convert HL (unsigned 16-bit) to minimal hex text.
+; Out: A = digit count, HL -> first digit in pf_decbuf, null-terminated.
+; Uses pf_hexup to choose lowercase/uppercase.  Preserves BC and DE.
+pf_build_hex16:
+        push    ix
+        push    de
+        ld      ix,pf_decbuf
+        ld      d,0             ; D = digit count / nonzero seen
+
+        ld      a,h             ; high byte, high nibble
+        rrca
+        rrca
+        rrca
+        rrca
+        call    pf_hex_store_nz
+
+        ld      a,h             ; high byte, low nibble
+        call    pf_hex_store_nz
+
+        ld      a,l             ; low byte, high nibble
+        rrca
+        rrca
+        rrca
+        rrca
+        call    pf_hex_store_nz
+
+        ld      a,l             ; low byte, low nibble; always emit one digit
+        call    pf_hex_store_force
+
+        ld      (ix+0),0
+        ld      a,d             ; return digit count
+        ld      hl,pf_decbuf
+        pop     de
+        pop     ix
+        ret
+
+; Store nibble A only after the first nonzero nibble has been seen.
+pf_hex_store_nz:
+        and     0fh
+        ld      e,a
+        ld      a,d
+        or      a
+        jr      nz,pf_hex_store_have
+        ld      a,e
+        or      a
+        ret     z
+pf_hex_store_have:
+        ld      a,e
+        jr      pf_hex_store_common
+
+; Store nibble A unconditionally; used for the final nibble so zero prints "0".
+pf_hex_store_force:
+        and     0fh
+pf_hex_store_common:
+        call    pf_hex_nib_char
+        ld      (ix+0),a
+        inc     ix
+        inc     d
+        ret
+
+; Convert nibble A to an ASCII hex digit without emitting it.
+pf_hex_nib_char:
+        and     0fh
+        add     a,'0'
+        cp      '9'+1
+        ret     c
+        add     a,7
+        push    af
+        ld      a,(pf_hexup)
+        or      a
+        jr      nz,pf_hnc_up
+        pop     af
+        add     a,20h
+        ret
+pf_hnc_up:
+        pop     af
+        ret
+
+; pf_build_hex32: convert __pf32_h:__pf32_l (unsigned 32-bit) to minimal hex text.
+; Out: A = digit count, HL -> first digit in pf_decbuf32, null-terminated.
+; Uses pf_hexup to choose lowercase/uppercase.  Preserves BC and DE.
+pf_build_hex32:
+        push    ix
+        push    de
+        ld      ix,pf_decbuf32
+        ld      d,0             ; D = digit count / nonzero seen
+
+        ld      hl,(__pf32_h)
+        ld      a,h             ; high word, high byte, high nibble
+        rrca
+        rrca
+        rrca
+        rrca
+        call    pf_hex_store_nz
+
+        ld      a,h             ; high word, high byte, low nibble
+        call    pf_hex_store_nz
+
+        ld      a,l             ; high word, low byte, high nibble
+        rrca
+        rrca
+        rrca
+        rrca
+        call    pf_hex_store_nz
+
+        ld      a,l             ; high word, low byte, low nibble
+        call    pf_hex_store_nz
+
+        ld      hl,(__pf32_l)
+        ld      a,h             ; low word, high byte, high nibble
+        rrca
+        rrca
+        rrca
+        rrca
+        call    pf_hex_store_nz
+
+        ld      a,h             ; low word, high byte, low nibble
+        call    pf_hex_store_nz
+
+        ld      a,l             ; low word, low byte, high nibble
+        rrca
+        rrca
+        rrca
+        rrca
+        call    pf_hex_store_nz
+
+        ld      a,l             ; low word, low byte, low nibble; always emit one digit
+        call    pf_hex_store_force
+
+        ld      (ix+0),0
+        ld      a,d             ; return digit count
+        ld      hl,pf_decbuf32
+        pop     de
+        pop     ix
+        ret
+
 pf_print_x:
         ld      a,h
         call    pf_hex_byte
@@ -3291,6 +3476,8 @@ pf_width:
 pf_digit:
         db      0
 pf_prec:
+        db      0
+pf_haveprec:
         db      0
 pf_left:
         db      0
@@ -6985,6 +7172,58 @@ __fgets_ptr:    dw      0
 __fgets_rem:    dw      0
 __fgets_ch:     db      0
 __fgets_start:  dw      0
+
+; ---- _gets(char *buf) ----
+; Reads a line from stdin/console. Equivalent to fgets(buf, 32767, stdin)
+; with the trailing newline stripped.
+; Returns HL = buf on success, HL = 0 at EOF.
+; Arg: buf @ IX+4/5
+        public  _gets
+_gets:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ; call _fgets(buf, 32767, 0)  -- fp=0 routes to console path
+        ld      hl,0
+        push    hl                      ; fp = 0 (stdin)
+        ld      hl,7fffh
+        push    hl                      ; size = 32767
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        push    hl                      ; buf
+        call    _fgets
+        ex      de,hl                   ; DE = fgets result
+        ld      hl,6
+        add     hl,sp
+        ld      sp,hl                   ; clean 3 args
+        ex      de,hl                   ; HL = fgets result (buf or 0)
+
+        ld      a,h
+        or      l
+        jr      z,gets_null
+
+        ; strip trailing LF from the returned string
+        push    hl                      ; save buf start
+gets_scan:
+        ld      a,(hl)
+        or      a
+        jr      z,gets_done             ; end of string, no LF to strip
+        cp      0ah                     ; LF?
+        jr      z,gets_strip
+        inc     hl
+        jr      gets_scan
+gets_strip:
+        ld      (hl),0                  ; overwrite LF with NUL
+gets_done:
+        pop     hl                      ; restore buf start
+        pop     ix
+        ret
+
+gets_null:
+        ld      hl,0
+        pop     ix
+        ret
 
 ; ============================================================
 ; _sprintf(buf, fmt, ...)

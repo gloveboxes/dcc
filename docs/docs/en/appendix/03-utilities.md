@@ -79,13 +79,25 @@ pwsh ./scripts/runall.ps1 [options]
 ### Examples
 
 ```pwsh
-pwsh ./scripts/runall.ps1                       # parallel, stack-check on (defaults)
+pwsh ./scripts/runall.ps1                       # parallel, stack-check on, both modes (defaults)
 pwsh ./scripts/runall.ps1 -Serial               # sequential fallback
 pwsh ./scripts/runall.ps1 -NoStackCheck         # build without the stack guard
 pwsh ./scripts/runall.ps1 -ThrottleLimit 8      # cap concurrency
 pwsh ./scripts/runall.ps1 -Emulator altair
-pwsh ./scripts/runall.ps1 -Mode nopeep -BuildDir mybuild
+pwsh ./scripts/runall.ps1 -Mode peep            # optimized build only
+pwsh ./scripts/runall.ps1 -Mode nopeep          # unoptimized build only
 ```
+
+### Build modes
+
+The `-Mode` parameter selects which optimization pass(es) to build and verify.
+**The default is `both`.**
+
+- **`peep`** — optimized: runs the `dccpeep` peephole optimizer after compiling.
+- **`nopeep`** — unoptimized: skips `dccpeep`.
+- **`both`** (default) — builds and verifies each app **twice**, once in each
+  mode, against the same baseline. This catches optimizer bugs that change a
+  program's output. A default run therefore performs two builds per app.
 
 ### Parameters
 
@@ -95,7 +107,7 @@ pwsh ./scripts/runall.ps1 -Mode nopeep -BuildDir mybuild
 | `-NoStackCheck` | (off) | Disable `-fstack-check` (the guard is ON by default) |
 | `-BuildDir` | `build` | Build directory for artifacts |
 | `-BaselineDir` | `tests/baselines` | Directory of per-app `<app>.txt` baselines |
-| `-Mode` | `both` | Build mode: `peep`, `nopeep`, or `both` |
+| `-Mode` | `both` | Build mode: `peep` (optimized), `nopeep` (unoptimized), or `both` |
 | `-Serial` | (off) | Run sequentially instead of the default parallel mode |
 | `-ThrottleLimit` | CPU core count | Max concurrent apps in parallel mode |
 

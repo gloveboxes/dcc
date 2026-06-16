@@ -167,19 +167,30 @@ pwsh ./scripts/runall.ps1 [options]
 | `-NoStackCheck` | (off) | Disable `-fstack-check` (the guard is ON by default) |
 | `-BuildDir` | `build` | Working directory for artifacts |
 | `-BaselineDir` | `tests/baselines` | Directory of per-app `<app>.txt` baselines |
-| `-Mode` | `both` | Build mode: `peep`, `nopeep`, or `both` |
+| `-Mode` | `both` | Build mode: `peep` (optimized), `nopeep` (unoptimized), or `both` |
 | `-Serial` | (off) | Run sequentially instead of the default parallel mode |
 | `-ThrottleLimit` | CPU core count | Max concurrent apps in parallel mode |
+
+### Build modes
+
+The `-Mode` parameter selects which optimization pass(es) to build and verify.
+**The default is `both`.**
+
+- **`peep`** — optimized: runs the `dccpeep` peephole optimizer after compiling.
+- **`nopeep`** — unoptimized: skips `dccpeep`.
+- **`both`** (default) — builds and verifies each app **twice**, once in each
+  mode, against the same baseline. A default run therefore performs two builds
+  per app (this catches optimizer bugs that change a program's output).
 
 ### Examples
 
 ```pwsh
-pwsh ./scripts/runall.ps1                       # parallel, stack-check on (defaults)
+pwsh ./scripts/runall.ps1                       # parallel, stack-check on, both modes (defaults)
 pwsh ./scripts/runall.ps1 -Serial               # sequential fallback
 pwsh ./scripts/runall.ps1 -NoStackCheck         # build without the stack guard
 pwsh ./scripts/runall.ps1 -ThrottleLimit 8      # cap concurrency
-pwsh ./scripts/runall.ps1 -Emulator altair
-pwsh ./scripts/runall.ps1 -Mode nopeep -BuildDir mybuild
+pwsh ./scripts/runall.ps1 -Mode peep            # optimized build only
+pwsh ./scripts/runall.ps1 -Mode nopeep          # unoptimized build only
 ```
 
 Parallel mode is markedly faster on multi-core machines. Each app builds in its

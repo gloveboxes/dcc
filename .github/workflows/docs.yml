@@ -2,7 +2,7 @@ name: Generate Docs and Deploy to GitHub Pages
 on:
   push:
     branches:
-      - docs
+      - main
   workflow_dispatch:
 permissions:
   contents: write

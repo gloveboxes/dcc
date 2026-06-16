@@ -16,7 +16,7 @@ nav:
   - Introduction: en/index.md
   - Setting up the toolchain: en/00-setup-toolchain.md
   - Agent skills: en/00-agent-skills.md
-  - C89 conformance and C99 extensions: en/01-c89-conformance.md
+  - C89 conformance: en/01-c89-conformance.md
   - Building and linking: en/02-build-and-link.md
   - Types and conventions: en/03-types-and-conventions.md
   - Operators: en/04-operators.md
@@ -31,6 +31,8 @@ nav:
   - Appendix:
       - Compiler architecture: en/appendix/00-architecture.md
       - Runtime optimization: en/appendix/01-dccrtlstrip.md
+      - Runtime function sizes: en/appendix/02-runtime-sizes.md
+      - Utilities: en/appendix/03-utilities.md
 
 plugins:
   - search
@@ -46,6 +48,7 @@ plugins:
 
 hooks:
   - hooks/copy_assets.py
+  - hooks/runtime_sizes.py
 
 theme:
   name: material

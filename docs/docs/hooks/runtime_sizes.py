@@ -1,27 +1,28 @@
-#!/usr/bin/env python3
-"""Generate DCCRTL.MAC runtime block size and reachability reports.
+"""MkDocs hook: inject the live DCCRTL.MAC size tables at build time.
 
-The report is intended for agents and maintainers updating the MkDocs appendix
-when DCCRTL.MAC changes. It parses PUBLIC-delimited runtime blocks using the
-same broad model as dccrtlstrip, computes the always-present baseline reachable
-from start, then computes the marginal runtime lines pulled by selected public
-symbols.
+Any page containing the marker comment
 
-Examples:
-    python3 scripts/dccrtl_size_report.py > /tmp/dccrtl-size.md
-    python3 scripts/dccrtl_size_report.py --all-publics --sort marginal
-    python3 scripts/dccrtl_size_report.py --symbols _printf,_pffio,_malloc
-    python3 scripts/dccrtl_size_report.py --format json --all-publics
+    <!-- DCCRTL-SIZE-TABLES -->
+
+has that marker replaced with freshly generated runtime size tables computed
+from the repository's ``DCCRTL.MAC``.  The runtime is split into PUBLIC-delimited
+blocks using the same broad reachability model as ``dccrtlstrip``; for each
+curated public symbol the hook reports its own block size (``self``) and the
+additional blocks it transitively pulls in beyond the always-present baseline
+(``marginal``).  Because this runs on every ``mkdocs build``, the published
+numbers never drift out of step with the runtime source.
+
+This hook is the sole consumer of the analysis — there is no standalone CLI.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+MARKER = "<!-- DCCRTL-SIZE-TABLES -->"
 
 IDENT_RE = re.compile(r"[A-Za-z_?.][A-Za-z0-9_?.$]*")
 PUBLIC_RE = re.compile(r"^\s*public\s+(.+)$", re.IGNORECASE)
@@ -32,8 +33,8 @@ REGISTER_NAMES = {
     "nz", "z", "nc", "pe", "po", "p", "m",
 }
 
-# Curated report groups matching docs/dccrtlstrip-inclusion-table.md.
-# Entries are runtime public symbols, not C names.
+# Curated documentation groups.  Entries are runtime public (assembler) symbols,
+# not C names.
 DOC_GROUPS: List[Tuple[str, List[str]]] = [
     ("Formatted I/O (stdio.h)", [
         "_pffio", "_fprintf", "_printf", "_sprintf", "_vprintf", "_vsprintf",
@@ -65,7 +66,8 @@ DOC_GROUPS: List[Tuple[str, List[str]]] = [
         "__caa", "__ctu", "__schr", "__srch", "__mcmp", "__mchr",
     ]),
     ("CP/M extensions and misc", [
-        "_perror", "_dopn", "_drd", "_strerror", "_setjmp", "_longjmp", "_bdos", "_inp", "_outp",
+        "_perror", "_dopn", "_drd", "_strerror", "_setjmp", "_longjmp", "_bdos",
+        "_inp", "_outp", "__stchk",
     ]),
 ]
 
@@ -329,14 +331,7 @@ def block_public_label(block: Block) -> str:
 def compute_entry(symbol: str, lines: Sequence[str], blocks: Sequence[Block], sym_to_block: Dict[str, int], baseline: Set[int]) -> Dict[str, object]:
     block_index = sym_to_block.get(symbol, sym_to_block.get(symbol.lower()))
     if block_index is None:
-        return {
-            "symbol": symbol,
-            "found": False,
-            "self": 0,
-            "marginal": 0,
-            "pulls_in": [],
-            "block": None,
-        }
+        return {"symbol": symbol, "found": False, "self": 0, "marginal": 0, "pulls_in": []}
 
     kept = closure_for_roots(lines, blocks, sym_to_block, ["start", symbol])
     extra = sorted(kept - baseline)
@@ -346,103 +341,55 @@ def compute_entry(symbol: str, lines: Sequence[str], blocks: Sequence[Block], sy
         "self": blocks[block_index].line_count,
         "marginal": sum(blocks[index].line_count for index in extra),
         "pulls_in": [block_public_label(blocks[index]) for index in extra if index != block_index],
-        "block": block_public_label(blocks[block_index]),
-        "block_index": block_index,
-        "reachable_blocks": len(kept),
     }
 
 
-def iter_symbols(args: argparse.Namespace, blocks: Sequence[Block]) -> List[Tuple[str, List[str]]]:
-    if args.symbols:
-        return [("Selected symbols", [part.strip() for part in args.symbols.split(",") if part.strip()])]
-    if args.all_publics:
-        names: List[str] = []
-        for block in blocks:
-            names.extend(block.public_names)
-        return [("All public symbols", sorted(set(names)))]
-    return DOC_GROUPS
+def render_tables(runtime: Path) -> str:
+    lines = runtime.read_text(encoding="utf-8", errors="replace").splitlines()
+    blocks, sym_to_block, first_block_start = build_blocks(lines)
+    baseline = closure_for_roots(lines, blocks, sym_to_block, ["start"])
+    baseline_lines = sum(blocks[index].line_count for index in baseline)
+    preamble_lines = first_block_start if first_block_start != len(lines) else 0
 
+    out: List[str] = []
+    out.append(f"Runtime: `{runtime.name}`")
+    out.append("")
+    out.append(f"- Total runtime lines: **{len(lines)}**")
+    out.append(f"- Preamble lines before the first `public`: {preamble_lines}")
+    out.append(f"- Parsed public blocks: {len(blocks)}")
+    out.append(f"- Always-present baseline: **~{baseline_lines} lines** in {len(baseline)} blocks")
+    out.append("")
 
-def markdown_report(args: argparse.Namespace, data: Dict[str, object]) -> str:
-    lines: List[str] = []
-    lines.append("# DCCRTL.MAC size report")
-    lines.append("")
-    lines.append(f"Runtime: `{data['runtime']}`")
-    lines.append(f"Total runtime lines: {data['total_lines']}")
-    lines.append(f"Preamble lines before first public: {data['preamble_lines']}")
-    lines.append(f"Parsed public blocks: {data['block_count']}")
-    lines.append(f"Always-present baseline: ~{data['baseline_lines']} lines in {data['baseline_blocks']} blocks")
-    lines.append("")
-    lines.append("Line counts are source-line estimates, not exact bytes. `marginal` is the")
-    lines.append("additional runtime source lines reachable from a symbol beyond the baseline")
-    lines.append("reachable from `start`.")
-    lines.append("")
-
-    for group in data["groups"]:  # type: ignore[index]
-        entries = group["entries"]
-        if args.sort == "marginal":
-            entries = sorted(entries, key=lambda item: (-int(item["marginal"]), str(item["symbol"])))
-        elif args.sort == "symbol":
-            entries = sorted(entries, key=lambda item: str(item["symbol"]))
-        lines.append(f"## {group['name']}")
-        lines.append("")
-        lines.append("| Symbol | self | marginal | pulls in |")
-        lines.append("| --- | ---: | ---: | --- |")
-        for entry in entries:
+    for name, symbols in DOC_GROUPS:
+        out.append(f"### {name}")
+        out.append("")
+        out.append("| Symbol | self | marginal | pulls in |")
+        out.append("| --- | ---: | ---: | --- |")
+        for symbol in symbols:
+            entry = compute_entry(symbol, lines, blocks, sym_to_block, baseline)
             if not entry["found"]:
-                lines.append(f"| `{entry['symbol']}` | - | - | not found |")
+                out.append(f"| `{entry['symbol']}` | - | - | not found |")
                 continue
-            pulls = ", ".join(f"`{name}`" for name in entry["pulls_in"][:12])
+            pulls = ", ".join(f"`{n}`" for n in entry["pulls_in"][:12])
             if len(entry["pulls_in"]) > 12:
                 pulls += ", ..."
             if not pulls:
                 pulls = "nothing beyond own block"
-            lines.append(f"| `{entry['symbol']}` | {entry['self']} | ~{entry['marginal']} | {pulls} |")
-        lines.append("")
-    return "\n".join(lines)
+            out.append(f"| `{entry['symbol']}` | {entry['self']} | ~{entry['marginal']} | {pulls} |")
+        out.append("")
+
+    return "\n".join(out).strip()
 
 
-def build_report(args: argparse.Namespace) -> Dict[str, object]:
-    runtime = Path(args.runtime)
-    lines = runtime.read_text(encoding="utf-8", errors="replace").splitlines()
-    blocks, sym_to_block, first_block_start = build_blocks(lines)
-    baseline = closure_for_roots(lines, blocks, sym_to_block, ["start"])
-
-    groups = []
-    for name, symbols in iter_symbols(args, blocks):
-        entries = [compute_entry(symbol, lines, blocks, sym_to_block, baseline) for symbol in symbols]
-        groups.append({"name": name, "entries": entries})
-
-    return {
-        "runtime": str(runtime),
-        "total_lines": len(lines),
-        "preamble_lines": first_block_start if first_block_start != len(lines) else 0,
-        "block_count": len(blocks),
-        "baseline_lines": sum(blocks[index].line_count for index in baseline),
-        "baseline_blocks": len(baseline),
-        "groups": groups,
-    }
+def _generate_tables(config) -> str:
+    repo_root = Path(config.config_file_path).resolve().parents[2]
+    runtime = repo_root / "DCCRTL.MAC"
+    if not runtime.exists():
+        raise FileNotFoundError(f"runtime source not found: {runtime}")
+    return render_tables(runtime)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate DCCRTL.MAC runtime size reports")
-    parser.add_argument("--runtime", default="DCCRTL.MAC", help="path to DCCRTL.MAC")
-    parser.add_argument("--symbols", help="comma-separated runtime public symbols to report")
-    parser.add_argument("--all-publics", action="store_true", help="report every PUBLIC symbol")
-    parser.add_argument("--sort", choices=["as-listed", "marginal", "symbol"], default="as-listed")
-    parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
-    return parser.parse_args()
-
-
-def main() -> int:
-    args = parse_args()
-    report = build_report(args)
-    if args.format == "json":
-        print(json.dumps(report, indent=2))
-    else:
-        print(markdown_report(args, report))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+def on_page_markdown(markdown, page, config, files):
+    if MARKER not in markdown:
+        return markdown
+    return markdown.replace(MARKER, _generate_tables(config))

@@ -26,115 +26,115 @@ file from carrying unused library routines. The script
 resolves each tool from your `PATH` (or the `DCC` / `DCCPEEP` / `DCCRTLSTRIP`
 environment variables), so it does not need to live next to the dcc binaries.
 
-## The manual pipeline
+??? note "The manual pipeline (click to expand)"
 
-If you'd rather drive the steps yourself — or wire them into your own build
-system — the full pipeline for `foo.c` is shown below. `dcc`, `dccpeep`, and
-`dccrtlstrip` are host tools; `m80.com` and `l80.com` are CP/M programs, so run
-them through `ntvcm` (or another CP/M emulator):
+    If you'd rather drive the steps yourself — or wire them into your own build
+    system — the full pipeline for `foo.c` is shown below. `dcc`, `dccpeep`, and
+    `dccrtlstrip` are host tools; `m80.com` and `l80.com` are CP/M programs, so run
+    them through `ntvcm` (or another CP/M emulator):
 
-=== "macOS / Linux"
+    === "macOS / Linux"
 
-    Define the same CRLF helper used by `ma.sh`: prefer `unix2dos` if it is
-    installed, otherwise use Perl (available on macOS and common Linux systems).
+        Define the same CRLF helper used by `ma.sh`: prefer `unix2dos` if it is
+        installed, otherwise use Perl (available on macOS and common Linux systems).
 
-    ```sh
-    to_crlf() {
-        if command -v unix2dos >/dev/null 2>&1; then
-            unix2dos "$1" >/dev/null 2>&1 || true
-        else
-            perl -0pi -e 's/\r?\n/\r\n/g' "$1"
-        fi
-    }
-    ```
+        ```sh
+        to_crlf() {
+            if command -v unix2dos >/dev/null 2>&1; then
+                unix2dos "$1" >/dev/null 2>&1 || true
+            else
+                perl -0pi -e 's/\r?\n/\r\n/g' "$1"
+            fi
+        }
+        ```
 
-    Compile the C source to M80 assembly, then optionally run the peephole
-    optimizer.
+        Compile the C source to M80 assembly, then optionally run the peephole
+        optimizer.
 
-    ```sh
-    dcc -I /path/to/dcc -stack 512 foo.c -o FOO.MAC
-    dccpeep FOO.MAC _PEEPOUT.MAC
-    mv _PEEPOUT.MAC FOO.MAC
-    ```
+        ```sh
+        dcc -I /path/to/dcc -stack 512 foo.c -o FOO.MAC
+        dccpeep FOO.MAC _PEEPOUT.MAC
+        mv _PEEPOUT.MAC FOO.MAC
+        ```
 
-    Convert the app assembly to CP/M CRLF text and assemble it with M80 under
-    `ntvcm`.
+        Convert the app assembly to CP/M CRLF text and assemble it with M80 under
+        `ntvcm`.
 
-    ```sh
-    to_crlf FOO.MAC
-    ntvcm m80 "=FOO.MAC" /X /O /Z /L
-    ```
+        ```sh
+        to_crlf FOO.MAC
+        ntvcm m80 "=FOO.MAC" /X /O /Z /L
+        ```
 
-    Copy and trim the runtime to only the blocks used by the app.
+        Copy and trim the runtime to only the blocks used by the app.
 
-    ```sh
-    cp /path/to/dcc/DCCRTL.MAC DCCRTL.MAC
-    to_crlf DCCRTL.MAC
-    dccrtlstrip -r DCCRTL.MAC -o RTLMIN.MAC FOO.MAC
-    ```
+        ```sh
+        cp /path/to/dcc/DCCRTL.MAC DCCRTL.MAC
+        to_crlf DCCRTL.MAC
+        dccrtlstrip -r DCCRTL.MAC -o RTLMIN.MAC FOO.MAC
+        ```
 
-    Convert, assemble, and link the trimmed runtime with the app.
+        Convert, assemble, and link the trimmed runtime with the app.
 
-    ```sh
-    to_crlf RTLMIN.MAC
-    ntvcm m80 "=RTLMIN.MAC" /X /O /Z
-    ntvcm l80 "/P:100,RTLMIN,FOO,FOO/N/E"
-    ```
+        ```sh
+        to_crlf RTLMIN.MAC
+        ntvcm m80 "=RTLMIN.MAC" /X /O /Z
+        ntvcm l80 "/P:100,RTLMIN,FOO,FOO/N/E"
+        ```
 
-=== "Windows PowerShell"
+    === "Windows PowerShell"
 
-    Define a CRLF helper using PowerShell/.NET APIs.
+        Define a CRLF helper using PowerShell/.NET APIs.
 
-    ```powershell
-    function Convert-ToCrlf($Path) {
-        $text = [IO.File]::ReadAllText($Path) -replace "`r?`n", "`r`n"
-        [IO.File]::WriteAllText($Path, $text)
-    }
-    ```
+        ```powershell
+        function Convert-ToCrlf($Path) {
+            $text = [IO.File]::ReadAllText($Path) -replace "`r?`n", "`r`n"
+            [IO.File]::WriteAllText($Path, $text)
+        }
+        ```
 
-    Compile the C source to M80 assembly, then optionally run the peephole
-    optimizer.
+        Compile the C source to M80 assembly, then optionally run the peephole
+        optimizer.
 
-    ```powershell
-    dcc -I C:\path\to\dcc -stack 512 foo.c -o FOO.MAC
-    dccpeep FOO.MAC _PEEPOUT.MAC
-    Move-Item -Force _PEEPOUT.MAC FOO.MAC
-    ```
+        ```powershell
+        dcc -I C:\path\to\dcc -stack 512 foo.c -o FOO.MAC
+        dccpeep FOO.MAC _PEEPOUT.MAC
+        Move-Item -Force _PEEPOUT.MAC FOO.MAC
+        ```
 
-    Convert the app assembly to CP/M CRLF text and assemble it with M80 under
-    `ntvcm`.
+        Convert the app assembly to CP/M CRLF text and assemble it with M80 under
+        `ntvcm`.
 
-    ```powershell
-    Convert-ToCrlf FOO.MAC
-    ntvcm m80 "=FOO.MAC" /X /O /Z /L
-    ```
+        ```powershell
+        Convert-ToCrlf FOO.MAC
+        ntvcm m80 "=FOO.MAC" /X /O /Z /L
+        ```
 
-    Copy and trim the runtime to only the blocks used by the app.
+        Copy and trim the runtime to only the blocks used by the app.
 
-    ```powershell
-    Copy-Item C:\path\to\dcc\DCCRTL.MAC DCCRTL.MAC
-    Convert-ToCrlf DCCRTL.MAC
-    dccrtlstrip -r DCCRTL.MAC -o RTLMIN.MAC FOO.MAC
-    ```
+        ```powershell
+        Copy-Item C:\path\to\dcc\DCCRTL.MAC DCCRTL.MAC
+        Convert-ToCrlf DCCRTL.MAC
+        dccrtlstrip -r DCCRTL.MAC -o RTLMIN.MAC FOO.MAC
+        ```
 
-    Convert, assemble, and link the trimmed runtime with the app.
+        Convert, assemble, and link the trimmed runtime with the app.
 
-    ```powershell
-    Convert-ToCrlf RTLMIN.MAC
-    ntvcm m80 "=RTLMIN.MAC" /X /O /Z
-    ntvcm l80 "/P:100,RTLMIN,FOO,FOO/N/E"
-    ```
+        ```powershell
+        Convert-ToCrlf RTLMIN.MAC
+        ntvcm m80 "=RTLMIN.MAC" /X /O /Z
+        ntvcm l80 "/P:100,RTLMIN,FOO,FOO/N/E"
+        ```
 
-The helper scripts stage `m80.com` and `l80.com` before invoking `ntvcm`. For a
-manual build, keep those `.COM` files and `DCCRTL.MAC` in the working directory
-where you run the pipeline, or adjust the paths to match your layout. Replace
-`/path/to/dcc` (or `C:\path\to\dcc`) with the dcc repo path that contains the
-standard headers; if you run from the dcc repo root, the explicit `-I` is usually
-unnecessary.
+    The helper scripts stage `m80.com` and `l80.com` before invoking `ntvcm`. For a
+    manual build, keep those `.COM` files and `DCCRTL.MAC` in the working directory
+    where you run the pipeline, or adjust the paths to match your layout. Replace
+    `/path/to/dcc` (or `C:\path\to\dcc`) with the dcc repo path that contains the
+    standard headers; if you run from the dcc repo root, the explicit `-I` is usually
+    unnecessary.
 
-M80 expects CP/M-style CRLF text files; LF-only files can be misread. The Unix
-helper above mirrors `ma.sh`; the Windows helper shown above uses PowerShell/.NET
-APIs.
+    M80 expects CP/M-style CRLF text files; LF-only files can be misread. The Unix
+    helper above mirrors `ma.sh`; the Windows helper shown above uses PowerShell/.NET
+    APIs.
 
 ## The compiler invocation
 
@@ -149,6 +149,7 @@ Common options:
 | `-o file` | Write M80 assembly to `file`; default is `out.mac`, `-` is stdout. |
 | `-c`, `-module` | Emit a linkable helper module, not a final program translation unit. |
 | `-f`, `-ffloatio` | Enable floating-point `printf` formatting support. |
+| `-fstack-check` | Emit a lightweight stack-overflow guard in each function prologue. |
 | `-s bytes`, `-stack bytes`, `--stack bytes` | Reserve stack bytes; default is 512. |
 | `-s=bytes`, `-stack=bytes`, `--stack=bytes` | Equivalent attached forms for the stack size. |
 | `-I dir`, `-Idir` | Add an include search directory. |
@@ -166,8 +167,42 @@ Common options:
 - **`-s` / `-stack` / `--stack`** — reserve stack space (default 512; accepted
   range 0..32767). The heap used by `malloc` lives between the end of BSS and
   the bottom of the stack, so growing the stack shrinks the heap and vice versa.
-  There are no runtime checks that stop the stack from smashing the heap.
+  By default there are no runtime checks that stop the stack from smashing the
+  heap.
+- **`-fstack-check`** — opt in to a lightweight stack-overflow guard. dcc emits
+  a short `call __stchk` in each function prologue (after the frame is set up)
+  that compares the live stack pointer against the heap ceiling. If the stack
+  has grown into the heap, the program prints `?stack overflow` and exits with
+  return code `0FFh` instead of silently corrupting memory. The guard costs a
+  few bytes and one call per function, so it is **off by default**; turn it on
+  while developing or for deeply recursive code. The `stacksize` helper script
+  (below) uses this guard to measure the minimum `-stack` reserve an app needs.
 - **`-Dname[=value]`** — predefine a macro. `_DCC_=1` is always defined.
+
+### Measuring the stack an app needs
+
+The repo ships a `stacksize` helper that builds your app with `-fstack-check`
+forced on and sweeps the `-stack` reserve upward until it runs without tripping
+the guard, then prints the minimum and a recommended value with headroom. Run it
+against an app/test name (and pass any program arguments after `--`):
+
+=== "macOS / Linux"
+
+    ```sh
+    scripts/stacksize.sh triangle          # simple app
+    scripts/stacksize.sh cobint -- e.cob   # app that needs a data-file argument
+    ```
+
+=== "Windows"
+
+    ```bat
+    scripts\stacksize.bat triangle
+    scripts\stacksize.bat cobint -- e.cob
+    ```
+
+Both honour the same `START` / `STEP` / `MAX` / `MODE` / `EMU` environment
+variables; see [`scripts/README.md`](https://github.com/davidly/dcc/blob/main/scripts/README.md)
+for the full reference.
 
 ## Including headers
 
@@ -184,5 +219,6 @@ Include the standard headers as usual:
 CP/M loads `.COM` files in just one way. BSS begins immediately after the loaded
 image, and the loader sets `SP` to the highest free byte. The heap grows on
 demand between the end of BSS and the bottom of the stack. Because there is no
-guard between them, size the stack deliberately with `-stack` for programs with
-deep recursion or large frames.
+guard between them by default, size the stack deliberately with `-stack` for
+programs with deep recursion or large frames — or build with `-fstack-check`
+(above) to turn an overflow into a clean `?stack overflow` exit.

@@ -20,6 +20,17 @@
  *     arrays nested inside an array of structs.
  *   - self-referential aggregates: an intrusive linked list and a recursive
  *     binary search tree allocated from a static object pool.
+ *   - deeply nested verifiable aggregates: a Gallery -> Hall[] -> Exhibit[]
+ *     hierarchy (arrays of structs embedded in structs) whose leaves hang off
+ *     malloc'd memory (a malloc'd Shape, a malloc'd title string, a malloc'd
+ *     ratings array).  EVERY field at EVERY level is a closed-form function of
+ *     its indices (gid = hall*NEX + exhibit), so the whole tree is re-derived
+ *     and checked element by element, plus per-hall polymorphic valuation.
+ *   - local variable scope: block-scope shadowing, for-init declaration scope,
+ *     and function-scope statics (including two sibling static locals that must
+ *     resolve to distinct backing storage).
+ *   - an over-engineered command machine: an opcode-indexed table of function
+ *     pointers mutating an accumulator object (a tiny OO stack machine).
  *   - 32-bit fixed-point arithmetic (areas/perimeters scaled by 100) so the
  *     whole thing stays deterministic without float / -ffloatio.
  *
@@ -30,6 +41,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
@@ -60,6 +72,16 @@ static void check_s(const char *name, const char *got, const char *expected)
         g_fails++;
         printf("  FAIL %s: got \"%s\" expected \"%s\"\n", name, got, expected);
     }
+}
+
+static void *xmalloc(unsigned int n)
+{
+    void *p = malloc(n);
+    if (p == 0) {
+        printf("  FAIL out of memory (%u bytes)\n", n);
+        exit(2);
+    }
+    return p;
 }
 
 /* print a fixed-point (value * 100) quantity as N.NN */
@@ -475,8 +497,251 @@ static int bst_height(const TNode *root)
 }
 
 /* ------------------------------------------------------------------ */
-/* drivers                                                             */
+/* deeply nested, fully verifiable aggregate: a museum Gallery         */
+/*                                                                     */
+/*   Gallery                                                           */
+/*     +-- Hall halls[NHALL]            (array of structs in a struct) */
+/*           +-- const CuratorVTable *  (per-hall valuation policy)    */
+/*           +-- Exhibit exhibits[NEX]  (array of structs in a struct) */
+/*                 +-- char  *title     (malloc'd "E%02d")             */
+/*                 +-- Shape *piece      (malloc'd shape; reuses the    */
+/*                 |                      Rectangle/Circle/Triangle vt) */
+/*                 +-- int   *ratings   (malloc'd array)               */
+/*                                                                     */
+/* gid = hall*NEX + exhibit; every field is a function of gid/r:       */
+/*   title          = "E%02d" % gid                                    */
+/*   piece kind     = gid % 3  (0 Rect, 1 Circle, 2 Triangle)          */
+/*   Rect  w,h      = (2+gid), 3                                       */
+/*   Circle radius  = 1+gid                                            */
+/*   Tri   b,h      = (2+gid), 4                                       */
+/*   piece->id      = gid                                              */
+/*   nratings       = exhibit + 1                                      */
+/*   rating[r]      = gid*10 + r                                       */
 /* ------------------------------------------------------------------ */
+
+#define NHALL 3
+#define NEX   3     /* exhibits per hall */
+
+/* per-hall valuation policy (vtable): value derived from the piece area */
+typedef long (*value_fn)(const Shape *s);
+
+typedef struct CuratorVTable {
+    const char *name;
+    value_fn    value;
+} CuratorVTable;
+
+static long value_standard(const Shape *s) { return shape_area(s) / 100L; }
+static long value_premium(const Shape *s)  { return (shape_area(s) / 100L) * 2L; }
+static long value_discount(const Shape *s) { return (shape_area(s) / 100L) / 2L; }
+
+static const CuratorVTable CUR_STANDARD = { "Standard", value_standard };
+static const CuratorVTable CUR_PREMIUM  = { "Premium",  value_premium };
+static const CuratorVTable CUR_DISCOUNT = { "Discount", value_discount };
+
+static const CuratorVTable *CURATORS[NHALL] = {
+    &CUR_STANDARD, &CUR_PREMIUM, &CUR_DISCOUNT
+};
+
+typedef struct Exhibit {
+    char  *title;       /* malloc'd string */
+    Shape *piece;       /* malloc'd shape (up-cast from a derived type) */
+    int    nratings;
+    int   *ratings;     /* malloc'd array */
+} Exhibit;
+
+typedef struct Hall {
+    char *name;                     /* malloc'd "H%d" */
+    const CuratorVTable *curator;   /* per-hall valuation policy */
+    int   nexhibits;
+    Exhibit exhibits[NEX];          /* array of structs embedded in a struct */
+} Hall;
+
+typedef struct Gallery {
+    const char *name;
+    int nhalls;
+    Hall halls[NHALL];              /* array of structs embedded in a struct */
+} Gallery;
+
+static Gallery g_gallery;
+
+/* build a malloc'd shape whose dimensions are a function of gid */
+static Shape *make_piece(int gid)
+{
+    switch (gid % 3) {
+    case 0: {
+        Rectangle *r = (Rectangle *)xmalloc((unsigned int)sizeof(Rectangle));
+        rect_init(r, gid, 2 + gid, 3);
+        return (Shape *)r;
+    }
+    case 1: {
+        Circle *c = (Circle *)xmalloc((unsigned int)sizeof(Circle));
+        circ_init(c, gid, 1 + gid);
+        return (Shape *)c;
+    }
+    default: {
+        Triangle *t = (Triangle *)xmalloc((unsigned int)sizeof(Triangle));
+        tri_init(t, gid, 2 + gid, 4);
+        return (Shape *)t;
+    }
+    }
+}
+
+/* recompute the area a piece *should* have, straight from gid (independent of
+   the live shape), so the verification does not trust the constructor. */
+static long expected_area(int gid)
+{
+    switch (gid % 3) {
+    case 0:  return (long)(2 + gid) * 3 * 100L;            /* Rectangle w*h */
+    case 1:  return 31416L * (1 + gid) * (1 + gid) / 100L; /* Circle pi r^2 */
+    default: return (long)(2 + gid) * 4 * 50L;             /* Triangle b*h/2 */
+    }
+}
+
+static void exhibit_init(Exhibit *ex, int h, int e)
+{
+    int gid = h * NEX + e;
+    int nratings = e + 1;
+    int r;
+    char tmp[8];
+
+    sprintf(tmp, "E%02d", gid);
+    ex->title = (char *)xmalloc((unsigned int)(strlen(tmp) + 1));
+    strcpy(ex->title, tmp);
+
+    ex->piece = make_piece(gid);
+
+    ex->nratings = nratings;
+    ex->ratings = (int *)xmalloc((unsigned int)(nratings * (int)sizeof(int)));
+    for (r = 0; r < nratings; r++)
+        ex->ratings[r] = gid * 10 + r;
+}
+
+static void hall_init(Hall *hl, int h)
+{
+    int e;
+    char tmp[8];
+
+    sprintf(tmp, "H%d", h);
+    hl->name = (char *)xmalloc((unsigned int)(strlen(tmp) + 1));
+    strcpy(hl->name, tmp);
+
+    hl->curator = CURATORS[h % NHALL];
+    hl->nexhibits = NEX;
+
+    for (e = 0; e < NEX; e++)
+        exhibit_init(&hl->exhibits[e], h, e);
+}
+
+static void gallery_init(Gallery *g)
+{
+    int h;
+
+    g->name = "Atrium Gallery";
+    g->nhalls = NHALL;
+    for (h = 0; h < NHALL; h++)
+        hall_init(&g->halls[h], h);
+}
+
+static void gallery_free(Gallery *g)
+{
+    int h, e;
+
+    for (h = 0; h < g->nhalls; h++) {
+        Hall *hl = &g->halls[h];
+        for (e = 0; e < hl->nexhibits; e++) {
+            Exhibit *ex = &hl->exhibits[e];
+            free(ex->ratings);
+            free(ex->piece);
+            free(ex->title);
+        }
+        free(hl->name);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* over-engineered OO command machine: opcode-indexed vtable of ops    */
+/* mutating an Accumulator object (a tiny stack-free calculator).      */
+/* ------------------------------------------------------------------ */
+
+typedef struct Machine {
+    long acc;
+    int  steps;
+} Machine;
+
+typedef void (*op_fn)(Machine *m, long operand);
+
+static void op_set(Machine *m, long v) { m->acc = v; }
+static void op_add(Machine *m, long v) { m->acc += v; }
+static void op_sub(Machine *m, long v) { m->acc -= v; }
+static void op_mul(Machine *m, long v) { m->acc *= v; }
+
+enum { OP_SET, OP_ADD, OP_SUB, OP_MUL, OP_COUNT };
+
+typedef struct OpEntry {
+    const char *mnemonic;
+    op_fn       fn;
+} OpEntry;
+
+static const OpEntry OPTABLE[OP_COUNT] = {
+    { "SET", op_set },
+    { "ADD", op_add },
+    { "SUB", op_sub },
+    { "MUL", op_mul }
+};
+
+typedef struct Instr {
+    int  op;
+    long operand;
+} Instr;
+
+typedef struct SizedPair {
+    int  a;
+    long b;
+} SizedPair;
+
+/* Global omitted first-dimension struct-array regression: this used to infer
+ * zero rows for static/global struct arrays, and 2-D cases were initially
+ * skipped by the writeback path. */
+static const SizedPair G_PAIR_GRID[][2] = {
+    { 1, 10L }, { 2, 20L },
+    { 3, 30L }, { 4, 40L },
+    { 5, 50L }, { 6, 60L }
+};
+
+/* Union element arrays (a union whose first member is an int = one init atom).
+ * Braceless and braced element forms, plus a struct carrying a union field. */
+typedef union IntLong {
+    int  i;
+    long l;
+} IntLong;
+
+typedef struct Tagged {
+    int     tag;
+    IntLong u;
+} Tagged;
+
+/* Partial struct-array initializer: only the first field is spelled, the rest
+ * must zero-fill, and the array length must still infer as the element count. */
+typedef struct Op {
+    int  code;
+    long arg;
+} Op;
+
+static const IntLong G_U_BRACELESS[] = { 1, 2, 3, 4 };       /* exp 4 */
+static const IntLong G_U_BRACED[]    = { {10}, {20}, {30} };  /* exp 3 */
+static const Tagged  G_TAGGED[]      = { {1, {100}}, {2, {200}} };  /* exp 2 */
+static const Op      G_OP_PARTIAL[]  = { {7}, {8}, {9} };     /* exp 3, arg=0 */
+
+static void machine_run(Machine *m, const Instr *prog, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        OPTABLE[prog[i].op].fn(m, prog[i].operand);   /* table dispatch */
+        m->steps++;
+    }
+}
+
+
 
 static Rectangle g_rect;
 static Circle    g_circ;
@@ -624,6 +889,274 @@ static void test_aggregates(void)
     printf(" bst sum=%ld height=%d\n", bst_inorder_sum(root), bst_height(root));
 }
 
+/* ---- gallery driver: re-derive every field from its indices ---- */
+
+static void test_gallery(void)
+{
+    int h, e, r;
+    int n_exhibits = 0, n_ratings = 0;
+    long rating_sum = 0, id_sum = 0, valuation = 0;
+    char tmp[8];
+
+    printf("gallery:\n");
+    gallery_init(&g_gallery);
+
+    for (h = 0; h < g_gallery.nhalls; h++) {
+        Hall *hl = &g_gallery.halls[h];
+        const CuratorVTable *cur = CURATORS[h % NHALL];
+
+        sprintf(tmp, "H%d", h);
+        check_s("hall.name", hl->name, tmp);
+        check_i("hall.nexhibits", hl->nexhibits, NEX);
+        check_s("hall.curator", hl->curator->name, cur->name);
+
+        for (e = 0; e < hl->nexhibits; e++) {
+            Exhibit *ex = &hl->exhibits[e];
+            int gid = h * NEX + e;
+            long area = shape_area(ex->piece);
+            long via_vt = hl->curator->value(ex->piece);   /* polymorphic */
+            long direct;
+
+            sprintf(tmp, "E%02d", gid);
+            check_s("exhibit.title", ex->title, tmp);
+
+            /* the malloc'd piece: id and area both re-derived from gid */
+            check_i("piece.id", ex->piece->id, gid);
+            check_l("piece.area", area, expected_area(gid));
+
+            /* valuation dispatch must match an independent recompute */
+            if (h % NHALL == 0)
+                direct = area / 100L;
+            else if (h % NHALL == 1)
+                direct = (area / 100L) * 2L;
+            else
+                direct = (area / 100L) / 2L;
+            check_l("exhibit.value", via_vt, direct);
+            valuation += via_vt;
+
+            check_i("exhibit.nratings", ex->nratings, e + 1);
+            for (r = 0; r < ex->nratings; r++) {
+                check_i("rating", ex->ratings[r], gid * 10 + r);
+                rating_sum += ex->ratings[r];
+                n_ratings++;
+            }
+
+            id_sum += ex->piece->id;
+            n_exhibits++;
+        }
+    }
+
+    /* absolute aggregate anchors */
+    check_i("gallery.exhibits", n_exhibits, NHALL * NEX);   /* 9 */
+    check_i("gallery.ratings", n_ratings, 18);
+    check_l("gallery.rating_sum", rating_sum, 792L);
+    check_l("gallery.id_sum", id_sum, 36L);
+    check_l("gallery.valuation", valuation, 362L);
+
+    printf("  %d exhibits, %d ratings; rating sum=%ld id sum=%ld\n",
+           n_exhibits, n_ratings, rating_sum, id_sum);
+    printf("  valuation grand=%ld\n", valuation);
+
+    gallery_free(&g_gallery);
+}
+
+/* ---- local variable scope exercises ---- */
+
+/* function-scope static: returns a monotonically increasing id */
+static int next_id(void)
+{
+    static int n;
+    return ++n;
+}
+
+/* two sibling static locals named the same: must use distinct backing storage */
+static int sibA(void)
+{
+    static int s = 5;
+    s += 1;
+    return s;
+}
+
+static int sibB(void)
+{
+    static int s = 50;
+    s += 2;
+    return s;
+}
+
+static void test_scope(void)
+{
+    int x = 10;
+    long for_sum = 0;
+    int a1, b1, a2, b2;
+    int id1, id2, id3;
+    int shadow_inner, shadow_mid;
+
+    printf("scope:\n");
+
+    /* block-scope shadowing: inner declarations hide outer ones */
+    {
+        int x = 20;             /* shadows outer x */
+        shadow_mid = x;
+        {
+            int x = 30;         /* shadows the middle x */
+            shadow_inner = x;
+        }
+        /* back to the middle x */
+        check_i("scope.mid", x, 20);
+    }
+    check_i("scope.shadow_inner", shadow_inner, 30);
+    check_i("scope.shadow_mid", shadow_mid, 20);
+    check_i("scope.outer", x, 10);   /* outer x untouched */
+
+    /* for-init declaration scope: i and sq live only inside the loop */
+    for (int i = 0; i < 4; i++) {
+        int sq = i * i;         /* block-local, re-created each iteration */
+        for_sum += sq;
+    }
+    check_l("scope.for_sum", for_sum, 14L);   /* 0+1+4+9 */
+
+    /* function-scope static accumulates across calls */
+    id1 = next_id();
+    id2 = next_id();
+    id3 = next_id();
+    check_i("scope.id1", id1, 1);
+    check_i("scope.id2", id2, 2);
+    check_i("scope.id3", id3, 3);
+
+    /* sibling statics: independent storage, independent seeds/strides */
+    a1 = sibA();   /* 6 */
+    b1 = sibB();   /* 52 */
+    a2 = sibA();   /* 7 */
+    b2 = sibB();   /* 54 */
+    check_i("scope.sibA1", a1, 6);
+    check_i("scope.sibB1", b1, 52);
+    check_i("scope.sibA2", a2, 7);
+    check_i("scope.sibB2", b2, 54);
+
+    printf("  shadow=%d/%d/%d for-sum=%ld ids=%d,%d,%d sibs=%d,%d,%d,%d\n",
+           x, shadow_mid, shadow_inner, for_sum,
+           id1, id2, id3, a1, b1, a2, b2);
+}
+
+/* ---- over-engineered command machine ---- */
+
+static void test_machine(void)
+{
+    Machine m;
+    const Instr prog[] = {
+        { OP_SET, 5 },
+        { OP_ADD, 3 },
+        { OP_MUL, 4 },
+        { OP_SUB, 2 }
+    };
+    int n = (int)(sizeof(prog) / sizeof(prog[0]));
+
+    printf("machine:\n");
+
+    m.acc = 0;
+    m.steps = 0;
+    machine_run(&m, prog, n);
+
+    /* ((5 + 3) * 4) - 2 = 30 */
+    check_l("machine.acc", m.acc, 30L);
+    check_i("machine.steps", m.steps, 4);
+
+    /* verify the dispatch table is wired to the right mnemonics */
+    check_s("machine.op0", OPTABLE[OP_SET].mnemonic, "SET");
+    check_s("machine.op3", OPTABLE[OP_MUL].mnemonic, "MUL");
+
+    printf("  result=%ld steps=%d\n", m.acc, m.steps);
+}
+
+static void test_size_inference(void)
+{
+    unsigned rows;
+    unsigned total;
+    int r, c;
+    long bsum = 0;
+
+    printf("size inference:\n");
+
+    rows = (unsigned)(sizeof(G_PAIR_GRID) / sizeof(G_PAIR_GRID[0]));
+    total = (unsigned)(sizeof(G_PAIR_GRID) / sizeof(G_PAIR_GRID[0][0]));
+    check_i("size.rows", (int)rows, 3);
+    check_i("size.total", (int)total, 6);
+
+    for (r = 0; r < 3; r++) {
+        for (c = 0; c < 2; c++) {
+            int idx = r * 2 + c;
+            check_i("size.a", G_PAIR_GRID[r][c].a, idx + 1);
+            check_l("size.b", G_PAIR_GRID[r][c].b, (long)(idx + 1) * 10L);
+            bsum += G_PAIR_GRID[r][c].b;
+        }
+    }
+    check_l("size.bsum", bsum, 210L);
+    printf("  static grid rows=%u total=%u bsum=%ld\n", rows, total, bsum);
+}
+
+/* Local 2-D struct array, union-element arrays, and partial inits -- all of
+ * which used to fail to compile (clean errors) before the size-inference and
+ * brace-handling fixes.  Every value is re-derived from its index. */
+static void test_size_inference2(void)
+{
+    /* local 2-D struct array (flattened leaf form) */
+    SizedPair lg[][2] = {
+        { 1, 11L }, { 2, 12L },
+        { 3, 13L }, { 4, 14L }
+    };
+    /* union element arrays: braceless and braced, local */
+    IntLong lu[] = { 5, 6, 7 };          /* exp 3 */
+    IntLong lb[] = { {40}, {50} };       /* exp 2 */
+    /* partial local struct-array init: arg field zero-fills */
+    Op lop[] = { {1}, {2}, {3}, {4} };   /* exp 4, arg=0 */
+    int r, c;
+    long lgsum = 0;
+
+    printf("size inference 2:\n");
+
+    /* ---- local 2-D struct array ---- */
+    check_i("size2.lg_rows", (int)(sizeof(lg) / sizeof(lg[0])), 2);
+    check_i("size2.lg_total", (int)(sizeof(lg) / sizeof(lg[0][0])), 4);
+    for (r = 0; r < 2; r++) {
+        for (c = 0; c < 2; c++) {
+            int idx = r * 2 + c;
+            check_i("size2.lg_a", lg[r][c].a, idx + 1);
+            check_l("size2.lg_b", lg[r][c].b, (long)(idx + 11));
+            lgsum += lg[r][c].b;
+        }
+    }
+    check_l("size2.lg_bsum", lgsum, 50L);   /* 11+12+13+14 */
+
+    /* ---- global union-element arrays ---- */
+    check_i("size2.gub_n", (int)(sizeof(G_U_BRACELESS) / sizeof(G_U_BRACELESS[0])), 4);
+    check_i("size2.gub_last", G_U_BRACELESS[3].i, 4);
+    check_i("size2.gbr_n", (int)(sizeof(G_U_BRACED) / sizeof(G_U_BRACED[0])), 3);
+    check_i("size2.gbr_last", G_U_BRACED[2].i, 30);
+
+    /* ---- struct with a union field ---- */
+    check_i("size2.tag_n", (int)(sizeof(G_TAGGED) / sizeof(G_TAGGED[0])), 2);
+    check_i("size2.tag_tag", G_TAGGED[1].tag, 2);
+    check_i("size2.tag_ui", G_TAGGED[1].u.i, 200);
+
+    /* ---- local union-element arrays ---- */
+    check_i("size2.lu_n", (int)(sizeof(lu) / sizeof(lu[0])), 3);
+    check_i("size2.lu_last", lu[2].i, 7);
+    check_i("size2.lb_n", (int)(sizeof(lb) / sizeof(lb[0])), 2);
+    check_i("size2.lb_last", lb[1].i, 50);
+
+    /* ---- partial struct-array inits (missing field zero-fills) ---- */
+    check_i("size2.gop_n", (int)(sizeof(G_OP_PARTIAL) / sizeof(G_OP_PARTIAL[0])), 3);
+    check_i("size2.gop_code", G_OP_PARTIAL[2].code, 9);
+    check_l("size2.gop_arg", G_OP_PARTIAL[2].arg, 0L);
+    check_i("size2.lop_n", (int)(sizeof(lop) / sizeof(lop[0])), 4);
+    check_i("size2.lop_code", lop[3].code, 4);
+    check_l("size2.lop_arg", lop[3].arg, 0L);
+
+    printf("  local 2D rows=2 bsum=%ld; unions gub=4 gbr=3 lu=3 lb=2; partial gop=3 lop=4\n",
+           lgsum);
+}
+
 int main(void)
 {
     printf("too: OO-style C stress test for dcc\n");
@@ -633,6 +1166,11 @@ int main(void)
     test_world();
     test_multidim();
     test_aggregates();
+    test_gallery();
+    test_scope();
+    test_machine();
+    test_size_inference();
+    test_size_inference2();
 
     printf("ran %d checks, %d failures\n", g_checks, g_fails);
     if (g_fails == 0) {

@@ -550,6 +550,59 @@ int count_omitted_array_initializer_atoms(void)
     return n;
 }
 
+/*
+ * Count the TOP-LEVEL comma-separated elements inside the outer initializer
+ * brace, regardless of how many scalar atoms each element spells.  For
+ * { {1},{2},{3} } this returns 3 even though each braced group is a *partial*
+ * struct that only initializes its first field.  count_initializer_atoms_level
+ * is reused to skip over each element's contents.
+ */
+int count_initializer_top_elems_level(void)
+{
+    int n;
+
+    n = 0;
+    if (accept('{')) {
+        while (tok.kind != TOK_EOF && tok.kind != '}') {
+            count_initializer_atoms_level();   /* skip one whole element */
+            n++;
+            if (!accept(','))
+                break;
+            if (tok.kind == '}')
+                break;
+        }
+        expect('}');
+    }
+    return n;
+}
+
+int count_omitted_array_initializer_top_elems(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    int n;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    n = 0;
+    if (accept('=') && tok.kind == '{')
+        n = count_initializer_top_elems_level();
+
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return n;
+}
+
 void emit_init_auto_char_array_from_string(struct Sym *s, const char *str)
 {
     int i;

@@ -93,6 +93,76 @@ int object_array_size(int type, int count)
     return base_size * count;
 }
 
+/*
+ * Number of scalar initializer "atoms" a single object of `type` consumes in a
+ * brace initializer.  A scalar (or pointer) is one atom; a struct is the sum of
+ * its fields' atoms (recursively); a union is the atoms of its first member
+ * (only the first member is brace-initialized in C89).  Array fields multiply
+ * by their element count.
+ *
+ * This is the divisor needed to turn a flattened atom count (from
+ * count_initializer_atoms_level) back into a count of array ELEMENTS when the
+ * element type is a struct, e.g. `Instr prog[] = {{..},{..}}` has 2 elements
+ * but 4 flattened atoms.
+ */
+int type_scalar_atom_count(int type)
+{
+    int sid;
+    int i;
+    int total;
+    int is_union;
+
+    if (type & (TYPE_PTR | TYPE_PTR2))
+        return 1;
+    if (!(type & TYPE_STRUCT))
+        return 1;
+
+    sid = type_struct_id(type);
+    if (sid <= 0 || sid > nstruct_defs)
+        return 1;
+    is_union = struct_defs[sid - 1].is_union;
+
+    total = 0;
+    for (i = 0; i < nfield_defs; ++i) {
+        struct FieldDef *fd;
+        int fcount;
+        int fatoms;
+        int base;
+        int d;
+
+        fd = &field_defs[i];
+        if (fd->parent_struct_id != sid)
+            continue;
+
+        fcount = 1;
+        if (fd->is_array) {
+            if (fd->dim_count > 0) {
+                fcount = 1;
+                for (d = 0; d < fd->dim_count; ++d)
+                    if (fd->dims[d] > 0)
+                        fcount *= fd->dims[d];
+            } else if (fd->array_len > 0) {
+                fcount = fd->array_len;
+            }
+        }
+
+        base = fd->is_array ? fd->elem_type : fd->type;
+        fatoms = type_scalar_atom_count(base);
+        if (fatoms <= 0)
+            fatoms = 1;
+
+        if (is_union) {
+            total = fcount * fatoms;   /* only the first member is initialized */
+            break;
+        }
+        total += fcount * fatoms;
+    }
+
+    if (total <= 0)
+        total = 1;
+    return total;
+}
+
 int type_ptr_depth(int type)
 {
     if (type & TYPE_PTR2) return 2;

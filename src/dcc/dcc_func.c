@@ -568,6 +568,7 @@ void scan_local_decl_after_type(int base)
                 int atoms;
                 int inner;
                 int di;
+                int satoms;
 
                 atoms = count_omitted_array_initializer_atoms();
                 inner = 1;
@@ -577,9 +578,25 @@ void scan_local_decl_after_type(int base)
                 }
                 if (inner <= 0) inner = 1;
 
+                /* flattened atoms -> array elements: divide by the element
+                 * type's scalar-atom count (1 for non-struct element types). */
+                satoms = type_scalar_atom_count(type);
+                if (satoms <= 0) satoms = 1;
+
                 if (atoms > 0) {
-                    total_elems = atoms;
-                    arrlen = (atoms + inner - 1) / inner;
+                    int elems;
+                    if (satoms > 1) {
+                        /* Struct elements are always braced; count top-level
+                         * groups so PARTIAL inits ({ {1},{2},{3} }) size
+                         * correctly instead of truncating via atoms/satoms. */
+                        elems = count_omitted_array_initializer_top_elems();
+                        if (elems <= 0) elems = atoms / satoms;
+                    } else {
+                        elems = atoms;
+                    }
+                    if (elems <= 0) elems = atoms;
+                    total_elems = elems;
+                    arrlen = (elems + inner - 1) / inner;
                     g_last_array_dims[0] = arrlen;
                 }
             }
@@ -1141,6 +1158,39 @@ void parse_global_init_array(struct Sym *s, int elem_type, int count, int elem_s
         append_global_zero_bytes(s, elem_size);
         n++;
     }
+
+    /*
+     * Omitted first dimension on an array of structs, e.g.
+     *     static const Instr prog[] = { {..}, {..}, {..} };
+     *     static const Instr grid[][2] = { {..}, {..}, {..}, {..} };
+     * parse_global_init_struct/_type consumes one whole struct per top-level
+     * element, so `n` is the number of fully parsed struct objects.  The
+     * struct-array branch in parse_global_init_list returns immediately
+     * without inferring the size, so record the first dimension here.  For
+     * multidimensional arrays, elem_size is the first-dimension stride.
+     */
+    if (count <= 0 && s->is_array && s->array_len == 0 && s->dim_count > 0 && s->dims[0] == 0) {
+        int inner;
+        int rows;
+        int stride;
+
+        inner = sym_array_inner_count_from(s, 1);
+        if (inner <= 0)
+            inner = 1;
+        rows = (n + inner - 1) / inner;
+        stride = elem_size;
+        if (stride <= 0) {
+            int base = type_size(elem_type);
+            if (base <= 0) base = 2;
+            stride = inner * base;
+        }
+
+        s->dims[0] = rows;
+        s->array_len = rows;
+        s->size = rows * stride;
+        if (s->elem_size <= 0)
+            s->elem_size = stride;
+    }
 }
 
 void parse_global_init_struct(struct Sym *s, int type)
@@ -1150,14 +1200,18 @@ void parse_global_init_struct(struct Sym *s, int type)
     int used;
     int total;
     int is_union;
+    int had_brace;
 
     sid = type_struct_id(type);
     total = type_size(type);
     used = 0;
     is_union = (sid > 0 && sid <= nstruct_defs && struct_defs[sid - 1].is_union);
 
-    if (tok.kind == '{')
+    had_brace = 0;
+    if (tok.kind == '{') {
         next_token();
+        had_brace = 1;
+    }
 
     if (is_union) {
         struct FieldDef *first;
@@ -1176,7 +1230,10 @@ void parse_global_init_struct(struct Sym *s, int type)
                 parse_global_init_type(s, first->type, first->size);
             used = first->size;
 
-            if (accept(',')) {
+            /* Braceless union element in an array (static U a[] = {1,2,3})
+             * stops after its single initializer; the array loop owns the
+             * comma.  Only a braced element may report extra members. */
+            if (had_brace && accept(',')) {
                 if (tok.kind != '}') {
                     error_here("too many union initializer elements");
                     while (tok.kind != TOK_EOF && tok.kind != '}') {
@@ -1188,7 +1245,8 @@ void parse_global_init_struct(struct Sym *s, int type)
             }
         }
 
-        expect('}');
+        if (had_brace)
+            expect('}');
         if (total > used)
             append_global_zero_bytes(s, total - used);
         return;
@@ -1462,6 +1520,26 @@ void parse_global_init_list(struct Sym *s)
         return;
     }
 
+    /*
+     * Aggregate initializers for structs and arrays of structs/unions are
+     * flattened field-by-field so each emitted element uses the correct byte
+     * width.  Handle them BEFORE consuming the array's opening brace so that
+     * parse_global_init_array / parse_global_init_struct own every brace
+     * symmetrically (each element, including the first, consumes its own
+     * brace).  Consuming the array brace here first used to leave the first
+     * element's brace to be eaten by parse_global_init_array -- an off-by-one
+     * that balanced for plain structs but broke union array elements.
+     */
+    if ((s->type & TYPE_STRUCT) && type_ptr_depth(s->type) == 0 && tok.kind == '{') {
+        s->init_count = 0;
+        if (s->is_array)
+            parse_global_init_array(s, s->type, s->array_len, s->elem_size);
+        else
+            parse_global_init_struct(s, s->type);
+        s->has_init = 1;
+        return;
+    }
+
     if (!accept('{')) {
         if (!s->is_array) {
             if ((s->type & TYPE_STRUCT) && type_ptr_depth(s->type) == 0) {
@@ -1492,20 +1570,6 @@ void parse_global_init_list(struct Sym *s)
         } else {
             error_here("array initializer list expected");
         }
-        return;
-    }
-
-    /* Aggregate initializers for structs and arrays of structs need to be
-     * flattened field-by-field so each emitted element uses the correct byte
-     * width.  Plain scalar arrays keep the older simple path below.
-     */
-    if ((s->type & TYPE_STRUCT) && type_ptr_depth(s->type) == 0) {
-        s->init_count = 0;
-        if (s->is_array)
-            parse_global_init_array(s, s->type, s->array_len, s->elem_size);
-        else
-            parse_global_init_struct(s, s->type);
-        s->has_init = 1;
         return;
     }
 

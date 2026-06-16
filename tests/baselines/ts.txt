@@ -1,9 +1,9 @@
 top of app
 print an int 27
-sizeof uint8_t: 1, result 00ff
-sizeof uint8_t: 1, result 00ff
-sizeof uint8_t: 1, result 007f
-sizeof uint8_t: 1, result 007f
+sizeof uint8_t: 1, result ff
+sizeof uint8_t: 1, result ff
+sizeof uint8_t: 1, result 7f
+sizeof uint8_t: 1, result 7f
 sizeof uint16_t: 2, result ffff
 sizeof uint16_t: 2, result ffff
 sizeof uint16_t: 2, result 7fff
@@ -13,10 +13,10 @@ sizeof long: 4, result ffffffff
 sizeof ulong: 4, result 7fffffff
 sizeof ulong: 4, result 7fffffff
 now test left shifts
-sizeof uint8_t: 1, result 00fe
-sizeof uint8_t: 1, result 00fe
-sizeof uint8_t: 1, result 00fe
-sizeof uint8_t: 1, result 00fe
+sizeof uint8_t: 1, result fe
+sizeof uint8_t: 1, result fe
+sizeof uint8_t: 1, result fe
+sizeof uint8_t: 1, result fe
 sizeof uint16_t: 2, result fffe
 sizeof uint16_t: 2, result fffe
 sizeof uint16_t: 2, result fffe
@@ -36,6 +36,6 @@ f, f, f, t, t
 testing printf
   string: 'hello'
   char: 'h'
-  int: 27, 001b
+  int: 27, 1b
   negative int: -27, ffe5
 ts completed with great success

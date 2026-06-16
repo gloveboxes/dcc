@@ -9,10 +9,10 @@
 1
 12345
 32767
-0000
-00ff
-0123
-0abc
+0
+ff
+123
+abc
 7fff
 A
 a
@@ -28,8 +28,8 @@ world
 [    42]
 [   abc]
 [ hello]
-[  00ff]
-[  0abc]
+[    ff]
+[   abc]
 1 2 3
 ans=42
 ABC

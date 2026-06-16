@@ -50,7 +50,7 @@ pwsh ./scripts/ma.ps1 cobint -Mode peep -BuildDir mybuild
 
 Comprehensive test suite runner: builds and runs all test applications (all
 `*.c` files in tests/) with output verification against per-app baselines in
-`tests/baselines/`. Uses `ma.ps1` for building and `app_overrides.json` for
+`tests/baselines/`. Uses `ma.ps1` for building and `tests/_test_overrides.json` for
 test-specific arguments and stack sizes. Comparison is keyed by app name, so
 test discovery order does not matter.
 
@@ -126,6 +126,69 @@ Reports:
 - Per-app build and execution status (live in parallel mode)
 - Output verification against baseline
 - Exit code 0 on success, 1 on failure
+
+## Test Overrides (`tests/_test_overrides.json`)
+
+Per-test run configuration shared by both `runall.ps1` and `perfcapture.ps1`.
+It lives in the `tests/` folder (alongside the test sources it configures) and
+is named with a leading underscore so it sorts to the top of the directory.
+
+Most tests need no entry — they compile cleanly, take no arguments, and use the
+default 512-byte stack. This file only lists the exceptions.
+
+### Schema
+
+The file is a single JSON object with an `apps` array. Each element configures
+one test, keyed by `name`:
+
+```json
+{
+  "apps": [
+    { "name": "<app>", "args": "<string>", "stack_size": <int>, "ignore": <bool> }
+  ]
+}
+```
+
+| Property | Type | Required | Default | Purpose |
+| -------- | ---- | -------- | ------- | ------- |
+| `name` | string | yes | — | Test name, without the `.c` extension (e.g. `ttt`, `cobint`) |
+| `args` | string | no | `""` | Command-line arguments passed to the program when run. Multi-token strings are split on whitespace (e.g. `"a bb ccc"`) |
+| `stack_size` | integer | no | `512` | C stack reserve in bytes, passed to `dcc` as `-stack`. Used by recursive apps that need more headroom |
+| `ignore` | boolean | no | `false` | When `true`, the test is skipped entirely (not built or run) |
+
+Entries with none of the optional properties have no effect, so an app only
+appears here if it overrides at least one default.
+
+### Example
+
+```json
+{
+  "apps": [
+    { "name": "ttt", "args": "10" },
+    { "name": "pint", "args": "e.pas" },
+    { "name": "cobint", "args": "e.cob", "stack_size": 1536 },
+    { "name": "triangle", "stack_size": 768 },
+    { "name": "na", "ignore": true },
+    { "name": "tc89fltb", "ignore": true },
+    { "name": "spsmash", "ignore": true }
+  ]
+}
+```
+
+### Common reasons to add an entry
+
+- **Program reads a data file** — interpreters like `pint`, `cobint`, `forint`
+  take a fixture filename as `args` (e.g. `e.pas`, `e.cob`).
+- **Deep recursion** — apps such as `triangle` (768) and `cobint` (1536) need a
+  larger `stack_size` than the 512-byte default, especially under
+  `-fstack-check`.
+- **Cannot be auto-tested** — set `ignore: true` for interactive programs
+  (`na`, an editor that waits for keystrokes), tests that intentionally fail to
+  compile (`tc89fltb`), or deliberate stack-smashers (`spsmash`).
+
+To change a test's run behavior, edit `tests/_test_overrides.json` and re-run
+the suite. See also `tests/README.md` in the repository for how tests,
+baselines, and this file relate.
 
 ## Performance Capture (`perfcapture.ps1`)
 
@@ -258,35 +321,10 @@ pwsh scripts/perfcapture.ps1 -BuildDir "mybuild" -OutputFile "results.csv" -Emul
 
 ### App Overrides Lookup Table
 
-Application-specific arguments, stack size requirements, and exclusions are defined in the
-lookup table `scripts/app_overrides.json`. This JSON file eliminates hardcoded
-parameter lists in the script and makes overrides easy to maintain:
-
-**Properties:**
-
-| Property | Values | Optional? |
-| -------- | ------ | --------- |
-| `name` | `ttt`, `pint`, `triangle` | Required |
-| `args` | `10`, `e.pas`, `-c`, etc. | Yes |
-| `stack_size` | `768`, `1536`, etc. | Yes (default: 512) |
-| `ignore` | `true` | Yes (set to skip benchmarking an app) |
-
-**Example:**
-
-```json
-{
-  "apps": [
-    { "name": "ttt", "args": "10" },
-    { "name": "pint", "args": "e.pas" },
-    { "name": "triangle", "stack_size": 768 },
-    { "name": "cobint", "args": "e.cob", "stack_size": 1536 },
-    { "name": "tc89fltb", "ignore": true }
-  ]
-}
-```
-
-To add a new app override or modify existing ones, simply edit
-`scripts/app_overrides.json` and run the script again.
+`perfcapture.ps1` reads the same per-test configuration as the test runner from
+`tests/_test_overrides.json` (`args`, `stack_size`, and `ignore`). For the full
+schema and examples, see [Test Overrides](#test-overrides-tests_test_overridesjson)
+above.
 
 ### Requirements
 

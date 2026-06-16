@@ -743,6 +743,32 @@ void parse_preprocessor_line(void)
                 pending_asm_len += li;
                 pending_asm_buf[pending_asm_len++] = '\n';
             }
+            /* If this line is "public _name", mark the C symbol as defined
+             * so DCC won't emit a redundant extrn for it at end of file. */
+            {
+                const char *p = line;
+                char cname[64]; int ci;
+                while (*p == ' ' || *p == '\t') p++;
+                if (strncmp(p, "public", 6) == 0 &&
+                    (p[6] == ' ' || p[6] == '\t')) {
+                    p += 7;
+                    while (*p == ' ' || *p == '\t') p++;
+                    if (*p == '_') {
+                        p++;
+                        ci = 0;
+                        while (is_ident_char((unsigned char)*p) && ci < 63)
+                            cname[ci++] = *p++;
+                        cname[ci] = 0;
+                        if (cname[0]) {
+                            struct Sym *s = find_global(cname);
+                            if (s) {
+                                s->is_defined = 1;
+                                s->needs_extrn = 0;
+                            }
+                        }
+                    }
+                }
+            }
         }
         return;
     } else {

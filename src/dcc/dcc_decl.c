@@ -502,14 +502,18 @@ void emit_init_auto_struct_type(struct Sym *s, int baseoff, int type)
     int used;
     int total;
     int is_union;
+    int had_brace;
 
     sid = type_struct_id(type);
     total = type_size(type);
     used = 0;
     is_union = (sid > 0 && sid <= nstruct_defs && struct_defs[sid - 1].is_union);
 
-    if (tok.kind == '{')
+    had_brace = 0;
+    if (tok.kind == '{') {
         next_token();
+        had_brace = 1;
+    }
 
     if (is_union) {
         struct FieldDef *first;
@@ -530,7 +534,10 @@ void emit_init_auto_struct_type(struct Sym *s, int baseoff, int type)
                 emit_init_auto_struct_scalar(s, baseoff, first->type);
             used = first->size;
 
-            if (accept(',')) {
+            /* Only a braced union element (e.g. {{1},{2}}) may carry extra
+             * members; a braceless element in an array (U a[] = {1,2,3}) ends
+             * at its single initializer and the array loop owns the comma. */
+            if (had_brace && accept(',')) {
                 if (tok.kind != '}') {
                     error_here("too many union initializer elements");
                     while (tok.kind != TOK_EOF && tok.kind != '}') {
@@ -542,7 +549,8 @@ void emit_init_auto_struct_type(struct Sym *s, int baseoff, int type)
             }
         }
 
-        expect('}');
+        if (had_brace)
+            expect('}');
         if (total > used)
             emit_zero_local_bytes(s, baseoff + used, total - used);
         return;
@@ -632,10 +640,23 @@ void emit_init_auto_struct_from_list(struct Sym *s)
 
 void emit_init_auto_struct_array_from_list(struct Sym *s)
 {
-    int elem_size;
-    elem_size = s->elem_size ? s->elem_size : type_size(s->type);
-    if (elem_size <= 0) elem_size = 2;
-    emit_init_auto_struct_array(s, 0, s->type, s->array_len, elem_size);
+    int leaf_size;
+    int leaf_count;
+
+    /*
+     * Struct-array initializers are written in dcc's flattened form (one brace
+     * group per leaf struct), so drive the contiguous element loop by the TOTAL
+     * number of leaf structs (product of every dimension) and the size of a
+     * single leaf struct -- not the first-dimension count and row stride.  For
+     * a 1-D array this is identical to array_len / element size; for a
+     * multidimensional local array (e.g. Pair grid[][2]) it lays every leaf
+     * struct down contiguously instead of stopping after the first row.
+     */
+    leaf_size = type_size(s->type);
+    if (leaf_size <= 0) leaf_size = 2;
+    leaf_count = sym_array_total_elems(s);
+    if (leaf_count <= 0) leaf_count = s->array_len;
+    emit_init_auto_struct_array(s, 0, s->type, leaf_count, leaf_size);
 }
 
 int sym_array_elems_from_level(struct Sym *s, int level)
@@ -801,6 +822,7 @@ void gen_local_decl_after_type(int base)
                 int atoms;
                 int inner;
                 int di;
+                int satoms;
 
                 atoms = count_omitted_array_initializer_atoms();
                 inner = 1;
@@ -810,9 +832,27 @@ void gen_local_decl_after_type(int base)
                 }
                 if (inner <= 0) inner = 1;
 
+                /* count_initializer_atoms_level() flattens struct elements to
+                 * scalar atoms; divide by the element type's atom count to
+                 * recover the number of array elements (1 for scalar types). */
+                satoms = type_scalar_atom_count(type);
+                if (satoms <= 0) satoms = 1;
+
                 if (atoms > 0) {
-                    total_elems = atoms;
-                    arrlen = (atoms + inner - 1) / inner;
+                    int elems;
+                    if (satoms > 1) {
+                        /* Struct elements are always braced; counting the
+                         * top-level groups gets the element count right even
+                         * for PARTIAL initializers like { {1}, {2}, {3} }
+                         * where atoms/satoms would truncate. */
+                        elems = count_omitted_array_initializer_top_elems();
+                        if (elems <= 0) elems = atoms / satoms;
+                    } else {
+                        elems = atoms;
+                    }
+                    if (elems <= 0) elems = atoms;
+                    total_elems = elems;
+                    arrlen = (elems + inner - 1) / inner;
                     g_last_array_dims[0] = arrlen;
                 }
             }

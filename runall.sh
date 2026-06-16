@@ -22,7 +22,8 @@ APPLIST="sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong \
          tunion2 tbitfld tcnstfld tpromo tkandr tc89ini2 tdecl tctype tifcom \
          tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield \
          pint cobint forint bint fint cint adaint tstretst tportio tlongidx tforsco \
-         tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv tfarrsub t2darr too tzpad tesc"
+         tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv tfarrsub t2darr too tzpad tesc \
+         tkbd"
 
 run_args() {
     case "$1" in
@@ -85,7 +86,9 @@ run_set() {
         ./ma.sh "$app" "$mode" >/dev/null
 
         args="$(run_args "$app")"
-        if [ -n "$args" ]; then
+        if [ "$app" = "tkbd" ]; then
+            echo x | (cd "$BUILD_DIR" && "$EMULATOR" "$upper") >> "$outfile"
+        elif [ -n "$args" ]; then
             # shellcheck disable=SC2086
             (cd "$BUILD_DIR" && "$EMULATOR" "$upper" $args) >> "$outfile"
         else

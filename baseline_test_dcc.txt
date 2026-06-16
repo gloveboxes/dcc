@@ -3067,8 +3067,8 @@ argv[ 5 ]: 'EEEEE'
 targs completed with great success
 test tstdc
 __DATE__ Jun 15 2026
-__TIME__ 13:48:59
-__FILE__ tests/tstdc.c
+__TIME__ 17:19:09
+__FILE__ tests\tstdc.c
 __LINE__ 8
 __STDC__ 1
 test tstdc completed with great success
@@ -4276,3 +4276,5 @@ test tzpad
 tzpad passed with great success
 test tesc
 tesc: all tests passed
+test tkbd
+tkbd completed with great success

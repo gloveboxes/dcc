@@ -163,6 +163,14 @@ int new_label(void)
     return ++label_id;
 }
 
+void flush_pending_asm(void)
+{
+    if (pending_asm_len > 0 && outf) {
+        fwrite(pending_asm_buf, 1, (size_t)pending_asm_len, outf);
+        pending_asm_len = 0;
+    }
+}
+
 void emit(const char *s);
 
 void emit_ld_de_const(long v)

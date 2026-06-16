@@ -429,6 +429,7 @@ char *filter_active_preprocessor_source(long *lenp)
     int seen_else[MAX_IFSTACK];
     int sp;
     int active;
+    int in_asm;
 
     out = NULL;
     out_len = 0;
@@ -436,6 +437,7 @@ char *filter_active_preprocessor_source(long *lenp)
     p = 0;
     sp = 0;
     active = 1;
+    in_asm = 0;
 
     while (p < src_len) {
         const char *s;
@@ -456,6 +458,34 @@ char *filter_active_preprocessor_source(long *lenp)
             s++;
 
         is_directive = (s < e && *s == '#');
+
+        /* Inside a #asm block: intercept all lines. */
+        if (in_asm) {
+            if (is_directive) {
+                const char *ss = s + 1;
+                char ww[32]; int wwi = 0;
+                while (ss < e && (*ss == ' ' || *ss == '\t')) ss++;
+                while (ss < e && is_ident_char((unsigned char)*ss) && wwi < 31)
+                    ww[wwi++] = *ss++;
+                ww[wwi] = 0;
+                if (!strcmp(ww, "endasm")) {
+                    in_asm = 0;
+                    append_mem(&out, &out_len, &out_cap, "\n", 1);
+                    continue;
+                }
+            }
+            /* Pass asm content to tokenizer as a pseudo-directive.
+             * Use SOH (\001) as separator to preserve all leading whitespace. */
+            if (active) {
+                static const char pfx[] = "#__asm_line\001";
+                append_mem(&out, &out_len, &out_cap, pfx, (long)(sizeof(pfx) - 1));
+                append_mem(&out, &out_len, &out_cap, src + line_start, p - line_start);
+            } else {
+                append_mem(&out, &out_len, &out_cap, "\n", 1);
+            }
+            continue;
+        }
+
         if (!is_directive) {
             if (active)
                 append_mem(&out, &out_len, &out_cap, src + line_start, p - line_start);
@@ -683,6 +713,19 @@ char *filter_active_preprocessor_source(long *lenp)
              * for evaluating later conditionals during this filtering pass.
              */
             append_mem(&out, &out_len, &out_cap, src + line_start, p - line_start);
+            continue;
+        }
+
+        if (!strcmp(word, "asm")) {
+            if (active)
+                in_asm = 1;
+            append_mem(&out, &out_len, &out_cap, "\n", 1);
+            continue;
+        }
+
+        if (!strcmp(word, "endasm")) {
+            /* #endasm without matching #asm - ignore */
+            append_mem(&out, &out_len, &out_cap, "\n", 1);
             continue;
         }
 

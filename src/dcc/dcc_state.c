@@ -148,6 +148,13 @@ int g_tok_long_suffix; /* set by lexer when L/l suffix seen on integer literal *
 int g_tok_unsigned_suffix; /* set for U/u suffix or non-decimal unsigned-int literal */
 int g_long_from16; /* the long value in DE:HL was just widened from 16-bit: 0 no, 1 signed, 2 unsigned */
 
+/* Pending #asm block output: buffered until a safe flush point (function
+ * epilogue or end of translation unit) to avoid duplication from the
+ * scan_function_body() pre-passes that save/restore posi. */
+char pending_asm_buf[8192];
+int  pending_asm_len;
+int  asm_suppress_depth;
+
 /* User-defined goto labels (function-scoped) */
 char ulabel_names[MAX_USER_LABELS][64];
 int  ulabel_ids[MAX_USER_LABELS];

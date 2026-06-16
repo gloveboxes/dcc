@@ -372,6 +372,8 @@ void emit_function_prologue(const char *name, int local_bytes, int omit_ix_frame
     struct Sym *s;
     const char *aname;
 
+    flush_pending_asm();
+
     s = find_global(name);
     aname = asm_name_for(name);
 
@@ -419,6 +421,7 @@ void emit_function_epilogue(void)
     }
     emit("\tret\n");
     current_omit_ix_frame = 0;
+    flush_pending_asm();
 }
 
 void skip_initializer_or_decl_tail(void)
@@ -1753,7 +1756,9 @@ void parse_function_or_global(int base_type)
                 current_function_has_call = 0;
                 g_static_local_func_index = (int)(s - globals);
                 g_static_local_seq = 0;
+                asm_suppress_depth++;
                 scan_function_body();
+                asm_suppress_depth--;
                 body_end_pos = posi;
                 body_end_tok_start = tok_start_pos;
                 body_end_line = line_no;
@@ -1774,7 +1779,9 @@ void parse_function_or_global(int base_type)
 
                 g_static_local_func_index = (int)(s - globals);
                 g_static_local_seq = 0;
+                asm_suppress_depth++;
                 scan_function_body();
+                asm_suppress_depth--;
 
                 posi = saved_pos;
                 tok_start_pos = saved_tok_start;

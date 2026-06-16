@@ -721,6 +721,30 @@ void parse_preprocessor_line(void)
                 if (name[0]) add_define(name, val[0] ? val : "1");
             }
         }
+    } else if (!strcmp(word, "__asm_line")) {
+        /* asm content smuggled from the filter pass as a pseudo-directive.
+         * SOH (\001) separates the keyword from the original line content
+         * so that all leading whitespace in the asm line is preserved.
+         * Buffer into pending_asm_buf rather than writing directly: the
+         * tokenizer may re-visit this position during scan_function_body()
+         * pre-passes (which save/restore posi).  flush_pending_asm() is
+         * called from emit_function_epilogue() and emit_data() to emit the
+         * content exactly once at the correct output position. */
+        char line[512]; int li = 0; int ch;
+        if (peekc() == '\001') getc_src();
+        while ((ch = peekc()) && ch != '\n') {
+            if (li < (int)sizeof(line) - 1) line[li++] = (char)ch;
+            getc_src();
+        }
+        line[li] = 0;
+        if (!scan_mode && asm_suppress_depth == 0) {
+            if (pending_asm_len + li + 2 < (int)sizeof(pending_asm_buf)) {
+                memcpy(pending_asm_buf + pending_asm_len, line, (size_t)li);
+                pending_asm_len += li;
+                pending_asm_buf[pending_asm_len++] = '\n';
+            }
+        }
+        return;
     } else {
         /* include/pragma/etc. ignored */
     }

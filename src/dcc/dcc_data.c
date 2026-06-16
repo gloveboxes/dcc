@@ -94,6 +94,7 @@ void emit_data(void)
     int i, j;
     struct Sym *s;
 
+    flush_pending_asm();
     emit("\n\t; string literals\n");
 
     for (i = 0; i < nstrings; ++i) {

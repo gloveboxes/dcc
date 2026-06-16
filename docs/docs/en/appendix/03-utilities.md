@@ -54,12 +54,15 @@ Comprehensive test suite runner: builds and runs all test applications (all
 test-specific arguments and stack sizes. Comparison is keyed by app name, so
 test discovery order does not matter.
 
-**Runs in parallel by default.** Each app builds in its own `build/<app>/`
-subdirectory so concurrent builds don't clobber shared artifacts, and a live
-`[ n/total] PASS/FAIL` status prints as each app completes. Use `-Serial` to
-fall back to sequential builds in the shared `build/` directory. The lightweight
-stack-overflow guard (`-fstack-check`) is **on by default**; pass
-`-NoStackCheck` to build without it.
+**Runs in parallel by default.** Key behaviors:
+
+- Each app builds in its own `build/<app>/` subdirectory so concurrent builds
+  don't clobber shared artifacts.
+- A live `[ n/total] PASS/FAIL` status prints as each app completes.
+- Use `-Serial` to fall back to sequential builds in the shared `build/`
+  directory.
+- The lightweight stack-overflow guard (`-fstack-check`) is **on by default**;
+  pass `-NoStackCheck` to build without it.
 
 ### Purpose
 

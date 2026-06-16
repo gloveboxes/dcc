@@ -1,5 +1,5 @@
 /*
-   Apple One running CP/M 2.2
+   Apple One running on CP/M 2.2
    Written by David Lee based on ntvao ported to C.
 */
 

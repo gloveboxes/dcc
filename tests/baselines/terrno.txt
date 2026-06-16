@@ -1,0 +1,10 @@
+PASS open missing errno=2 No such file
+PASS unlink missing errno=2 No such file
+PASS read bad fd errno=9 Bad file descriptor
+PASS write bad fd errno=9 Bad file descriptor
+PASS close bad fd errno=9 Bad file descriptor
+PASS lseek bad fd errno=9 Bad file descriptor
+PASS open create fd=3
+PASS lseek bad whence errno=22 Invalid argument
+PASS open too many errno=24 Too many open files
+terrno passed

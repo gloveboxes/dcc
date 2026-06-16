@@ -143,7 +143,7 @@ pwsh ./scripts/ma.ps1 cobint -Mode peep -BuildDir mybuild
 
 Comprehensive test suite: builds and runs all test applications with output
 verification against per-app baselines in `tests/baselines/`. Uses `ma.ps1` to
-build each app and `app_overrides.json` for test-specific arguments and stack
+build each app and `tests/_test_overrides.json` for test-specific arguments and stack
 sizes. Comparison is keyed by app name, so test discovery order does not matter.
 See [`tests/README.md`](../tests/README.md) for the test/baseline relationship.
 
@@ -158,6 +158,10 @@ pass `-NoStackCheck` to build without it.
 ```pwsh
 pwsh ./scripts/runall.ps1 [options]
 ```
+
+Run with no options, the suite uses these defaults: **parallel** execution, the
+**stack-overflow guard on** (`-fstack-check`), and **both build modes** (`peep`
+and `nopeep`). Use the switches below to change any of these.
 
 ### Parameters
 
@@ -185,7 +189,7 @@ The `-Mode` parameter selects which optimization pass(es) to build and verify.
 ### Examples
 
 ```pwsh
-pwsh ./scripts/runall.ps1                       # parallel, stack-check on, both modes (defaults)
+pwsh ./scripts/runall.ps1                       # all defaults
 pwsh ./scripts/runall.ps1 -Serial               # sequential fallback
 pwsh ./scripts/runall.ps1 -NoStackCheck         # build without the stack guard
 pwsh ./scripts/runall.ps1 -ThrottleLimit 8      # cap concurrency
@@ -392,7 +396,7 @@ pwsh scripts/perfcapture.ps1 -BuildDir "mybuild" -OutputFile "results.csv" -Emul
 ### App Overrides
 
 Application-specific arguments, stack size requirements, and exclusions are stored in
-[`scripts/app_overrides.json`](app_overrides.json). Each app entry specifies:
+[`tests/_test_overrides.json`](../tests/_test_overrides.json). Each app entry specifies:
 
 - `name` — Application name (e.g., `ttt`, `pint`, `triangle`) (required)
 - `args` — Command-line arguments to pass when running the app (optional, e.g., `10`, `e.pas`, `-c`)

@@ -1,0 +1,35 @@
+tpromo2 start
+PASS c >> 4 got -188
+PASS d >> 4 got 3125
+PASS f & a got -294967296
+PASS a + a got -20
+PASS b + a got 190
+PASS b * a got -2000
+PASS d * b got 38528
+PASS d | a got 65526
+PASS d ^ a got 15526
+PASS d << 2 got 3392
+PASS c / a got 300
+PASS e / d got 2
+PASS f + d got -294917296
+PASS f + e got -294843840
+PASS ~b got -201
+PASS (b * a) + c got -5000
+PASS +b got 200
+PASS -b got -200
+PASS ~a got 9
+PASS !a got 0
+PASS a < b got 1
+PASS d > c got 0
+PASS f > e got 1
+PASS e < f got 1
+PASS cond uint16/int8 got 50000
+PASS cond int8/uint32 got -294967296
+PASS assign int8 to uint8 got 246
+PASS assign uint8 to int8 got -56
+PASS u8 += 10 got 4
+PASS b << 1 got 400
+PASS a >> 1 got -5
+PASS b + 300 got 500
+PASS a & 0xff got 246
+tpromo2 completed with great success

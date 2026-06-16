@@ -1,0 +1,1 @@
+tmul_index_pow2 ok

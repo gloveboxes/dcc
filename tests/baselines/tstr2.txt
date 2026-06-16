@@ -1,0 +1,12 @@
+memchr Basic   : PASS
+memchr Null    : PASS
+memchr Missing : PASS
+memchr Bounded : PASS
+memchr OOB     : PASS
+strcat Basic   : PASS
+strcat Empty   : PASS
+strncpy Fit    : PASS
+strncpy Trunc  : PASS
+strncpy Pad1   : PASS
+strncpy Pad2   : PASS
+tstr2 completed with great success!

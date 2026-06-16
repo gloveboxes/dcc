@@ -1,0 +1,8 @@
+Running C89 Line Continuation (\) Tests...
+
+PASS: String literal line continuation
+PASS: Macro line continuation
+PASS: Identifier and operator line continuation
+
+----------------------------------------
+ALL LINE CONTINUATION TESTS PASSED!

@@ -1,0 +1,2 @@
+tc89decl start
+tc89decl completed with great success

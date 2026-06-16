@@ -1,0 +1,16 @@
+assign/arg 3 1000 7 1010
+return 4 2000 8 2012
+array/multi 5 3000 9 5026
+nested 5 3000 9 11 12 3037
+return-as-arg 4136
+return-to-array 7 5000 13 5020
+big 1 2 3 11 21 40 6078
+big-array-return 2 41 7000 7084
+proto pair 1010 3022 1040
+proto wrap 1033
+proto big 6078
+ptr pair 3 1000 7 1010
+ptr array 5 3000 9 3014
+ptr wrap 3 1000 7 11 12
+ptr big 2 41 7084
+tstructval5 completed

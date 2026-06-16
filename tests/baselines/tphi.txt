@@ -1,0 +1,17 @@
+should tend towards 1.61803398874989484820458683436563811772030
+  at 1 iterations: 2.000000
+  at 2 iterations: 1.500000
+  at 3 iterations: 1.666667
+  at 4 iterations: 1.600000
+  at 5 iterations: 1.625000
+  at 6 iterations: 1.615385
+  at 7 iterations: 1.619048
+  at 8 iterations: 1.617647
+  at 9 iterations: 1.618182
+  at 10 iterations: 1.617978
+  at 11 iterations: 1.618056
+  at 12 iterations: 1.618026
+  at 13 iterations: 1.618037
+  at 14 iterations: 1.618033
+  at 15 iterations: 1.618034
+done

@@ -1,0 +1,7 @@
+global name 294 1000 120
+global wrap 7 243 3000 225
+global array 209 4000 320 5000
+local name 314 6000 113
+local wrap 8 229 8000 233
+local array 221 9000 312 10000
+tstructinitstr completed

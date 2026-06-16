@@ -1,0 +1,59 @@
+index 0, au8 10, au16 10, au32 10
+index 0, a8 -10, a16 -10, a32 -10
+index 1, au8 11, au16 11, au32 11
+index 1, a8 -11, a16 -11, a32 -11
+index 2, au8 12, au16 12, au32 12
+index 2, a8 -12, a16 -12, a32 -12
+index 3, au8 13, au16 13, au32 13
+index 3, a8 -13, a16 -13, a32 -13
+index 4, au8 14, au16 14, au32 14
+index 4, a8 -14, a16 -14, a32 -14
+index 5, au8 15, au16 15, au32 15
+index 5, a8 -15, a16 -15, a32 -15
+index 6, au8 16, au16 16, au32 16
+index 6, a8 -16, a16 -16, a32 -16
+index 7, au8 17, au16 17, au32 17
+index 7, a8 -17, a16 -17, a32 -17
+index 0, au8 20, au16 20, au32 20
+index 0, a8 -20, a16 -20, a32 -20
+index 1, au8 21, au16 21, au32 21
+index 1, a8 -19, a16 -19, a32 -19
+index 2, au8 22, au16 22, au32 22
+index 2, a8 -18, a16 -18, a32 -18
+index 3, au8 23, au16 23, au32 23
+index 3, a8 -17, a16 -17, a32 -17
+index 4, au8 24, au16 24, au32 24
+index 4, a8 -16, a16 -16, a32 -16
+index 5, au8 25, au16 25, au32 25
+index 5, a8 -15, a16 -15, a32 -15
+index 6, au8 26, au16 26, au32 26
+index 6, a8 -14, a16 -14, a32 -14
+index 7, au8 27, au16 27, au32 27
+index 7, a8 -13, a16 -13, a32 -13
+ac: a b c d e f g h
+R N B Q K B N R 
+P P P P P P P P 
+. . . . . . . . 
+. . . . . . . . 
+. . . . . . . . 
+. . . . . . . . 
+p p p p p p p p 
+r n b q k b n r 
+animal 0: anteater
+animal 1: bear
+animal 2: cat
+animal 3: dog
+animal 4: earthworm
+animal 5: fruitbat
+animal 6: goat
+animal 7: horse
+    0000  00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 02 : 00 04 00 00 00 ff fe ff fc ff ff ff 02 04 00 08  ................................
+    0020  00 00 00 fe fc ff f8 ff ff ff 03 06 00 0c 00 00 : 00 fd fa ff f4 ff ff ff 04 08 00 10 00 00 00 fc  ................................
+    0040  f8 ff f0 ff ff ff 05 0a 00 14 00 00 00 fb f6 ff : ec ff ff ff 06 0c 00 18 00 00 00 fa f4 ff e8 ff  ................................
+    0060  ff ff 07 0e 00 1c 00 00 00 f9 f2 ff e4 ff ff ff : 08 10 00 20 00 00 00 f8 f0 ff e0 ff ff ff 09 12  ................... ............
+    0080  00 24 00 00 00 f7 ee ff dc ff ff ff 0a 14 00 28 : 00 00 00 f6 ec ff d8 ff ff ff 0b 16 00 2c 00 00  .$.............(.............,..
+    00a0  00 f5 ea ff d4 ff ff ff 0c 18 00 30 00 00 00 f4 : e8 ff d0 ff ff ff 0d 1a 00 34 00 00 00 f3 e6 ff  ...........0.............4......
+    00c0  cc ff ff ff 0e 1c 00 38 00 00 00 f2 e4 ff c8 ff : ff ff 0f 1e 00 3c 00 00 00 f1 e2 ff c4 ff ff ff  .......8.............<..........
+    00e0  10 20 00 40 00 00 00 f0 e0 ff c0 ff ff ff 11 22 : 00 44 00 00 00 ef de ff bc ff ff ff 12 24 00 48  . .@...........".D...........$.H
+    0100  00 00 00 ee dc ff b8 ff ff ff 13 26 00 4c 00 00 : 00 ed da ff b4 ff ff ff                          ...........&.L..........
+tarray completed with great success

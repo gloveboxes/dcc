@@ -1,0 +1,3 @@
+inp/outp executed
+inp result 0..255: ok
+port io ok

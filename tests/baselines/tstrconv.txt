@@ -1,0 +1,6 @@
+=== dcc strconv verification ===
+longcount:123456
+vprintf:x=7
+vfprintf:99
+checks=32 failures=0
+RESULT: PASS

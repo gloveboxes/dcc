@@ -1,0 +1,9 @@
+global pair 3 1000 7 1010
+global wrap 4 2000 8 9 10 11
+global array 5 4000 10 4016
+local pair 7 5000 13 5020
+local wrap 8 6000 14 15 16 17
+local array 9 8000 19 8029
+big 1 2 3 4 9000 10000 21
+partial 22 0 0
+tstructinit completed

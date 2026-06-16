@@ -1,0 +1,5 @@
+finding COM files
+  found this executable! CPMENUMD.COM
+finding 68K files
+finding XYZ files
+cp/m enumerate directory completed with great success

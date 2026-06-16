@@ -1,0 +1,2 @@
+tc89comp start
+tc89comp completed with great success

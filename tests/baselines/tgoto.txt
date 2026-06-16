@@ -1,0 +1,2 @@
+tgoto start
+tgoto passed with great success

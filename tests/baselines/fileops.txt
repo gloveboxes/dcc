@@ -1,0 +1,49 @@
+fp: 3
+empty file length: 0
+result of fseek: 0
+result of fwrite (should be 1): 1
+8192 + 128 = 8320 file length from cpm_filelen minus one for ^z: 8319
+current offset: 0
+result of fseek: 0
+file length from ftell: 8320
+8192 + 128 = 8320 file length from portable_filelen: 8320
+result of fseek to middle of file: 0
+result of fwrite to middle of file (should be 1): 1
+fp: 3
+8192 + 128 = 8320 file length from cpm_filelen minus one for ^z: 8319
+result of read at offset 0: 512
+result of read at offset 512: 512
+result of read at offset 1024: 512
+result of read at offset 1536: 512
+result of read at offset 2048: 512
+result of read at offset 2560: 512
+result of read at offset 3072: 512
+result of read at offset 3584: 512
+result of read at offset 4096: 512
+result of read at offset 4608: 512
+result of read at offset 5120: 512
+result of read at offset 5632: 512
+result of read at offset 6144: 512
+result of read at offset 6656: 512
+result of read at offset 7168: 512
+result of read at offset 7680: 512
+result of read at offset 8192: 128
+testing backwards read
+result of read at offset 8192: 128
+result of read at offset 7680: 512
+result of read at offset 7168: 512
+result of read at offset 6656: 512
+result of read at offset 6144: 512
+result of read at offset 5632: 512
+result of read at offset 5120: 512
+result of read at offset 4608: 512
+result of read at offset 4096: 512
+result of read at offset 3584: 512
+result of read at offset 3072: 512
+result of read at offset 2560: 512
+result of read at offset 2048: 512
+result of read at offset 1536: 512
+result of read at offset 1024: 512
+result of read at offset 512: 512
+result of read at offset 0: 512
+fileops completed with great success

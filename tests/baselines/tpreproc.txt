@@ -1,0 +1,15 @@
+Running Universal C89 Preprocessor Tests...
+
+PASS: 1. Token Pasting (##)
+PASS: 2. String Concatenation
+PASS: 3. Macro Isolation during Pasting
+PASS: 4a. Immediate Stringify
+PASS: 4b. Deferred Stringify
+PASS: 5. Object Macro Rescans Function-like Macro
+PASS: 6. Function-like Macro Argument Pre-expansion
+PASS: 7. Pasted Token Rescan
+PASS: 8. #if defined/expression
+PASS: 9. #undef and #elif
+
+----------------------------------------
+ALL COMBINED PREPROCESSOR TESTS PASSED WITH GREAT SUCCESS!

@@ -1,9 +1,25 @@
 @echo off
 setlocal EnableExtensions
 
-:: Set the default emulator if no argument is provided.
-set "_emulator=%~1"
+:: Args: [emulator] [--stack-check]
+::   --stack-check  build every app with dcc -fstack-check (lightweight
+::                  stack-overflow guard).  Also enabled by STACK_CHECK=1.
+set "_emulator="
+set "_force_stack_check=%STACK_CHECK%"
+for %%A in (%*) do (
+    if /I "%%~A"=="--stack-check" (
+        set "_force_stack_check=1"
+    ) else if /I "%%~A"=="-stack-check" (
+        set "_force_stack_check=1"
+    ) else if not defined _emulator (
+        set "_emulator=%%~A"
+    )
+)
 if "%_emulator%"=="" set "_emulator=ntvcm"
+if "%_force_stack_check%"=="1" (
+    set "DCC_FORCE_STACK_CHECK=1"
+    echo --- stack-check: building every app with -fstack-check ---
+)
 :: the cpm and ntvcm emulators produce identical results
 set "_builddir=build"
 if not exist "%_builddir%" mkdir "%_builddir%"
@@ -24,7 +40,7 @@ set _applist=sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong ^
              tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield ^
              pint cobint forint bint fint cint adaint tstretst tportio tlongidx tforsco ^
              tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv tfarrsub t2darr too tzpad tesc ^
-             tkbd
+             tkbd tstackov
 
 echo --- optimized (ma peep) ---
 set "outputfile=test_dcc.txt"
@@ -57,8 +73,24 @@ for %%a in (%_applist%) do (
 
     if exist "%_builddir%\%%a.com" del "%_builddir%\%%a.com"
 
+    rem Per-app C stack reserve (bytes).  Most apps use the dcc default (512);
+    rem a few recursive ones need more headroom, which only matters under
+    rem stack-check.  A global STACK_SIZE env var overrides this for every app.
+    rem   triangle ~626 -> 768 ; cobint ~1376 -> 1536
+    rem   spsmash has NO passing size (factorial(4e9) smashes the stack on
+    rem   purpose), so it is left at the default.
+    set "DCC_STACK_SIZE="
+    if defined STACK_SIZE (
+        set "DCC_STACK_SIZE=%STACK_SIZE%"
+    ) else if "%%a"=="triangle" (
+        set "DCC_STACK_SIZE=768"
+    ) else if "%%a"=="cobint" (
+        set "DCC_STACK_SIZE=1536"
+    )
+
     call ma %%a %peepmode% >nul
     if errorlevel 1 exit /b 1
+    set "DCC_STACK_SIZE="
 
     if "%%a"=="ttt" (
         pushd "%_builddir%" && %_emulator% %%a 10 >>"%outabs%" & popd

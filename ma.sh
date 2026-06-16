@@ -106,16 +106,28 @@ if grep -Eiq '%[-+ #0-9.*]*[fF]' "$source_file"; then
     dcc_floatio=1
 fi
 
+# Enable the lightweight stack-overflow guard (-fstack-check) when the source
+# opts in with a DCC_STACK_CHECK marker, or when DCC_FORCE_STACK_CHECK=1 is set
+# in the environment (used by runall.sh --stack-check to guard the whole suite).
+# Keeps every other binary free of the per-function guard call.
+dcc_stackchk=""
+if [ "${DCC_FORCE_STACK_CHECK:-0}" = "1" ] || grep -q 'DCC_STACK_CHECK' "$source_file"; then
+    dcc_stackchk="-fstack-check"
+fi
+
 rm -f "$app_mac" "$app_rel" "$app_com" "${build_dir}/${upper_base}.PRN" \
     "$peep_tmp" "$rtl_src" "$rtl_min" "${build_dir}/RTLMIN.REL" "${build_dir}/RTLMIN.PRN"
 
 # Compile directly to an uppercase .MAC file.
 # Avoid empty-array expansion here: macOS ships Bash 3.2, where
 # "${array[@]}" under set -u can fail when the array is empty.
+# DCC_STACK_SIZE overrides the default 512-byte C stack reserve (handy for
+# sweeping stack sizes under -fstack-check).
+dcc_stack_size="${DCC_STACK_SIZE:-512}"
 if [ "$dcc_floatio" -eq 1 ]; then
-    "$DCC" -ffloatio -stack 512 "$source_file" -o "$app_mac"
+    "$DCC" ${dcc_stackchk} -ffloatio -stack "$dcc_stack_size" "$source_file" -o "$app_mac"
 else
-    "$DCC" -stack 512 "$source_file" -o "$app_mac"
+    "$DCC" ${dcc_stackchk} -stack "$dcc_stack_size" "$source_file" -o "$app_mac"
 fi
 
 if [ "$use_peep" -eq 1 ]; then

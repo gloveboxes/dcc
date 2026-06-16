@@ -296,6 +296,7 @@ extern int nasm_names;
 extern int opt_floatio;
 extern int opt_module;      /* -c/-module: emit linkable helper module, not final app TU */
 extern int opt_stack_size;  /* bytes reserved above heap for C stack */
+extern int opt_stack_check; /* -fstack-check: emit a stack-overflow guard at function entry */
 
 /* typedef table */
 extern struct TypeDef typedefs[MAX_TYPEDEFS];

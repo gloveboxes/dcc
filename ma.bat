@@ -56,8 +56,25 @@ if not errorlevel 1 (
     set "STRIP_FLAGS=%STRIP_FLAGS% -k _pffio"
 )
 
+rem Enable the lightweight stack-overflow guard when the source opts in with a
+rem DCC_STACK_CHECK marker, or when DCC_FORCE_STACK_CHECK=1 is set (runall.bat
+rem --stack-check guards the whole suite).
+if "%DCC_FORCE_STACK_CHECK%"=="1" (
+    set "DCC_FLAGS=%DCC_FLAGS% -fstack-check"
+) else (
+    findstr /C:"DCC_STACK_CHECK" "%SOURCE_FILE%" >nul 2>&1
+    if not errorlevel 1 (
+        set "DCC_FLAGS=%DCC_FLAGS% -fstack-check"
+    )
+)
+
+rem DCC_STACK_SIZE overrides the default 512-byte C stack reserve (handy for
+rem sweeping stack sizes under -fstack-check).
+set "_stack_size=%DCC_STACK_SIZE%"
+if "%_stack_size%"=="" set "_stack_size=512"
+
 rem Compile on host first, producing %name%.mac.
-dcc.exe %DCC_FLAGS% -stack 512 "%SOURCE_FILE%" -o "%BUILDDIR%\%name%.mac"
+dcc.exe %DCC_FLAGS% -stack %_stack_size% "%SOURCE_FILE%" -o "%BUILDDIR%\%name%.mac"
 if errorlevel 1 exit /b 1
 
 if "%USE_PEEP%"=="1" (

@@ -31,6 +31,7 @@ nav:
   - Appendix:
       - Compiler architecture: en/appendix/00-architecture.md
       - Runtime optimization: en/appendix/01-dccrtlstrip.md
+      - Runtime function sizes: en/appendix/02-runtime-sizes.md
 
 plugins:
   - search
@@ -46,6 +47,7 @@ plugins:
 
 hooks:
   - hooks/copy_assets.py
+  - hooks/runtime_sizes.py
 
 theme:
   name: material

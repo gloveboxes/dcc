@@ -65,7 +65,7 @@ DOC_GROUPS: List[Tuple[str, List[str]]] = [
         "__caa", "__ctu", "__schr", "__srch", "__mcmp", "__mchr",
     ]),
     ("CP/M extensions and misc", [
-        "_perror", "_dopn", "_drd", "_strerror", "_setjmp", "_longjmp", "_bdos", "_inp", "_outp",
+        "_perror", "_dopn", "_drd", "_strerror", "_setjmp", "_longjmp", "_bdos", "_inp", "_outp", "__stchk",
     ]),
 ]
 

@@ -80,66 +80,67 @@ void bad_address( address ) uint16_t address;
 extern void set_nz();
 
 #asm
-	; set_nz( uint8_t x ) -- optimized Z80
-	; Sets cpu.fNegative = ((int8_t)x < 0) and cpu.fZero = !x.
-	; arg: IX+4 = x;  trashes A, B
+	; set_nz( uint8_t x ) -- Z80 optimized, SP-relative arg access
+	; SP+4 after push ix = x (DCC zero-extends byte args to 16 bits on push)
+	; fNegative stored as 0 or 0x80 (truthy); fZero stored as 0 or 1
 	public _set_nz
 _set_nz:
 	push ix
-	ld ix,0
-	add ix,sp
-	ld b,(ix+4)		; b = x (save for both flag computes)
-	ld a,b
-	and 080h		; isolate sign bit: 0x80 if x<0 (signed), 0 otherwise
-	rlca			; rotate bit7 to bit0: a = 1 if negative, 0 if not
-	ld (_cpu+7),a		; cpu.fNegative
-	ld a,b
-	sub 1			; carry set iff x == 0 (unsigned borrow from 0-1)
-	sbc a,a			; a = 0xff if x==0, else 0
-	and 1			; a = 1 if x==0, else 0
-	ld (_cpu+11),a		; cpu.fZero
-	ld sp,ix
+	ld hl,4
+	add hl,sp
+	ld a,(hl)		; a = x
+	or a			; Z if x == 0 (leaves A unchanged)
+	jr z,_snz_zero
+	and 080h		; a = 0x80 if bit7 set (negative), 0 if positive
+	ld (_cpu+7),a		; cpu.fNegative: 0x80 (truthy) or 0
+	jr z,_snz_done		; positive: a=0 after and, fZero=0, skip xor
+	xor a			; negative: clear a so fZero=0
+_snz_done:
+	ld (_cpu+11),a		; cpu.fZero = 0 (x != 0)
+	pop ix
+	ret
+_snz_zero:
+	ld (_cpu+7),a		; a=0: cpu.fNegative=0
+	inc a			; a=1
+	ld (_cpu+11),a		; cpu.fZero=1
 	pop ix
 	ret
 #endasm
 
 #asm
-	; get_mem( uint16_t address ) -> uint8_t * -- optimized Z80
-	; Returns mem_base[address >> 12] + address.
-	; Calls bad_address(address) (no return) if base is NULL.
-	; args: IX+4/5 = address (low/high);  returns HL = base + address
+	; get_mem( uint16_t address ) -> uint8_t * -- Z80 optimized, SP-relative
+	; SP+4/5 after push ix = address low/high; returns HL = mem_base[addr>>12]+addr
+	; 3 rrca + and 01eh extracts 2*(addr>>12) directly (vs 4 rrca + and 0fh + add a,a)
+	; DE holds address throughout; reused for final add via ex de,hl + add hl,bc
 	public _get_mem
 _get_mem:
 	push ix
-	ld ix,0
-	add ix,sp
-	ld a,(ix+5)		; high byte of address
-	rrca			; rotate right 4: moves high nibble to low nibble
+	ld hl,4
+	add hl,sp		; hl = &address arg (low byte at sp+4)
+	ld e,(hl)		; e = address low
+	inc hl
+	ld d,(hl)		; d = address high;  de = full address
+	ld a,d			; a = high byte for page index
 	rrca
 	rrca
 	rrca
-	and 0fh			; a = address >> 12, range 0..15
-	add a,a			; word offset: each mem_base entry is 2 bytes
+	and 01eh		; a = 2*(address>>12): word offset into mem_base
 	ld l,a
 	ld h,0
-	ld de,_mem_base
-	add hl,de		; HL = &mem_base[address >> 12]
-	ld e,(hl)
+	ld bc,_mem_base
+	add hl,bc		; hl = &mem_base[address>>12]
+	ld c,(hl)
 	inc hl
-	ld d,(hl)		; DE = base = mem_base[address >> 12]
-	ld a,d
-	or e			; Z if base == NULL
-	jp z,_get_mem_bad
-	ld l,(ix+4)
-	ld h,(ix+5)
-	add hl,de		; HL = base + address
-	ld sp,ix
+	ld b,(hl)		; bc = base pointer (mem_base[address>>12])
+	ld a,b
+	or c			; Z if base == NULL
+	jr z,_get_mem_bad
+	ex de,hl		; hl = address (from de);  de now irrelevant
+	add hl,bc		; hl = base + address
 	pop ix
 	ret
 _get_mem_bad:
-	ld l,(ix+4)
-	ld h,(ix+5)
-	push hl			; pass address to bad_address()
+	push de			; push address as argument to bad_address
 	call _bad_address	; never returns (calls exit(1))
 	ret
 #endasm

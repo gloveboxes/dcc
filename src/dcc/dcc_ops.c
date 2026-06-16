@@ -1059,14 +1059,51 @@ int int_log2_pow2(int v)
 
 void emit_arith_shift_right_hl_const(int count)
 {
+    if (count <= 0) return;
+    if (count >= 16) {
+        emit("\tld a,h\n\trla\n\tsbc a,a\n\tld h,a\n\tld l,a\n");
+        return;
+    }
+    if (count >= 8) {
+        /* >> 8: L = old H (result low byte); H = sign extension of old H */
+        emit("\tld a,h\n\tld l,h\n\trla\n\tsbc a,a\n\tld h,a\n");
+        count -= 8;
+        while (count-- > 0)
+            emit("\tsra h\n\trr l\n");
+        return;
+    }
     while (count-- > 0)
         emit("\tsra h\n\trr l\n");
 }
 
 void emit_logical_shift_right_hl_const(int count)
 {
+    if (count <= 0) return;
+    if (count >= 16) { emit("\tld hl,0\n"); return; }
+    if (count >= 8) {
+        emit("\tld l,h\n\tld h,0\n");
+        count -= 8;
+        while (count-- > 0)
+            emit("\tsrl l\n");
+        return;
+    }
     while (count-- > 0)
         emit("\tsrl h\n\trr l\n");
+}
+
+void emit_shift_left_hl_const(int count)
+{
+    if (count <= 0) return;
+    if (count >= 16) { emit("\tld hl,0\n"); return; }
+    if (count >= 8) {
+        emit("\tld h,l\n\tld l,0\n");
+        count -= 8;
+        while (count-- > 0)
+            emit("\tadd hl,hl\n");
+        return;
+    }
+    while (count-- > 0)
+        emit("\tadd hl,hl\n");
 }
 
 void emit_and_hl_const(unsigned int mask)
@@ -1341,6 +1378,15 @@ void gen_shift(void)
             emit("\tld b,l\n");
             emit("\tpop hl\n\tpop de\n");
             emit_shift_loop(op, lhs_type);
+        } else if (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT) {
+            int scount = (int)(tok.val & 255);
+            next_token();
+            if (op == TOK_SHL)
+                emit_shift_left_hl_const(scount);
+            else if (lhs_type & TYPE_UNSIGNED)
+                emit_logical_shift_right_hl_const(scount);
+            else
+                emit_arith_shift_right_hl_const(scount);
         } else {
             emit("\tpush hl\n");
             gen_add();
@@ -1490,15 +1536,39 @@ void gen_rel(void)
                 gen_binop32_typed(op, common_type);
             }
         } else {
-            emit("\tpush hl\n");
-            gen_shift();
-            if (type_is_long(g_expr_type)) {
-                gen_cmp_promote_16lhs(op, lhs_type);
-            } else if (type_is_float(g_expr_type)) {
-                gen_float_cmp_16lhs(op, lhs_type);
-            } else {
-                emit("\tex de,hl\n\tpop hl\n");
-                gen_binop_typed(op, common_type);
+            int did_sign_opt = 0;
+
+            if ((op == '<' || op == TOK_GE) && !(common_type & TYPE_UNSIGNED) &&
+                tok.kind == TOK_NUM && tok.val == 0) {
+                long sv_pos = posi; long sv_ts = tok_start_pos;
+                int sv_ln = line_no, sv_tl = tok_line;
+                struct Token sv_tok = tok;
+                next_token();
+                /* confirm RHS is exactly 0 (no trailing binary operator) */
+                if (tok.kind != '+' && tok.kind != '-' && tok.kind != '*' &&
+                    tok.kind != '/' && tok.kind != '%' &&
+                    tok.kind != TOK_SHL && tok.kind != TOK_SHR) {
+                    emit("\tld a,h\n\trlca\n");
+                    if (op == TOK_GE) emit("\tccf\n");
+                    emit("\tsbc a,a\n\tand 1\n\tld h,0\n\tld l,a\n");
+                    did_sign_opt = 1;
+                } else {
+                    posi = sv_pos; tok_start_pos = sv_ts;
+                    line_no = sv_ln; tok_line = sv_tl; tok = sv_tok;
+                }
+            }
+
+            if (!did_sign_opt) {
+                emit("\tpush hl\n");
+                gen_shift();
+                if (type_is_long(g_expr_type)) {
+                    gen_cmp_promote_16lhs(op, lhs_type);
+                } else if (type_is_float(g_expr_type)) {
+                    gen_float_cmp_16lhs(op, lhs_type);
+                } else {
+                    emit("\tex de,hl\n\tpop hl\n");
+                    gen_binop_typed(op, common_type);
+                }
             }
         }
         g_expr_type = TYPE_INT;

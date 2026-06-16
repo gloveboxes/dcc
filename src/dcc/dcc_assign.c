@@ -304,6 +304,78 @@ fail:
     return 0;
 }
 
+/* Fast path for dead-result assignment to a global struct's byte field:
+ *   global_id . field = expr ;
+ * Evaluates the RHS into HL, then stores A = L directly to sym+offset,
+ * bypassing the runtime HL-address computation and push/pop shuffle. */
+static int try_fast_global_struct_byte_store(void)
+{
+    long save_pos;
+    long save_tok_start;
+    int save_line;
+    int save_tok_line;
+    struct Token save_tok;
+    struct Sym *struct_sym;
+    struct FieldDef *fd;
+
+    if (!expr_result_dead)
+        return 0;
+
+    save_pos = posi;
+    save_tok_start = tok_start_pos;
+    save_line = line_no;
+    save_tok_line = tok_line;
+    save_tok = tok;
+
+    if (tok.kind != TOK_ID)
+        goto fail;
+
+    struct_sym = find_sym(tok.text);
+    if (!struct_sym || struct_sym->storage != SC_GLOBAL ||
+        !type_is_struct_object(struct_sym->type))
+        goto fail;
+
+    next_token();
+    if (tok.kind != '.')
+        goto fail;
+    next_token();
+    if (tok.kind != TOK_ID)
+        goto fail;
+
+    fd = find_field_def(type_struct_id(struct_sym->type), tok.text);
+    if (!fd || fd->bit_width > 0 || type_size(fd->type) != 1)
+        goto fail;
+
+    next_token();
+    if (tok.kind != '=')
+        goto fail;
+    next_token();
+
+    /* Committed: evaluate RHS into HL, then emit direct byte store. */
+    expr_result_dead = 0;
+    gen_assign();
+    expr_result_dead = 1;
+
+    emit_extrn_if_needed(struct_sym);
+    emit("\tld a,l\n");
+    if (fd->offset == 0)
+        fprintf(outf, "\tld (%s),a\n", asm_name_for(sym_asm_name(struct_sym)));
+    else
+        fprintf(outf, "\tld (%s+%d),a\n", asm_name_for(sym_asm_name(struct_sym)), fd->offset);
+
+    g_expr_type = fd->type;
+    g_long_from16 = 0;
+    return 1;
+
+fail:
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return 0;
+}
+
 void gen_assign(void)
 {
     if (try_gen_const_expr())
@@ -327,6 +399,9 @@ void gen_assign(void)
     unsigned int bf_mask;
 
     if (try_fast_global_byte_array_store())
+        return;
+
+    if (try_fast_global_struct_byte_store())
         return;
 
     direct_sym = NULL;
@@ -577,6 +652,22 @@ void gen_assign(void)
                 fprintf(outf, "\tld b,%ld\n", scount & 255L);
                 emit_shift_loop(op, direct_sym->type);
             }
+            emit_store_hl_to_sym_direct(direct_sym);
+            g_long_from16 = 0;
+            return;
+        }
+
+        if ((op == TOK_SHLEQ || op == TOK_SHREQ) &&
+            !type_is_long(direct_sym->type) && !type_is_float(direct_sym->type) &&
+            (tok.kind == TOK_NUM || tok.kind == TOK_CHARLIT)) {
+            int scount = (int)(tok.val & 255);
+            next_token();
+            if (op == TOK_SHLEQ)
+                emit_shift_left_hl_const(scount);
+            else if (direct_sym->type & TYPE_UNSIGNED)
+                emit_logical_shift_right_hl_const(scount);
+            else
+                emit_arith_shift_right_hl_const(scount);
             emit_store_hl_to_sym_direct(direct_sym);
             g_long_from16 = 0;
             return;

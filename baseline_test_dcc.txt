@@ -4295,6 +4295,8 @@ tstackov start
 ?stack overflow
 test tasm
 tasm passed
+test tcodegen
+tcodegen passed
 test a1
 \
 E000R

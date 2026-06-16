@@ -782,6 +782,7 @@ void scale_hl_by_elem_size(int elem);
 int int_log2_pow2(int v);
 void emit_arith_shift_right_hl_const(int count);
 void emit_logical_shift_right_hl_const(int count);
+void emit_shift_left_hl_const(int count);
 void emit_and_hl_const(unsigned int mask);
 void divide_hl_by_elem_size(int elem);
 void gen_add(void);

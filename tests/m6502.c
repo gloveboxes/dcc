@@ -5,6 +5,8 @@
 
 #include <stdint.h>
 
+#define Z80_ASM_OPTS    /* use Z80 asm for set_nz and get_mem; undef for C fallback */
+
 struct MOS_6502 cpu;
 
 static uint8_t g_State = 0;
@@ -77,8 +79,8 @@ void bad_address( address ) uint16_t address;
     exit( 1 );
 }
 
+#ifdef Z80_ASM_OPTS
 extern void set_nz();
-
 #asm
 	; set_nz( uint8_t x ) -- Z80 optimized, SP-relative arg access
 	; SP+4 after push ix = x (DCC zero-extends byte args to 16 bits on push)
@@ -106,7 +108,15 @@ _snz_zero:
 	pop ix
 	ret
 #endasm
+#else
+void set_nz( x ) uint8_t x;
+{
+    cpu.fNegative = ( (int8_t) x < 0 );
+    cpu.fZero = !x;
+}
+#endif
 
+#ifdef Z80_ASM_OPTS
 #asm
 	; get_mem( uint16_t address ) -> uint8_t * -- Z80 optimized, SP-relative
 	; SP+4/5 after push ix = address low/high; returns HL = mem_base[addr>>12]+addr
@@ -144,6 +154,16 @@ _get_mem_bad:
 	call _bad_address	; never returns (calls exit(1))
 	ret
 #endasm
+#else
+uint8_t * get_mem( address ) uint16_t address;
+{
+    uint8_t * base;
+    base = mem_base[ address >> 12 ];
+    if ( 0 == base )
+        bad_address( address );
+    return base + address;
+}
+#endif
 
 /* I wish these were inline functions but old C compilers can't do that */
 #define push( x ) ( * ( (uint8_t *) m_0000 + 0x0100 + cpu.sp-- ) = ( x ) )

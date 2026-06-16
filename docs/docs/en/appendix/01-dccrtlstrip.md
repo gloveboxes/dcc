@@ -146,21 +146,12 @@ choices.
 ## Keeping the size numbers current
 
 The companion [*Runtime function sizes*](02-runtime-sizes.md) page is
-**generated at build time** by the `hooks/runtime_sizes.py` MkDocs hook, which
-runs [`scripts/dccrtl_size_report.py`](https://github.com/davidly/dcc/blob/main/scripts/dccrtl_size_report.py)
-against the current `DCCRTL.MAC`. There is no table to update by hand — editing
-the runtime and rebuilding the docs is enough to refresh every figure.
+**generated at build time** by the `docs/docs/hooks/runtime_sizes.py` MkDocs
+hook, which analyses the current `DCCRTL.MAC` directly. There is no table to
+update by hand — editing the runtime and rebuilding the docs is enough to
+refresh every figure.
 
-To inspect the same data from the repository root without building the docs:
-
-```sh
-python3 scripts/dccrtl_size_report.py                      # curated groups
-python3 scripts/dccrtl_size_report.py --all-publics --sort marginal
-python3 scripts/dccrtl_size_report.py --symbols _printf,_pffio,_malloc,_powf
-python3 scripts/dccrtl_size_report.py --all-publics --format json
-```
-
-The script parses `public`-delimited runtime blocks, computes the baseline
+The hook parses `public`-delimited runtime blocks, computes the baseline
 reachable from `start`, and reports each symbol's self and marginal line counts
 using the same reachability model as `dccrtlstrip`. The counts are a relative
 source-line proxy, not exact `.COM` bytes.

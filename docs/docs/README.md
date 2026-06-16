@@ -47,18 +47,14 @@ MkDocs prints the local URL, usually `http://127.0.0.1:8000/`.
 ## Deploy
 
 The GitHub Actions workflow in `.github/workflows/docs.yml` builds this MkDocs
-site from the `docs` branch and publishes it with `mkdocs gh-deploy`.
+site from the `main` branch and publishes it with `mkdocs gh-deploy`.
 
 ## Updating runtime size tables
 
-When `DCCRTL.MAC` changes, regenerate the runtime size report from the repo
-root:
-
-```sh
-python3 scripts/dccrtl_size_report.py > dccrtl-size-report.md
-```
-
-Use that output to update `en/appendix/01-dccrtlstrip.md`, then run:
+The runtime size tables on the *Runtime function sizes* appendix page are
+**generated at build time** by the `hooks/runtime_sizes.py` MkDocs hook, which
+analyses `DCCRTL.MAC` directly. There is nothing to regenerate by hand: edit the
+runtime and rebuild the docs, and the tables update themselves. To preview:
 
 ```sh
 mkdocs build --strict

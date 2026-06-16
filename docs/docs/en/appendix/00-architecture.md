@@ -270,7 +270,7 @@ flowchart TB
 ### Two numbers describe every routine
 
 Because the runtime is block-structured, each public routine has two costs that
-the size report (`scripts/dccrtl_size_report.py`) measures directly:
+the build-time size hook (`docs/docs/hooks/runtime_sizes.py`) measures directly:
 
 - **self** — the source lines in the routine's own block.
 - **marginal** — self *plus* every additional block it transitively pulls in
@@ -307,8 +307,9 @@ drags the whole core in:
 | `string.h` / `ctype.h` | none (self-contained) | ~15–100 |
 
 The exact per-routine `self`/`marginal` numbers — and the transitive
-dependencies behind each one — are tabulated in the companion appendix
-[*Runtime optimization*](01-dccrtlstrip.md). The takeaways for
+dependencies behind each one — are tabulated on the auto-generated
+[*Runtime function sizes*](02-runtime-sizes.md) page, with the optimisation
+takeaways in [*Runtime optimization*](01-dccrtlstrip.md). The takeaways for
 sizing a program are:
 
 - **Console-only output and string/ctype routines are cheap** — they pull in
@@ -320,12 +321,8 @@ sizing a program are:
   hyperbolic group runs ~2,000–3,300 lines because each chains other math
   routines on top of the float core.
 
-To regenerate the numbers after editing `DCCRTL.MAC`:
-
-```sh
-python3 scripts/dccrtl_size_report.py            # curated groups
-python3 scripts/dccrtl_size_report.py --all-publics --sort marginal
-```
+Those numbers are recomputed from `DCCRTL.MAC` on every docs build, so editing
+the runtime and rebuilding the docs is all that is needed to refresh them.
 
 
 - dcc is a **single-pass, syntax-directed** C89 compiler with **no AST and no

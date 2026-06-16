@@ -1,10 +1,9 @@
 # Appendix: runtime function sizes
 
 !!! info "Auto-generated"
-    The statistics and tables on this page are regenerated from `DCCRTL.MAC` by
-    [`scripts/dccrtl_size_report.py`](https://github.com/davidly/dcc/blob/main/scripts/dccrtl_size_report.py)
-    every time the documentation is built (via the `hooks/runtime_sizes.py`
-    MkDocs hook). They never go out of step with the runtime source, so prefer
+    The statistics and tables on this page are regenerated from `DCCRTL.MAC`
+    every time the documentation is built, by the `docs/docs/hooks/runtime_sizes.py`
+    MkDocs hook. They never go out of step with the runtime source, so prefer
     these numbers over any quoted elsewhere.
 
 This page quantifies what each runtime library feature costs in code size once
@@ -33,15 +32,3 @@ heavyweights.
     `__` label instead (the *pulls in* column names related ones).
 
 <!-- DCCRTL-SIZE-TABLES -->
-
-## Regenerating locally
-
-The hook runs the report automatically during `mkdocs build`. To inspect the
-same data by hand from the repository root:
-
-```sh
-python3 scripts/dccrtl_size_report.py                          # curated groups
-python3 scripts/dccrtl_size_report.py --all-publics --sort marginal
-python3 scripts/dccrtl_size_report.py --symbols _printf,_pffio,_malloc,_powf
-python3 scripts/dccrtl_size_report.py --all-publics --format json
-```

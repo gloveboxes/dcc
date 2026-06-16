@@ -12,7 +12,6 @@ concurrency:
 jobs:
   deploy:
     env:
-      CONFIG_FILE: docs/docs/mkdocs.yml
       REQUIREMENTS: docs/docs/requirements.txt
     runs-on: ubuntu-latest
     steps:
@@ -34,4 +33,7 @@ jobs:
           restore-keys: |
             mkdocs-material-
       - run: pip install -r "$REQUIREMENTS"
-      - run: mkdocs gh-deploy --force --config-file "$CONFIG_FILE"
+      # Run from the config directory so pymdownx.snippets' base_path ("../..")
+      # resolves to the repo root (it is resolved against the CWD, not docs_dir).
+      - run: mkdocs gh-deploy --force
+        working-directory: docs/docs

@@ -1,0 +1,28 @@
+tsvbuf2 start
+4kbuf line A
+4kbuf line B
+4kbuf cost $5 and $10
+ok: 4K-IOFBF adopted (buffered 28 bytes)
+d1: leading $dollar
+d2: trailing dollar$
+d3: $only$dollars$
+d4: $$$$ four in a row
+d5: lone -> $
+$$$$$$$$
+mix: a$b$c$d$e$f
+small-buf line definitely longer than thirty-one bytes $x$
+boundary: $123456789012345678901234567890123456$890123456789012345678901234567890123$567890123456789012345678901234567890$234567890123456789012345678901234567$901234567890123456789012345678901234$67890123456789
+linebuf via fputs: cost is $7$
+linebuf via puts: $$ and done
+nobuf: $a$b$ X$Y
+setbuf-adopt: $a$
+ok: setbuf adopted (buffered 15 bytes)
+setbuf-null: $unbuffered$
+fprintf stdout: 3 dollars $100$
+fprintf stderr: warn $!$
+ok: invalid mode rejected
+file-noop A
+file-noop B
+ok: file-noop adopted (buffered 26 bytes)
+tsvbuf2 passed with great success
+tsvbuf2 done $tail-no-newline$

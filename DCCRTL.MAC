@@ -74,6 +74,7 @@ bss_done:
         ld      hl,(__argc)
         push    hl              ; argc
         call    _main
+        call    __cflush                ; flush any buffered console output
         call    __cpm_set_retcode
         jp      0000h
 
@@ -178,21 +179,156 @@ argv:
 __argbuf:
         ds      128
 
+COBSZ   equ     128
+
 ; __conout: output char in E to console with LF->CR/LF translation.
-; Preserves all registers except F.
+; Buffered: the character is appended to __cobuf and the buffer is flushed to
+; the BDOS lazily.  The flush policy is set by setvbuf()/setbuf():
+;   __cob_mode = 0 (_IOFBF)  flush only when the buffer fills, on fflush(),
+;                            before stdin input, or at program exit;
+;                1 (_IOLBF)  additionally flush at each newline (the default);
+;                2 (_IONBF)  flush after every character.
+; Preserves all registers except F (callers rely on this).
 __conout:
+        push    af
+        push    bc
+        push    de
+        push    hl
         ld      a,e
         cp      0ah             ; LF?
-        jr      nz,__conout_raw
-        push    de
-        ld      e,0dh           ; emit CR first
-        ld      c,2
-        call    5
-        pop     de              ; restore original E (=0Ah)
-__conout_raw:
-        ld      c,2
-        call    5
+        jr      nz,co_one
+        ld      a,0dh           ; LF -> CR first
+        call    __cob_put
+        ld      a,0ah
+co_one:
+        call    __cob_put       ; append the character
+        ld      a,(__cob_mode)
+        or      a               ; 0 = _IOFBF: no per-char flush
+        jr      z,co_ret
+        dec     a               ; 1 = _IOLBF
+        jr      z,co_line
+        call    __cflush        ; 2 = _IONBF: flush every character
+        jr      co_ret
+co_line:
+        ld      a,e
+        cp      0ah             ; flush the buffered line on newline
+        jr      nz,co_ret
+        call    __cflush
+co_ret:
+        pop     hl
+        pop     de
+        pop     bc
+        pop     af
         ret
+
+; __cob_put: append the character in A to the console buffer; flush if it is
+; now full.  Preserves BC/DE/HL (DE still holds the char for __conout);
+; clobbers A and flags.  The active buffer base is __cob_ptr and the fill
+; threshold (usable bytes before a forced flush) is __cob_cap; these point at
+; the internal __cobuf/COBSZ by default or at a caller buffer set via setvbuf.
+__cob_put:
+        push    de
+        push    hl
+        ld      hl,(__cobcnt)
+        ld      de,(__cob_ptr)
+        add     hl,de
+        ld      (hl),a          ; buffer[cobcnt] = A
+        ld      hl,(__cobcnt)
+        inc     hl
+        ld      (__cobcnt),hl
+        ld      de,(__cob_cap)
+        or      a
+        sbc     hl,de           ; cobcnt - capacity
+        jr      c,cp_done       ; still room in the buffer
+        call    __cflush        ; buffer full: drain it
+cp_done:
+        pop     hl
+        pop     de
+        ret
+
+; __cflush: drain the console buffer to the BDOS.  Maximal runs of non-'$'
+; characters go out with BDOS function 9 (print '$'-terminated string) and any
+; literal '$' goes out with function 2, so the buffered bytes are reproduced
+; exactly while still batching most output into single BDOS calls.  A guard
+; byte just past the buffer end lets a run that reaches the end borrow a '$'
+; terminator.  Preserves all registers except F.
+__cflush:
+        push    af
+        push    bc
+        push    de
+        push    hl
+        ld      bc,(__cobcnt)
+        ld      a,b
+        or      c
+        jr      z,cf_reset      ; nothing buffered
+        ld      hl,(__cob_ptr)
+cf_outer:
+        ld      a,b
+        or      c
+        jr      z,cf_reset      ; all bytes emitted
+        ld      a,(hl)
+        cp      '$'
+        jr      nz,cf_run
+        ; literal '$' -> BDOS function 2
+        push    bc
+        push    hl
+        ld      e,'$'
+        ld      c,2
+        call    5
+        pop     hl
+        pop     bc
+        inc     hl
+        dec     bc
+        jr      cf_outer
+cf_run:
+        ld      d,h
+        ld      e,l             ; DE = start of the non-'$' run
+cf_scan:
+        ld      a,(hl)
+        cp      '$'
+        jr      z,cf_emit
+        inc     hl
+        dec     bc
+        ld      a,b
+        or      c
+        jr      nz,cf_scan
+cf_emit:
+        ; Run is [DE, HL).  Temporarily terminate it with '$' at HL.
+        ld      a,(hl)
+        push    af              ; save the real '$' or the guard byte
+        ld      (hl),'$'
+        push    bc
+        push    hl
+        ld      c,9             ; BDOS print '$'-terminated string (DE = start)
+        call    5
+        pop     hl
+        pop     bc
+        pop     af
+        ld      (hl),a          ; restore the saved byte
+        jr      cf_outer
+cf_reset:
+        ld      hl,0
+        ld      (__cobcnt),hl
+        pop     hl
+        pop     de
+        pop     bc
+        pop     af
+        ret
+
+__cob_mode:
+        db      1               ; default _IOLBF (line-buffered console)
+__cobcnt:
+        dw      0
+; Active console buffer: base pointer + usable capacity (bytes appended before
+; a forced flush).  Default to the internal buffer; setvbuf/setbuf may repoint
+; these at a caller-supplied buffer (capacity = size-1, reserving one guard
+; byte for the '$' terminator borrowed by __cflush).
+__cob_ptr:
+        dw      __cobuf
+__cob_cap:
+        dw      COBSZ
+__cobuf:
+        ds      COBSZ+1         ; +1 guard slot for the '$' terminator
 
         public  __pchr
 __pchr:
@@ -300,8 +436,117 @@ clrerr_done:
         public  _setbuf
 _setbuf:
         ; void setbuf(FILE *fp, char *buf)
-        ; Unbuffered/stubbed: all current I/O goes through direct CP/M calls.
+        ; C89 7.9.5.5: equivalent to setvbuf(fp, buf, buf ? _IOFBF : _IONBF,
+        ; BUFSIZ).  When buf is non-NULL the caller's BUFSIZ-byte buffer is
+        ; adopted for console output; when NULL the stream becomes unbuffered
+        ; and the internal buffer is used.
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+5)                ; only stdout/stderr (fd 1/2) use this
+        or      a
+        jr      nz,sb_ret               ; real file stream: write-through no-op
+        ld      a,(ix+4)
+        cp      1
+        jr      z,sb_console
+        cp      2
+        jr      nz,sb_ret               ; stdin/invalid: no output buffer
+sb_console:
+        call    __cflush                ; drain anything already buffered
+        ld      l,(ix+6)
+        ld      h,(ix+7)                ; HL = buf
+        ld      a,h
+        or      l                       ; buf == NULL ?
+        jr      z,sb_none
+        ld      de,256                  ; BUFSIZ (stdio.h); literal for M80
+        call    __cob_setbuf            ; adopt caller buffer (size BUFSIZ)
+        xor     a                       ; _IOFBF
+        ld      (__cob_mode),a
+        jr      sb_ret
+sb_none:
+        call    __cob_default           ; revert to the internal buffer
+        ld      a,2                     ; _IONBF
+        ld      (__cob_mode),a
+sb_ret:
         ld      hl,0
+        pop     ix
+        ret
+
+        public  _setvbuf
+_setvbuf:
+        ; int setvbuf(FILE *fp, char *buf, int mode, size_t size)
+        ; mode: _IOFBF(0)/_IOLBF(1)/_IONBF(2).  Returns 0 on success, nonzero
+        ; for an invalid mode.  When buf is non-NULL and size >= 2 the caller's
+        ; buffer is adopted for console output (capacity = size-1, reserving
+        ; one guard byte); otherwise the internal buffer is used.
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+8)                ; mode (low byte; int is 16-bit)
+        cp      3
+        jr      nc,svb_bad              ; mode > 2: invalid
+        ld      a,(ix+5)                ; only stdout/stderr (fd 1/2) use this
+        or      a
+        jr      nz,svb_noop             ; real file stream: write-through no-op
+        ld      a,(ix+4)
+        cp      1
+        jr      z,svb_console
+        cp      2
+        jr      nz,svb_noop             ; stdin/invalid: no output buffer
+svb_console:
+        call    __cflush                ; drain anything already buffered
+        ld      a,(ix+8)                ; mode (low byte; int is 16-bit)
+        ld      (__cob_mode),a
+        ld      l,(ix+6)
+        ld      h,(ix+7)                ; HL = buf
+        ld      a,h
+        or      l                       ; buf == NULL ?
+        jr      z,svb_internal
+        ld      e,(ix+10)
+        ld      d,(ix+11)               ; DE = size
+        call    __cob_setbuf            ; adopt caller buffer if size >= 2
+        ld      hl,0                    ; success
+        pop     ix
+        ret
+svb_internal:
+        call    __cob_default
+        ld      hl,0                    ; success
+        pop     ix
+        ret
+svb_noop:
+        ld      hl,0                    ; success: file streams are write-through
+        pop     ix
+        ret
+svb_bad:
+        ld      hl,0ffffh               ; nonzero: invalid mode
+        pop     ix
+        ret
+
+; __cob_setbuf: adopt a caller buffer for console output.
+; IN:  HL = buffer base, DE = buffer size.
+; Sets __cob_ptr = HL and __cob_cap = size-1 (one byte reserved as the '$'
+; guard slot used by __cflush).  A size < 2 cannot host the guard byte, so it
+; falls back to the internal buffer.  Clobbers A/DE/HL.
+__cob_setbuf:
+        ld      a,d
+        or      a
+        jr      nz,csb_ok               ; size >= 256: plenty of room
+        ld      a,e
+        cp      2
+        jr      c,__cob_default         ; size 0 or 1: too small for a guard
+csb_ok:
+        ld      (__cob_ptr),hl
+        dec     de                      ; capacity = size - 1 (reserve guard)
+        ld      (__cob_cap),de
+        ret
+
+; __cob_default: revert console output to the internal __cobuf/COBSZ buffer.
+; Clobbers HL.
+__cob_default:
+        ld      hl,__cobuf
+        ld      (__cob_ptr),hl
+        ld      hl,COBSZ
+        ld      (__cob_cap),hl
         ret
 
         public  _strerror
@@ -434,6 +679,7 @@ _remove:
 
         public  __gchr
 __gchr:
+        call    __cflush        ; show any pending prompt before blocking
         ld      c,1
         call    5
         ld      h,0
@@ -454,11 +700,13 @@ __kbht:
 __gtch:
         ; int getch(void) - BDOS 6: direct console input without echo
         ; BDOS 6 with E=FFh returns 0 when no key ready; poll until non-zero
+        call    __cflush        ; show any pending prompt before blocking
+__gtch_poll:
         ld      c,6
         ld      e,0ffh
         call    5
         or      a
-        jr      z,__gtch
+        jr      z,__gtch_poll
         ld      l,a
         ld      h,0
         ret
@@ -3850,6 +4098,7 @@ _exit:
         ld      l,(ix+4)
         ld      h,(ix+5)
         pop     ix
+        call    __cflush                ; flush any buffered console output
         call    __cpm_set_retcode
         jp      0000h
 
@@ -3909,6 +4158,7 @@ __stchk:
         jr      c,stchk_over
         ret
 stchk_over:
+        call    __cflush        ; flush buffered output before the diagnostic
         ld      de,stchk_msg
         ld      c,9             ; BDOS print-string ('$'-terminated)
         call    5
@@ -4103,6 +4353,12 @@ __atl_d:        db      0
 
         public  _fflush
 _fflush:
+        ; int fflush(FILE *stream)
+        ; Console output is buffered in this RTL; drain it.  File streams are
+        ; written through directly (no user-visible buffer), so nothing further
+        ; needs flushing for them.  fflush(NULL)/fflush(stdout)/fflush(stderr)
+        ; all drain the console buffer.
+        call    __cflush
         ld      hl,0
         ret
 
@@ -4354,6 +4610,7 @@ _read:
         ld      a,(ix+8)
         or      (ix+9)
         jr      z,rdzero
+        call    __cflush        ; show any pending prompt before blocking
         ld      c,6
         ld      e,0ffh
         call    5
@@ -7121,6 +7378,7 @@ fgets_con:
         ld      l,(ix+4)
         ld      h,(ix+5)
         ld      (__fgets_ptr),hl
+        call    __cflush                ; show any pending prompt before input
 
 fgets_loop:
         ld      hl,(__fgets_rem)

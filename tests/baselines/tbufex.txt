@@ -1,0 +1,21 @@
+row  1: 0
+row  2: 1
+row  3: 5
+row  4: 14
+row  5: 30
+row  6: 55
+row  7: 91
+row  8: 140
+row  9: 204
+row 10: 285
+row 11: 385
+row 12: 506
+row 13: 650
+row 14: 819
+row 15: 1015
+row 16: 1240
+row 17: 1496
+row 18: 1785
+row 19: 2109
+row 20: 2470
+sum of squares 1..20 = 2870

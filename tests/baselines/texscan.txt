@@ -1,0 +1,2 @@
+value=-12 word=hello hexval=42
+big=123456

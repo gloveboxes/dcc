@@ -16,8 +16,8 @@
     { "name": "na", "ignore": true },
     { "name": "tc89fltb", "ignore": true },
     { "name": "spsmash", "ignore": true },
-    { "name": "EU", "ignore": true },
-    { "name": "SIEVEU", "ignore": true },
-    { "name": "TTTU", "ignore": true }
+    { "name": "eu", "ignore": true },
+    { "name": "sieveu", "ignore": true },
+    { "name": "tttu", "ignore": true }
   ]
 }

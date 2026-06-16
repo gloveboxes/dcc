@@ -76,7 +76,7 @@ function Get-IgnoreApp {
 
 # Stage fixture input files
 function Stage-FixtureInputs {
-    $fixtures = @("E.PAS", "E.COB", "E.FOR", "E.ADA", "E.BAS", "E.F", "EU.C")
+    $fixtures = @("E.PAS", "E.COB", "E.FOR", "E.ADA", "E.BAS", "E.F", "eu.c")
     foreach ($f in $fixtures) {
         if (Test-Path "tests\$f") {
             Copy-Item -Path "tests\$f" -Destination "$BuildDir\$f" -Force -ErrorAction SilentlyContinue

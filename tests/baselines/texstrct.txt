@@ -1,0 +1,4 @@
+apples   9
+kiwis    2
+pears    4
+kiwis: 2 in stock

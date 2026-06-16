@@ -4289,3 +4289,7 @@ test tesc
 tesc: all tests passed
 test tkbd
 tkbd completed with great success
+test tstackov
+tstackov start
+
+?stack overflow

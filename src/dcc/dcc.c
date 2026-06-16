@@ -712,6 +712,7 @@ void print_help(void)
     printf("  -c, -module      emit a linkable helper module (not a final program)\n");
     printf("  -f, -ffloatio    enable floating-point printf/scanf support\n");
     printf("  -s, -stack <bytes>   reserve <bytes> for the C stack (default 512)\n");
+    printf("  -fstack-check    abort gracefully if the stack overflows its reserve\n");
     printf("  -I<dir>          add <dir> to the include search path\n");
     printf("  -D<name>[=val]   define a preprocessor macro\n");
     printf("  -U<name>         undefine a preprocessor macro\n");
@@ -728,6 +729,7 @@ int main(int argc, char **argv)
     output_name = NULL;
     opt_module = 0;
     opt_stack_size = 512;
+    opt_stack_check = 0;
     max_function_local_bytes = 0;
 
     add_define("_DCC_", "1");
@@ -735,6 +737,8 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-ffloatio") || !strcmp(argv[i], "-f")) {
             opt_floatio = 1;
+        } else if (!strcmp(argv[i], "-fstack-check")) {
+            opt_stack_check = 1;
         } else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--version")) {
             print_version();
             return 0;

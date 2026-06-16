@@ -397,6 +397,13 @@ void emit_function_prologue(const char *name, int local_bytes, int omit_ix_frame
         emit("\tadd hl,sp\n");
         emit("\tld sp,hl\n");
     }
+
+    /* -fstack-check: after the frame (saved IX + locals) is allocated, verify
+     * the stack has not grown past its reserve into the heap region.  Emitted
+     * last so dccpeep's shared-frame-stub pass can still fold the prologue
+     * (the call follows the recognised push-ix/locals sequence). */
+    if (opt_stack_check)
+        emit_runtime_call("__stchk");
 }
 
 void emit_function_epilogue(void)

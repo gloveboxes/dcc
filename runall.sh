@@ -1,9 +1,28 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Optional first argument: emulator command. Defaults to ntvcm.
-EMULATOR=${1:-ntvcm}
+# Usage: ./runall.sh [emulator] [--stack-check]
+#   emulator       emulator command to run the built .COM files (default ntvcm)
+#   --stack-check  build every app with dcc -fstack-check (lightweight
+#                  stack-overflow guard).  A guarded app that overflows its
+#                  reserve prints "?stack overflow" and exits, which then shows
+#                  up as a diff against the baseline.  Also enabled by the
+#                  STACK_CHECK=1 environment variable.
+EMULATOR=""
+FORCE_STACK_CHECK=${STACK_CHECK:-0}
+for arg in "$@"; do
+    case "$arg" in
+        --stack-check|-stack-check|--fstack-check) FORCE_STACK_CHECK=1 ;;
+        *) if [ -z "$EMULATOR" ]; then EMULATOR="$arg"; fi ;;
+    esac
+done
+EMULATOR=${EMULATOR:-ntvcm}
 BUILD_DIR=${BUILD_DIR:-build}
+
+if [ "$FORCE_STACK_CHECK" = "1" ]; then
+    export DCC_FORCE_STACK_CHECK=1
+    echo "--- stack-check: building every app with -fstack-check ---"
+fi
 
 mkdir -p "$BUILD_DIR"
 
@@ -23,7 +42,7 @@ APPLIST="sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong \
          tptrdiff tmulpow2 toffset tc89fini tmod3216 tpromo2 tunaryp tstfield \
          pint cobint forint bint fint cint adaint tstretst tportio tlongidx tforsco \
          tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv tfarrsub t2darr too tzpad tesc \
-         tkbd"
+         tkbd tstackov"
 
 run_args() {
     case "$1" in
@@ -38,6 +57,26 @@ run_args() {
         wumpus|tchess) echo "-c" ;;
         targs) echo "a bb ccc dddd eeeee" ;;
         *) echo "" ;;
+    esac
+}
+
+# Per-app C stack reserve (bytes), passed to ma.sh as DCC_STACK_SIZE.  Most apps
+# use the dcc default (512); a few recursive ones need more headroom, which only
+# matters under --stack-check (otherwise the unused reserve is harmless).  An
+# empty result means "use the default".  A global STACK_SIZE env var, if set,
+# overrides this table for every app.
+#
+# Measured minimum-to-pass under -fstack-check (then rounded up for headroom):
+#   triangle  ~626  -> 768
+#   cobint    ~1376 -> 1536
+#   spsmash   has NO passing size: factorial(4e9) recurses until it smashes the
+#             stack on purpose, so the guard always fires.  Left at the default.
+stack_size_for() {
+    if [ -n "${STACK_SIZE:-}" ]; then echo "$STACK_SIZE"; return; fi
+    case "$1" in
+        triangle) echo "768" ;;
+        cobint)   echo "1536" ;;
+        *)        echo "" ;;
     esac
 }
 
@@ -83,7 +122,12 @@ run_set() {
         echo "test $app" >> "$outfile"
 
         clean_one "$app"
-        ./ma.sh "$app" "$mode" >/dev/null
+        stack_sz="$(stack_size_for "$app")"
+        if [ -n "$stack_sz" ]; then
+            DCC_STACK_SIZE="$stack_sz" ./ma.sh "$app" "$mode" >/dev/null
+        else
+            ./ma.sh "$app" "$mode" >/dev/null
+        fi
 
         args="$(run_args "$app")"
         if [ "$app" = "tkbd" ]; then

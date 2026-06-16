@@ -27,6 +27,7 @@ int nasm_names;
 int opt_floatio;
 int opt_module;      /* -c/-module: emit linkable helper module, not final app TU */
 int opt_stack_size;  /* bytes reserved above heap for C stack */
+int opt_stack_check; /* -fstack-check: emit a stack-overflow guard at function entry */
 
 /* ---- typedef table ----------------------------------------------------- */
 struct TypeDef typedefs[MAX_TYPEDEFS];

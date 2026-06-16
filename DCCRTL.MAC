@@ -3696,6 +3696,41 @@ csr_not_minus1:
         call    5
         ret
 
+; ------------------------------------------------------------
+; __stchk - lightweight stack-overflow guard (dcc -fstack-check).
+;
+; dcc emits "call __stchk" in every function prologue (after the frame and
+; locals are allocated) when built with -fstack-check.  It compares the live
+; SP against __hlimit (the heap ceiling = initial SP minus the reserved
+; stack).  While SP stays at or above __hlimit the C stack is within its
+; reserve; if SP drops below it the stack has grown into the heap region, so
+; instead of silently corrupting memory it prints a diagnostic and exits to
+; CP/M with return code 0FFh.
+;
+; Clobbers AF/DE/HL on the normal path.  This is fine because dcc emits it in
+; the generated C function prologue before the body can depend on registers.
+; Own public block so dccrtlstrip drops it from programs not built with
+; -fstack-check.
+; ------------------------------------------------------------
+        public  __stchk
+__stchk:
+        ld      hl,0
+        add     hl,sp           ; HL = SP after CALL's return-address push
+        ld      de,(__hlimit)
+        or      a
+        sbc     hl,de           ; carry set iff SP < __hlimit
+        jr      c,stchk_over
+        ret
+stchk_over:
+        ld      de,stchk_msg
+        ld      c,9             ; BDOS print-string ('$'-terminated)
+        call    5
+        ld      hl,00ffh
+        call    __cpm_set_retcode
+        jp      0000h
+stchk_msg:
+        db      0dh,0ah,'?stack overflow',0dh,0ah,'$'
+
         public  _atoi
 _atoi:
         push    ix

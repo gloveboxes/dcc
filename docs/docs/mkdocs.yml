@@ -32,6 +32,7 @@ nav:
       - Compiler architecture: en/appendix/00-architecture.md
       - Runtime optimization: en/appendix/01-dccrtlstrip.md
       - Runtime function sizes: en/appendix/02-runtime-sizes.md
+      - Utilities: en/appendix/03-utilities.md
 
 plugins:
   - search

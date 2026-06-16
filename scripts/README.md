@@ -93,3 +93,89 @@ The sweep varies the reserve through the `DCC_STACK_SIZE` hook honored by
 the size, bake it in by building with `DCC_STACK_SIZE=<n> ./ma.sh <app>` or, for
 the regression suite, add it to the per-app `stack_size_for` table in
 `runall.sh` (and the matching block in `runall.bat`).
+
+## `perfcapture.sh` / `perfcapture.bat`
+
+Captures performance benchmarks for the benchmark suite (tstring, sieve, e, tm,
+ttt, pihex, mm) in both optimized and unoptimized modes. Builds each app with
+both `peep` and `nopeep` modes, measures execution time under the ntvcm emulator,
+records binary size, and outputs results as CSV with both metrics on a single
+line per app.
+
+`perfcapture.sh` is the macOS/Linux version; `perfcapture.bat` is the Windows
+equivalent. Both automatically capture both build modes and produce identical CSV
+output.
+
+### Purpose
+
+Compares performance and binary size across optimized (dccpeep) vs. unoptimized
+builds. Useful for:
+
+- Measuring compiler optimization impact
+- Verifying binary size trade-offs
+- Tracking changes across dcc, dccpeep, or dccrtlstrip updates
+- Analyzing the impact of compiler flags like `-fstack-check`
+
+### Usage
+
+```sh
+scripts/perfcapture.sh
+scripts/perfcapture.bat
+```
+
+No arguments needed — both modes (peep/nopeep) are captured automatically. Results
+are written to `perf_results.csv` in the project root.
+
+### Examples
+
+```sh
+scripts/perfcapture.sh              # Capture both modes
+ls -lh perf_results.csv
+cat perf_results.csv
+```
+
+### Output format
+
+The CSV file contains UTC timestamp, app name, and metrics for both peep and
+nopeep builds:
+
+```csv
+utc-timestamp,app,peep_ms,peep_size,nopeep_ms,nopeep_size
+2026-06-16T07:18:39Z,tstring,17000,6400,19000,6912
+2026-06-16T07:18:39Z,sieve,1000,2176,3000,2304
+2026-06-16T07:18:40Z,e,1000,2560,1000,2560
+2026-06-16T07:18:40Z,tm,2000,4224,11000,4352
+2026-06-16T07:18:40Z,ttt,2000,2816,4000,5632
+2026-06-16T07:18:42Z,pihex,80000,14464,80000,14976
+2026-06-16T07:18:42Z,mm,4000,6784,4000,6912
+```
+
+**Columns:**
+
+- `utc-timestamp` — UTC timestamp (ISO 8601 format, e.g., `2026-06-16T07:18:39Z`)
+- `app` — Application name
+- `peep_ms` — Execution time in milliseconds (optimized with dccpeep)
+- `peep_size` — Binary size in bytes (optimized)
+- `nopeep_ms` — Execution time in milliseconds (unoptimized)
+- `nopeep_size` — Binary size in bytes (unoptimized)
+
+### Environment variables
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `BUILD_DIR` | `build` | Working directory for build artifacts. |
+| `OUTPUT_FILE` | `perf_results.csv` | CSV output file path (relative to project root). |
+| `EMULATOR` | `ntvcm` | Emulator command used to run `.COM` files. |
+
+```sh
+EMULATOR=altair scripts/perfcapture.sh peep
+OUTPUT_FILE=bench_$(date +%Y%m%d).csv scripts/perfcapture.sh peep
+```
+
+### Requirements
+
+- The in-repo `./dcc`, `./dccpeep`, `./dccrtlstrip` binaries
+- The `ntvcm` emulator (or alternative specified via `EMULATOR`)
+- `ma.sh` or `ma.bat` build driver
+- macOS/Linux: `/usr/bin/time` for accurate timing (fallback uses `date +%s%N`)
+- Windows: PowerShell for timing and timestamp generation

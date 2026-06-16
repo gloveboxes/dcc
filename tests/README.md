@@ -49,12 +49,18 @@ pwsh ./scripts/runall.ps1
 # Sequential fallback (one app at a time in the shared build/ dir)
 pwsh ./scripts/runall.ps1 -Serial
 
-# Only one build mode
-pwsh ./scripts/runall.ps1 -Mode nopeep
+# Build only one optimization pass (default builds both)
+pwsh ./scripts/runall.ps1 -Mode peep     # optimized (dccpeep) only
+pwsh ./scripts/runall.ps1 -Mode nopeep   # unoptimized only
 
 # Build without the stack-overflow guard (on by default)
 pwsh ./scripts/runall.ps1 -NoStackCheck
 ```
+
+By default the suite builds each app in **both** optimization modes \u2014 `peep`
+(optimized, via the dccpeep peephole optimizer) and `nopeep` (unoptimized) \u2014
+and verifies both against the same baseline, so a default run does two builds
+per app. Use `-Mode peep` or `-Mode nopeep` to build just one.
 
 By default the suite runs **in parallel** (each app builds in its own
 `build/<app>/` subdirectory), which is much faster on multi-core machines. Pass

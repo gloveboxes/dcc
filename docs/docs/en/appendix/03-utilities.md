@@ -76,10 +76,14 @@ Validates the entire test suite by:
 pwsh ./scripts/runall.ps1 [options]
 ```
 
+Run with no options, the suite uses these defaults: **parallel** execution,
+the **stack-overflow guard on** (`-fstack-check`), and **both build modes**
+(`peep` and `nopeep`). Use the switches below to change any of these.
+
 ### Examples
 
 ```pwsh
-pwsh ./scripts/runall.ps1                       # parallel, stack-check on, both modes (defaults)
+pwsh ./scripts/runall.ps1                       # all defaults
 pwsh ./scripts/runall.ps1 -Serial               # sequential fallback
 pwsh ./scripts/runall.ps1 -NoStackCheck         # build without the stack guard
 pwsh ./scripts/runall.ps1 -ThrottleLimit 8      # cap concurrency

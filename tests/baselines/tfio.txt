@@ -1,0 +1,5 @@
+1: hello
+2: world
+3: line 3
+value=42
+tfio completed with great success

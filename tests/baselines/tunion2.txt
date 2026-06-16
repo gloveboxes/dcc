@@ -1,0 +1,8 @@
+global union 3 1000 7 1010
+global name 97 98 99 6513249
+global array 2012 3014
+local union 6 4000 10 4016
+local name 120 121 122 8026488
+return/assign 7 5000 11 5018
+ptr copy 5 3000 9 3014
+tunion completed

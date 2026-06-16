@@ -1,0 +1,11 @@
+fread size0: 0
+fread count0: 0
+line1: abcdef
+line2: 0123456789
+eof fgets null: 1
+feof: 1
+ferror: 0
+feof after clearerr: 0
+rewind read 5: abcde
+fwrite size0: 0
+tioerr completed with great success

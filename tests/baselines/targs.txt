@@ -1,0 +1,8 @@
+argc: 6
+argv[ 0 ]: ''
+argv[ 1 ]: 'A'
+argv[ 2 ]: 'BB'
+argv[ 3 ]: 'CCC'
+argv[ 4 ]: 'DDDD'
+argv[ 5 ]: 'EEEEE'
+targs completed with great success

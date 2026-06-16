@@ -1,0 +1,6 @@
+assignment conversions
+integer promotions
+usual arithmetic conversions
+demotions after operations
+vararg/function conversion sanity
+tpromo completed with great success

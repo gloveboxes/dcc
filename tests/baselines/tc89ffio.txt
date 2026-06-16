@@ -1,0 +1,5 @@
+ffio start
+a=1.500000
+b=2.25
+c=3.750000
+ffio ok

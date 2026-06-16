@@ -1,0 +1,8 @@
+g=3 1000 7
+l=4 2000 8
+a=5 22 6
+p=5 22 6
+n=1234 22
+Stack[0]: Karina, Winter
+Stack[1]: Giselle, Ningning
+tstruct completed with great success

@@ -1,0 +1,4 @@
+=== dcc math.h verification ===
+-------------------------------
+checks=90 failures=0
+RESULT: PASS

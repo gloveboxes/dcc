@@ -1,0 +1,2413 @@
+
+8 r n b q k b n r 
+7 p p p p p p p p 
+6 . . . . . . . . 
+5 . . . . . . . . 
+4 . . . . . . . . 
+3 . . . . . . . . 
+2 P P P P P P P P 
+1 R N B Q K B N R 
+  a b c d e f g h
+white to move
+bk plays e2e4
+
+8 r n b q k b n r 
+7 p p p p p p p p 
+6 . . . . . . . . 
+5 . . . . . . . . 
+4 . . . . P . . . 
+3 . . . . . . . . 
+2 P P P P . P P P 
+1 R N B Q K B N R 
+  a b c d e f g h
+black to move
+bk plays e7e5
+
+8 r n b q k b n r 
+7 p p p p . p p p 
+6 . . . . . . . . 
+5 . . . . p . . . 
+4 . . . . P . . . 
+3 . . . . . . . . 
+2 P P P P . P P P 
+1 R N B Q K B N R 
+  a b c d e f g h
+white to move
+bk plays g1f3
+
+8 r n b q k b n r 
+7 p p p p . p p p 
+6 . . . . . . . . 
+5 . . . . p . . . 
+4 . . . . P . . . 
+3 . . . . . N . . 
+2 P P P P . P P P 
+1 R N B Q K B . R 
+  a b c d e f g h
+black to move
+bk plays b8c6
+
+8 r . b q k b n r 
+7 p p p p . p p p 
+6 . . n . . . . . 
+5 . . . . p . . . 
+4 . . . . P . . . 
+3 . . . . . N . . 
+2 P P P P . P P P 
+1 R N B Q K B . R 
+  a b c d e f g h
+white to move
+bk plays f1b5
+
+8 r . b q k b n r 
+7 p p p p . p p p 
+6 . . n . . . . . 
+5 . B . . p . . . 
+4 . . . . P . . . 
+3 . . . . . N . . 
+2 P P P P . P P P 
+1 R N B Q K . . R 
+  a b c d e f g h
+black to move
+bk plays a7a6
+
+8 r . b q k b n r 
+7 . p p p . p p p 
+6 p . n . . . . . 
+5 . B . . p . . . 
+4 . . . . P . . . 
+3 . . . . . N . . 
+2 P P P P . P P P 
+1 R N B Q K . . R 
+  a b c d e f g h
+white to move
+bk plays b5a4
+
+8 r . b q k b n r 
+7 . p p p . p p p 
+6 p . n . . . . . 
+5 . . . . p . . . 
+4 B . . . P . . . 
+3 . . . . . N . . 
+2 P P P P . P P P 
+1 R N B Q K . . R 
+  a b c d e f g h
+black to move
+bk plays g8f6
+
+8 r . b q k b . r 
+7 . p p p . p p p 
+6 p . n . . n . . 
+5 . . . . p . . . 
+4 B . . . P . . . 
+3 . . . . . N . . 
+2 P P P P . P P P 
+1 R N B Q K . . R 
+  a b c d e f g h
+white to move
+bk plays d2d3
+
+8 r . b q k b . r 
+7 . p p p . p p p 
+6 p . n . . n . . 
+5 . . . . p . . . 
+4 B . . . P . . . 
+3 . . . P . N . . 
+2 P P P . . P P P 
+1 R N B Q K . . R 
+  a b c d e f g h
+black to move
+bk plays f8e7
+
+8 r . b q k . . r 
+7 . p p p b p p p 
+6 p . n . . n . . 
+5 . . . . p . . . 
+4 B . . . P . . . 
+3 . . . P . N . . 
+2 P P P . . P P P 
+1 R N B Q K . . R 
+  a b c d e f g h
+white to move
+bk plays c2c3
+
+8 r . b q k . . r 
+7 . p p p b p p p 
+6 p . n . . n . . 
+5 . . . . p . . . 
+4 B . . . P . . . 
+3 . . P P . N . . 
+2 P P . . . P P P 
+1 R N B Q K . . R 
+  a b c d e f g h
+black to move
+bk plays d7d6
+
+8 r . b q k . . r 
+7 . p p . b p p p 
+6 p . n p . n . . 
+5 . . . . p . . . 
+4 B . . . P . . . 
+3 . . P P . N . . 
+2 P P . . . P P P 
+1 R N B Q K . . R 
+  a b c d e f g h
+white to move
+bk plays b1d2
+
+8 r . b q k . . r 
+7 . p p . b p p p 
+6 p . n p . n . . 
+5 . . . . p . . . 
+4 B . . . P . . . 
+3 . . P P . N . . 
+2 P P . N . P P P 
+1 R . B Q K . . R 
+  a b c d e f g h
+black to move
+bk plays c8g4
+
+8 r . . q k . . r 
+7 . p p . b p p p 
+6 p . n p . n . . 
+5 . . . . p . . . 
+4 B . . . P . b . 
+3 . . P P . N . . 
+2 P P . N . P P P 
+1 R . B Q K . . R 
+  a b c d e f g h
+white to move
+bk plays e1g1
+
+8 r . . q k . . r 
+7 . p p . b p p p 
+6 p . n p . n . . 
+5 . . . . p . . . 
+4 B . . . P . b . 
+3 . . P P . N . . 
+2 P P . N . P P P 
+1 R . B Q . R K . 
+  a b c d e f g h
+black to move
+bk plays e8g8
+
+8 r . . q . r k . 
+7 . p p . b p p p 
+6 p . n p . n . . 
+5 . . . . p . . . 
+4 B . . . P . b . 
+3 . . P P . N . . 
+2 P P . N . P P P 
+1 R . B Q . R K . 
+  a b c d e f g h
+white to move
+computer plays a4c6 score -31
+
+8 r . . q . r k . 
+7 . p p . b p p p 
+6 p . B p . n . . 
+5 . . . . p . . . 
+4 . . . . P . b . 
+3 . . P P . N . . 
+2 P P . N . P P P 
+1 R . B Q . R K . 
+  a b c d e f g h
+black to move
+computer plays b7c6 score -146
+
+8 r . . q . r k . 
+7 . . p . b p p p 
+6 p . p p . n . . 
+5 . . . . p . . . 
+4 . . . . P . b . 
+3 . . P P . N . . 
+2 P P . N . P P P 
+1 R . B Q . R K . 
+  a b c d e f g h
+white to move
+computer plays d2c4 score -401
+
+8 r . . q . r k . 
+7 . . p . b p p p 
+6 p . p p . n . . 
+5 . . . . p . . . 
+4 . . N . P . b . 
+3 . . P P . N . . 
+2 P P . . . P P P 
+1 R . B Q . R K . 
+  a b c d e f g h
+black to move
+computer plays g4f3 score 15
+
+8 r . . q . r k . 
+7 . . p . b p p p 
+6 p . p p . n . . 
+5 . . . . p . . . 
+4 . . N . P . . . 
+3 . . P P . b . . 
+2 P P . . . P P P 
+1 R . B Q . R K . 
+  a b c d e f g h
+white to move
+computer plays g2f3 score -174
+
+8 r . . q . r k . 
+7 . . p . b p p p 
+6 p . p p . n . . 
+5 . . . . p . . . 
+4 . . N . P . . . 
+3 . . P P . P . . 
+2 P P . . . P . P 
+1 R . B Q . R K . 
+  a b c d e f g h
+black to move
+computer plays h7h5 score -114
+
+8 r . . q . r k . 
+7 . . p . b p p . 
+6 p . p p . n . . 
+5 . . . . p . . p 
+4 . . N . P . . . 
+3 . . P P . P . . 
+2 P P . . . P . P 
+1 R . B Q . R K . 
+  a b c d e f g h
+white to move
+computer plays c1e3 score -149
+
+8 r . . q . r k . 
+7 . . p . b p p . 
+6 p . p p . n . . 
+5 . . . . p . . p 
+4 . . N . P . . . 
+3 . . P P B P . . 
+2 P P . . . P . P 
+1 R . . Q . R K . 
+  a b c d e f g h
+black to move
+computer plays g7g5 score -139
+
+8 r . . q . r k . 
+7 . . p . b p . . 
+6 p . p p . n . . 
+5 . . . . p . p p 
+4 . . N . P . . . 
+3 . . P P B P . . 
+2 P P . . . P . P 
+1 R . . Q . R K . 
+  a b c d e f g h
+white to move
+computer plays e3g5 score -48
+
+8 r . . q . r k . 
+7 . . p . b p . . 
+6 p . p p . n . . 
+5 . . . . p . B p 
+4 . . N . P . . . 
+3 . . P P . P . . 
+2 P P . . . P . P 
+1 R . . Q . R K . 
+  a b c d e f g h
+black to move
+computer plays f6e4 score -397
+
+8 r . . q . r k . 
+7 . . p . b p . . 
+6 p . p p . . . . 
+5 . . . . p . B p 
+4 . . N . n . . . 
+3 . . P P . P . . 
+2 P P . . . P . P 
+1 R . . Q . R K . 
+  a b c d e f g h
+white to move
+computer plays f3e4 score 20
+
+8 r . . q . r k . 
+7 . . p . b p . . 
+6 p . p p . . . . 
+5 . . . . p . B p 
+4 . . N . P . . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . Q . R K . 
+  a b c d e f g h
+black to move
+computer plays e7g5 score -163
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . b p 
+4 . . N . P . . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . Q . R K . 
+  a b c d e f g h
+white to move
+computer plays d1h5 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . b Q 
+4 . . N . P . . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g5f4 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays g4h5 score 133
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays h8g8 score -276
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . Q 
+4 . . N . P b . . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+computer plays h5g4 score 127
+
+8 r . . q . r k . 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+black to move
+computer plays g8h8 score -514
+
+8 r . . q . r . k 
+7 . . p . . p . . 
+6 p . p p . . . . 
+5 . . . . p . . . 
+4 . . N . P b Q . 
+3 . . P P . . . . 
+2 P P . . . P . P 
+1 R . . . . R K . 
+  a b c d e f g h
+white to move
+move limit reached
+stalemate, quit, or no legal move

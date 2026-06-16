@@ -1,0 +1,32 @@
+trw start
+testing size 1
+size 1 passed
+testing size 2
+size 2 passed
+testing size 3
+size 3 passed
+testing size 17
+size 17 passed
+testing size 63
+size 63 passed
+testing size 64
+size 64 passed
+testing size 65
+size 65 passed
+testing size 127
+size 127 passed
+testing size 128
+size 128 passed
+testing size 129
+size 129 passed
+testing size 130
+size 130 passed
+testing size 251
+size 251 passed
+testing size 255
+size 255 passed
+testing size 256
+size 256 passed
+testing size 257
+size 257 passed
+trw completed with great success

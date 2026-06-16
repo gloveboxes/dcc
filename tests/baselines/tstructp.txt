@@ -1,0 +1,3 @@
+deref copy 3 1000 7 1010
+cast copy 4 2000 8 2012
+tstructptr completed

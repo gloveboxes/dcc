@@ -1,0 +1,8 @@
+tbdos start
+Hi!
+BDOS 9 string output works
+BDOS version raw: 34
+BDOS version major=2 minor=2
+Console status: 0
+Direct console poll: 0
+tbdos completed with great success

@@ -8,6 +8,7 @@ baselines used to verify them.
 
 ```
 tests/
+  _test_overrides.json # per-test run config (args, stack_size, ignore)
   <name>.c          # a test program (compiled + run by the harness)
   E.PAS, E.COB, ... # fixture input files consumed by some interpreters
   baselines/
@@ -35,7 +36,7 @@ Because matching is keyed on the **app name** (not position in a list), the
 order in which tests are discovered or run does not matter.
 
 > Note: a few tests take command-line arguments or need a larger stack. Those
-> parameters live in `scripts/app_overrides.json` (keys: `args`, `stack_size`,
+> parameters live in `tests/_test_overrides.json` (keys: `args`, `stack_size`,
 > `ignore`). For example `ttt` is run with `10`, and `cobint` reads `e.cob`.
 
 ## Running the suite
@@ -106,7 +107,7 @@ need to mask another kind of volatile value.
 
 1. Add the program as `tests/<name>.c`.
 2. If it needs arguments, a custom stack size, or should be skipped, add an
-   entry to `scripts/app_overrides.json`.
+   entry to `tests/_test_overrides.json`.
 3. Generate its baseline by capturing the **known-good** output into
    `tests/baselines/<name>.txt` (exact stdout, LF line endings, no extra
    trailing content). If any output is volatile (dates, times, paths), replace
@@ -140,4 +141,4 @@ headers. The split reproduces the original baseline byte-for-byte.
   editing the per-app baseline. The legacy file is kept only for historical
   reference and round-trip regeneration.
 - Per-test run parameters (arguments, stack size, ignore) are configuration,
-  and live in `scripts/app_overrides.json`, not in this folder.
+  and live in `tests/_test_overrides.json`, not encoded in the baselines.

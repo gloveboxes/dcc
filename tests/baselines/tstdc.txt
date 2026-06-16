@@ -1,0 +1,6 @@
+__DATE__ {{DATE}}
+__TIME__ {{TIME}}
+__FILE__ tests{{SEP}}tstdc.c
+__LINE__ 8
+__STDC__ 1
+test tstdc completed with great success

@@ -1,0 +1,7 @@
+Starting C89 Limits Validation...
+
+Test 1: char (8-bit) limits... PASSED
+Test 2: 2-byte (16-bit) short limits... PASSED
+Test 3: 4-byte (32-bit) long limits... PASSED
+
+Results: 3/3 tests passed.

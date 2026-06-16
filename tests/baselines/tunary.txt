@@ -1,0 +1,99 @@
+unary minus
+-5
+5
+1
+0
+-1000
+1000
+0
+bitwise not
+255
+0
+170
+85
+-1
+0
+-2
+-1
+0
+-256
+-1
+0
+-2
+logical not
+1
+0
+0
+0
+1
+0
+1
+0
+pre-increment
+6
+0
+6
+0
+101
+0
+pre-decrement
+4
+-1
+4
+255
+99
+-1
+post-increment
+6
+0
+6
+0
+101
+0
+post-decrement
+4
+-1
+4
+255
+99
+-1
+ternary basic
+10
+20
+10
+20
+ternary comparisons
+1
+-1
+-1
+99
+0
+ternary variable branches
+3
+3
+0
+ternary nested
+1
+-1
+0
+ternary 8-bit condition
+-100
+100
+-100
+100
+ternary in expression
+4
+4
+4294967295
+0
+4294901760
+-1
+0
+-2
+1
+0
+1
+0
+100001
+500001
+tunary completed

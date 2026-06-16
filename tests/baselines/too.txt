@@ -1,0 +1,27 @@
+too: OO-style C stress test for dcc
+shapes:
+  #1 Rectangle area=24.00 perim=20.00
+  #2 Circle    area=78.54 perim=31.41
+  #3 Triangle  area=6.00 perim=12.00
+dispatch table:
+  query[0]=area query[1]=perim
+world:
+  total area before scale=108.54
+  total area after 200% scale=434.16
+multidim:
+  board weight=138 cells checksum=222
+aggregates:
+  list area sum=108.54 bst sum=45 height=4
+gallery:
+  9 exhibits, 18 ratings; rating sum=792 id sum=36
+  valuation grand=362
+scope:
+  shadow=10/20/30 for-sum=14 ids=1,2,3 sibs=6,52,7,54
+machine:
+  result=30 steps=4
+size inference:
+  static grid rows=3 total=6 bsum=210
+size inference 2:
+  local 2D rows=2 bsum=50; unions gub=4 gbr=3 lu=3 lb=2; partial gop=3 lop=4
+ran 161 checks, 0 failures
+too passed with great success

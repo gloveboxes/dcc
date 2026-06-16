@@ -1,0 +1,1 @@
+declaration syntax test passed with great success

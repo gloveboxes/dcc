@@ -29,7 +29,8 @@ nav:
   - Limitations: en/11-limitations.md
   - Worked examples: en/12-examples.md
   - Appendix:
-      - How dccrtlstrip works and code size: en/appendix/01-dccrtlstrip.md
+      - Compiler architecture: en/appendix/00-architecture.md
+      - Runtime optimization: en/appendix/01-dccrtlstrip.md
 
 plugins:
   - search
@@ -76,7 +77,11 @@ markdown_extensions:
       toc_depth: 2
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:

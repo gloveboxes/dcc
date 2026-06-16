@@ -1,4 +1,4 @@
-# Appendix: how `dccrtlstrip` works and code size
+# Appendix: runtime optimization
 
 `DCCRTL.MAC` is a single ~16,380-line runtime, but most programs use only a
 fraction of it. The normal dcc build flow runs `dccrtlstrip` before the final

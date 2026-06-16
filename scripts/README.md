@@ -2,10 +2,15 @@
 
 Developer utility scripts for the `dcc` (CP/M-80 / Z80) toolchain.
 
-## `stacksize.sh`
+## `stacksize.sh` / `stacksize.bat`
 
 Finds the minimum **C stack reserve** an app needs under dcc's lightweight
 stack-overflow guard (`-fstack-check`).
+
+`stacksize.sh` is the macOS/Linux version; `stacksize.bat` is the equivalent for
+Windows (`cmd.exe`). They take the same arguments, honour the same environment
+variables, and produce the same report — the Windows version drives `ma.bat`
+instead of `ma.sh`.
 
 ### Purpose
 

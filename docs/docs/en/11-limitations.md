@@ -25,8 +25,12 @@ and the single source-of-truth runtime.
 
 ## Runtime and environment limits
 
-- **No stack/heap guard.** The heap and stack share memory; size the stack with
-  `-stack`. You can implement your own stack check if you need one.
+- **No stack/heap guard by default.** The heap and stack share memory; size the
+  stack with `-stack`. There is no protection at runtime *unless* you opt in to
+  the lightweight stack-overflow guard with **`-fstack-check`**, which makes an
+  overflow exit cleanly with a `?stack overflow` message instead of silently
+  corrupting the heap. See [Building and linking](02-build-and-link.md) for the
+  flag and the `stacksize` helper that measures the reserve an app needs.
 - **CP/M 2.2 only.** The runtime uses BDOS functions only (no BIOS calls), plus
   CP/M 3.0 BDOS 108 for the process exit code.
 

@@ -149,6 +149,7 @@ Common options:
 | `-o file` | Write M80 assembly to `file`; default is `out.mac`, `-` is stdout. |
 | `-c`, `-module` | Emit a linkable helper module, not a final program translation unit. |
 | `-f`, `-ffloatio` | Enable floating-point `printf` formatting support. |
+| `-fstack-check` | Emit a lightweight stack-overflow guard in each function prologue. |
 | `-s bytes`, `-stack bytes`, `--stack bytes` | Reserve stack bytes; default is 512. |
 | `-s=bytes`, `-stack=bytes`, `--stack=bytes` | Equivalent attached forms for the stack size. |
 | `-I dir`, `-Idir` | Add an include search directory. |
@@ -166,8 +167,42 @@ Common options:
 - **`-s` / `-stack` / `--stack`** — reserve stack space (default 512; accepted
   range 0..32767). The heap used by `malloc` lives between the end of BSS and
   the bottom of the stack, so growing the stack shrinks the heap and vice versa.
-  There are no runtime checks that stop the stack from smashing the heap.
+  By default there are no runtime checks that stop the stack from smashing the
+  heap.
+- **`-fstack-check`** — opt in to a lightweight stack-overflow guard. dcc emits
+  a short `call __stchk` in each function prologue (after the frame is set up)
+  that compares the live stack pointer against the heap ceiling. If the stack
+  has grown into the heap, the program prints `?stack overflow` and exits with
+  return code `0FFh` instead of silently corrupting memory. The guard costs a
+  few bytes and one call per function, so it is **off by default**; turn it on
+  while developing or for deeply recursive code. The `stacksize` helper script
+  (below) uses this guard to measure the minimum `-stack` reserve an app needs.
 - **`-Dname[=value]`** — predefine a macro. `_DCC_=1` is always defined.
+
+### Measuring the stack an app needs
+
+The repo ships a `stacksize` helper that builds your app with `-fstack-check`
+forced on and sweeps the `-stack` reserve upward until it runs without tripping
+the guard, then prints the minimum and a recommended value with headroom. Run it
+against an app/test name (and pass any program arguments after `--`):
+
+=== "macOS / Linux"
+
+    ```sh
+    scripts/stacksize.sh triangle          # simple app
+    scripts/stacksize.sh cobint -- e.cob   # app that needs a data-file argument
+    ```
+
+=== "Windows"
+
+    ```bat
+    scripts\stacksize.bat triangle
+    scripts\stacksize.bat cobint -- e.cob
+    ```
+
+Both honour the same `START` / `STEP` / `MAX` / `MODE` / `EMU` environment
+variables; see [`scripts/README.md`](https://github.com/davidly/dcc/blob/main/scripts/README.md)
+for the full reference.
 
 ## Including headers
 
@@ -184,5 +219,6 @@ Include the standard headers as usual:
 CP/M loads `.COM` files in just one way. BSS begins immediately after the loaded
 image, and the loader sets `SP` to the highest free byte. The heap grows on
 demand between the end of BSS and the bottom of the stack. Because there is no
-guard between them, size the stack deliberately with `-stack` for programs with
-deep recursion or large frames.
+guard between them by default, size the stack deliberately with `-stack` for
+programs with deep recursion or large frames — or build with `-fstack-check`
+(above) to turn an overflow into a clean `?stack overflow` exit.

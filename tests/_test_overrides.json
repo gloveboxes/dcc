@@ -18,6 +18,8 @@
     { "name": "spsmash", "ignore": true },
     { "name": "eu", "ignore": true },
     { "name": "sieveu", "ignore": true },
-    { "name": "tttu", "ignore": true }
+    { "name": "tttu", "ignore": true },
+    { "name": "a1", "ignore": true },
+    { "name": "m6502", "ignore": true }
   ]
 }

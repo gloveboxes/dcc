@@ -77,20 +77,72 @@ void bad_address( address ) uint16_t address;
     exit( 1 );
 }
 
-void set_nz( x ) uint8_t x;
-{
-    cpu.fNegative = ( (int8_t) x < 0 );
-    cpu.fZero = !x;
-}
+extern void set_nz();
 
-uint8_t * get_mem( address ) uint16_t address;
-{
-    uint8_t * base;
-    base = mem_base[ address >> 12 ];
-    if ( 0 == base )
-        bad_address( address );
-    return base + address;
-}
+#asm
+	; set_nz( uint8_t x ) -- optimized Z80
+	; Sets cpu.fNegative = ((int8_t)x < 0) and cpu.fZero = !x.
+	; arg: IX+4 = x;  trashes A, B
+	public _set_nz
+_set_nz:
+	push ix
+	ld ix,0
+	add ix,sp
+	ld b,(ix+4)		; b = x (save for both flag computes)
+	ld a,b
+	and 080h		; isolate sign bit: 0x80 if x<0 (signed), 0 otherwise
+	rlca			; rotate bit7 to bit0: a = 1 if negative, 0 if not
+	ld (_cpu+7),a		; cpu.fNegative
+	ld a,b
+	sub 1			; carry set iff x == 0 (unsigned borrow from 0-1)
+	sbc a,a			; a = 0xff if x==0, else 0
+	and 1			; a = 1 if x==0, else 0
+	ld (_cpu+11),a		; cpu.fZero
+	ld sp,ix
+	pop ix
+	ret
+#endasm
+
+#asm
+	; get_mem( uint16_t address ) -> uint8_t * -- optimized Z80
+	; Returns mem_base[address >> 12] + address.
+	; Calls bad_address(address) (no return) if base is NULL.
+	; args: IX+4/5 = address (low/high);  returns HL = base + address
+	public _get_mem
+_get_mem:
+	push ix
+	ld ix,0
+	add ix,sp
+	ld a,(ix+5)		; high byte of address
+	rrca			; rotate right 4: moves high nibble to low nibble
+	rrca
+	rrca
+	rrca
+	and 0fh			; a = address >> 12, range 0..15
+	add a,a			; word offset: each mem_base entry is 2 bytes
+	ld l,a
+	ld h,0
+	ld de,_mem_base
+	add hl,de		; HL = &mem_base[address >> 12]
+	ld e,(hl)
+	inc hl
+	ld d,(hl)		; DE = base = mem_base[address >> 12]
+	ld a,d
+	or e			; Z if base == NULL
+	jp z,_get_mem_bad
+	ld l,(ix+4)
+	ld h,(ix+5)
+	add hl,de		; HL = base + address
+	ld sp,ix
+	pop ix
+	ret
+_get_mem_bad:
+	ld l,(ix+4)
+	ld h,(ix+5)
+	push hl			; pass address to bad_address()
+	call _bad_address	; never returns (calls exit(1))
+	ret
+#endasm
 
 /* I wish these were inline functions but old C compilers can't do that */
 #define push( x ) ( * ( (uint8_t *) m_0000 + 0x0100 + cpu.sp-- ) = ( x ) )

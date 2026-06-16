@@ -24,6 +24,14 @@ heavyweights.
   using that function in a program that otherwise wouldn't need it.
 - **pulls in** — the extra runtime blocks added beyond the baseline.
 
+!!! note "Symbols are internal runtime labels"
+    The **Symbol** column lists the *internal* assembler label, not the C name
+    you call. For example `__stchk` is the **stack-overflow guard** linked by
+    `-fstack-check`, `__mlh` is the `malloc` heap helper, and `__pf_run` is the
+    shared `printf` engine. Searching this page for a feature word such as
+    "stack" or "printf" may not match the symbol — look for the corresponding
+    `__` label instead (the *pulls in* column names related ones).
+
 <!-- DCCRTL-SIZE-TABLES -->
 
 ## Regenerating locally

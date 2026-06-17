@@ -63,6 +63,58 @@ function Invoke-Checked {
     }
 }
 
+function Get-WindowsBuildToolsHelp {
+        @"
+Could not find MSVC build tools.
+
+Install one of these, then rerun this script:
+    winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait"
+    winget install --id Microsoft.VisualStudio.2022.Community -e
+
+If Visual Studio is already installed, open Visual Studio Installer and add:
+    Desktop development with C++
+
+This script looks for vcvars64.bat and requires the MSVC x64 C++ toolchain.
+"@
+}
+
+function Get-UnixBuildToolsHelp {
+        param([string]$Compiler)
+
+        if ($IsMacOS) {
+                return @"
+C compiler '$Compiler' was not found.
+
+Install Apple's Command Line Tools, then rerun this script:
+    xcode-select --install
+
+After installation, verify the compiler is available:
+    clang --version
+
+You can also pass a compiler explicitly:
+    pwsh ./scripts/build-dcc.ps1 -CC clang
+"@
+        }
+
+        return @"
+C compiler '$Compiler' was not found.
+
+Install a C build toolchain, then rerun this script. Common Linux commands:
+    Debian/Ubuntu: sudo apt update && sudo apt install build-essential
+    Fedora:        sudo dnf groupinstall "Development Tools"
+    RHEL/CentOS:   sudo dnf groupinstall "Development Tools"
+    Arch:          sudo pacman -S base-devel
+    openSUSE:      sudo zypper install -t pattern devel_C_C++
+    Alpine:        sudo apk add build-base
+
+After installation, verify the compiler is available:
+    gcc --version
+
+You can also pass a compiler explicitly:
+    pwsh ./scripts/build-dcc.ps1 -CC clang
+"@
+}
+
 function Get-MsvcVarsPath {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
@@ -96,7 +148,7 @@ function Get-MsvcVarsPath {
 function Initialize-Msvc {
     $vcvars = Get-MsvcVarsPath
     if (-not $vcvars) {
-        throw "Could not find MSVC vcvars64.bat. Please ensure Visual Studio with C++ tools is installed."
+        throw (Get-WindowsBuildToolsHelp)
     }
 
     Write-Host "Found MSVC: $vcvars"
@@ -207,9 +259,14 @@ function Build-UnixNative {
     Remove-MisplacedArtifacts
 
     $compiler = Get-UnixCompiler
+    $compilerCommand = Get-Command $compiler -ErrorAction SilentlyContinue
+    if (-not $compilerCommand) {
+        throw (Get-UnixBuildToolsHelp $compiler)
+    }
+
     $compilerVersion = & $compiler --version 2>&1 | Select-Object -First 1
     if ($LASTEXITCODE -ne 0) {
-        throw "C compiler '$compiler' was not found. Install clang/gcc or pass -CC <compiler>."
+        throw (Get-UnixBuildToolsHelp $compiler)
     }
     Write-Host "C compiler: $compilerVersion"
 

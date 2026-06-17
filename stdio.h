@@ -43,6 +43,7 @@ void perror(const char *s);
 
 /* Console / formatted input */
 int getchar(void);
+char *gets(char *s);
 int scanf(const char *format, ...);
 
 /* Non-echoing / polling console input (compiler maps kbhit->__kbht, getch->__gtch) */

@@ -6,7 +6,7 @@
  *   - 80x24 VT-100-ish console.
  *   - getch() is blocking, no echo.
  *   - kbhit() polls for pending input.
- *   - ^C or ^Q quits at any time.
+ *   - ESC, ^C, or ^Q quits at any time.
  *
  * Controls:
  *   ^E / arrow up / W      up
@@ -14,7 +14,7 @@
  *   ^S / arrow left / A    left
  *   ^D / arrow right / D   right
  *   Space                  pause
- *   ^C or ^Q               quit
+ *   ESC ^C or ^Q           quit
  *
  * The code avoids host clocks.  At startup it asks the user to press a key
  * roughly once per second three times and uses the amount of busy looping
@@ -95,6 +95,7 @@ static void vt_clear()
     outstr("\033[0m");
     outstr("\033[2J");
     outstr("\033[1;1H");
+    outstr("\033[?25h"); // show the cursor
     fflush(stdout);
 }
 
@@ -139,7 +140,7 @@ static int next_poll_key()
 static int is_quit_key(k)
 int k;
 {
-    return k == KEY_CTRL_C || k == KEY_CTRL_Q || k == 'q' || k == 'Q';
+    return k == KEY_CTRL_C || k == KEY_CTRL_Q || k == 'q' || k == 'Q' || k == 27;
 }
 
 static void update_status(msg)
@@ -524,6 +525,7 @@ char **argv;
     init_game();
     place_food();
     full_redraw("playing");
+    outstr("\033[?25l"); // hide the cursor
     game_loop();
 
     if (game_over == 2) update_status("you filled the board - winner!");

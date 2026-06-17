@@ -115,7 +115,7 @@ for %%a in (%_applist%) do (
     ) else if "%%a"=="fint" (
         pushd "%_builddir%" && %_emulator% %%a e.f >>"%outabs%" & popd
     ) else if "%%a"=="cint" (
-        pushd "%_builddir%" && %_emulator% %%a eu.c >>"%outabs%" & popd
+        pushd "%_builddir%" && %_emulator% %%a eu.cin >>"%outabs%" & popd
     ) else if "%%a"=="targs" (
         pushd "%_builddir%" && %_emulator% %%a a bb ccc dddd eeeee >>"%outabs%" & popd
     ) else (
@@ -170,9 +170,9 @@ if exist "tests\HELLO.BAS" (
 ) else if exist "HELLO.BAS" (
     copy /Y "HELLO.BAS" "%_builddir%\HELLO.BAS" >nul
 )
-if exist "tests\EU.C" (
-    copy /Y "tests\EU.C" "%_builddir%\EU.C" >nul
-) else if exist "EU.C" (
-    copy /Y "EU.C" "%_builddir%\EU.C" >nul
+if exist "tests\EU.CIN" (
+    copy /Y "tests\EU.CIN" "%_builddir%\EU.CIN" >nul
+) else if exist "EU.CIN" (
+    copy /Y "EU.CIN" "%_builddir%\EU.CIN" >nul
 )
 exit /b

@@ -53,7 +53,7 @@ run_args() {
         adaint) echo "e.ada" ;;
         bint) echo "e.bas" ;;
         fint) echo "e.f" ;;
-        cint) echo "eu.c" ;;
+        cint) echo "eu.cin" ;;
         wumpus|tchess) echo "-c" ;;
         a1) echo "-l:HELLO.BAS" ;;
         targs) echo "a bb ccc dddd eeeee" ;;

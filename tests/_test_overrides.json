@@ -7,7 +7,7 @@
     { "name": "adaint", "args": "e.ada" },
     { "name": "bint", "args": "e.bas" },
     { "name": "fint", "args": "e.f" },
-    { "name": "cint", "args": "eu.c" },
+    { "name": "cint", "args": "eu.cin" },
     { "name": "a1", "args": "-l:HELLO.BAS" },
     { "name": "wumpus", "args": "-c" },
     { "name": "tchess", "args": "-c" },
@@ -17,7 +17,6 @@
     { "name": "na", "ignore": true },
     { "name": "tc89fltb", "ignore": true },
     { "name": "spsmash", "ignore": true },
-    { "name": "eu", "ignore": true },
     { "name": "sieveu", "ignore": true },
     { "name": "tttu", "ignore": true },
     { "name": "m6502", "ignore": true }

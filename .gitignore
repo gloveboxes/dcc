@@ -9,8 +9,11 @@
 
 # Built host toolchain binaries
 /dcc
+/dcc.exe
 /dccpeep
+/dccpeep.exe
 /dccrtlstrip
+/dccrtlstrip.exe
 /build
 /test_dcc.txt
 /test_dccu.txt

@@ -1,0 +1,273 @@
+#Requires -Version 7
+<#
+.SYNOPSIS
+Build dcc, dccpeep, and dccrtlstrip on Windows, macOS, and Linux.
+
+.DESCRIPTION
+Compiles the host tools with the native compiler for the current platform:
+MSVC on Windows, clang on macOS, and gcc on Linux by default. Build artifacts
+are placed under build/; final commands are placed in the repository root.
+
+.PARAMETER OutputPath
+  Output directory for build artifacts. Defaults to ./build.
+
+.PARAMETER CC
+  Override the C compiler used on macOS/Linux. Ignored on Windows, where MSVC
+  cl.exe is used.
+
+.EXAMPLE
+  pwsh ./scripts/build-dcc.ps1
+  pwsh ./scripts/build-dcc.ps1 -OutputPath ./build-custom
+  pwsh ./scripts/build-dcc.ps1 -CC clang
+#>
+
+param(
+    [string]$OutputPath = "build",
+    [string]$CC
+)
+
+$ErrorActionPreference = "Stop"
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).ProviderPath
+if ([System.IO.Path]::IsPathRooted($OutputPath)) {
+    $outputRoot = [System.IO.Path]::GetFullPath($OutputPath)
+} else {
+    $outputRoot = Join-Path $repoRoot $OutputPath
+}
+
+if (-not (Test-Path $outputRoot)) {
+    New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+}
+
+$outputPathDisplay = Resolve-Path -Path $outputRoot -Relative
+
+function New-BuildDirectory {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    }
+}
+
+function Invoke-Checked {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments,
+        [string]$Description
+    )
+
+    Write-Host ($FilePath + " " + ($Arguments -join " "))
+    & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed with exit code $LASTEXITCODE"
+    }
+}
+
+function Get-MsvcVarsPath {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ($installPath) {
+            $candidate = Join-Path $installPath "VC\Auxiliary\Build\vcvars64.bat"
+            if (Test-Path $candidate) {
+                return $candidate
+            }
+        }
+    }
+
+    $versions = @("18", "2022", "2019", "17")
+    $editions = @("Community", "Professional", "Enterprise", "BuildTools")
+    $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
+
+    foreach ($root in $roots) {
+        foreach ($version in $versions) {
+            foreach ($edition in $editions) {
+                $candidate = Join-Path $root "Microsoft Visual Studio\$version\$edition\VC\Auxiliary\Build\vcvars64.bat"
+                if (Test-Path $candidate) {
+                    return $candidate
+                }
+            }
+        }
+    }
+
+    return $null
+}
+
+function Initialize-Msvc {
+    $vcvars = Get-MsvcVarsPath
+    if (-not $vcvars) {
+        throw "Could not find MSVC vcvars64.bat. Please ensure Visual Studio with C++ tools is installed."
+    }
+
+    Write-Host "Found MSVC: $vcvars"
+    $envBlock = & cmd /c "`"$vcvars`" >nul 2>&1 && set"
+    foreach ($line in $envBlock) {
+        if ($line -match "^([^=]+)=(.*)$") {
+            [Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
+        }
+    }
+
+    $clVersion = cl 2>&1 | Select-Object -First 1
+    if ($LASTEXITCODE -ne 0) {
+        throw "MSVC cl.exe not found in PATH after vcvars setup."
+    }
+    Write-Host "MSVC cl.exe: $clVersion"
+}
+
+function Remove-MisplacedArtifacts {
+    Write-Host "Cleaning previous misplaced build artifacts..."
+
+    $patterns = if ($IsWindows) {
+        @("*.obj", "*.cod", "*.pdb", "*.ilk", "*.asm")
+    } else {
+        @("*.o")
+    }
+
+    foreach ($pattern in $patterns) {
+        Get-ChildItem -Path $repoRoot -Filter $pattern -File -ErrorAction SilentlyContinue | Remove-Item -Force
+        Get-ChildItem -Path (Join-Path $repoRoot "src") -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue | Remove-Item -Force
+    }
+}
+
+function Build-WindowsMsvc {
+    Initialize-Msvc
+    Remove-MisplacedArtifacts
+
+    $cflags = @(
+        "/nologo",
+        "/GS-",
+        "/GL",
+        "/Oti2",
+        "/Ob3",
+        "/Qpar",
+        "/FAsc",
+        "/Zi",
+        "/std:c11"
+    )
+    $linkerFlags = @("user32.lib", "ntdll.lib", "/OPT:REF")
+
+    $dccOut = Join-Path $repoRoot "dcc.exe"
+    $dccObjDir = Join-Path $outputRoot "dcc"
+    New-BuildDirectory $dccObjDir
+
+    Write-Host "`n=== Building dcc compiler ==="
+    Push-Location (Join-Path $repoRoot "src\dcc")
+    try {
+        $sources = Get-ChildItem -Path . -Filter "*.c" | ForEach-Object { $_.Name }
+        $arguments = @($cflags) + @(
+            "/I.",
+            "/Fo:$dccObjDir\",
+            "/Fa$dccObjDir\",
+            "/Fd:$dccObjDir\dcc.pdb",
+            "/Fe:$dccOut"
+        ) + $sources + @("/link") + $linkerFlags + @("/PDB:$dccObjDir\dcc-link.pdb")
+        Invoke-Checked "cl" $arguments "dcc compilation"
+    } finally {
+        Pop-Location
+    }
+
+    $tools = @(
+        @{ Name = "dccpeep"; Source = Join-Path $repoRoot "src\dccpeep\dccpeep.c" },
+        @{ Name = "dccrtlstrip"; Source = Join-Path $repoRoot "src\dccrtlstrip\dccrtlstrip.c" }
+    )
+
+    foreach ($tool in $tools) {
+        Write-Host "`n=== Building $($tool.Name) ==="
+        $toolObjDir = Join-Path $outputRoot $tool.Name
+        $toolOut = Join-Path $repoRoot "$($tool.Name).exe"
+        New-BuildDirectory $toolObjDir
+
+        $arguments = @($tool.Source) + $cflags + @(
+            "/Fo:$toolObjDir\",
+            "/Fa$toolObjDir\",
+            "/Fd:$toolObjDir\$($tool.Name).pdb",
+            "/Fe:$toolOut",
+            "/link"
+        ) + $linkerFlags + @("/PDB:$toolObjDir\$($tool.Name)-link.pdb")
+        Invoke-Checked "cl" $arguments "$($tool.Name) compilation"
+    }
+
+    return @($dccOut, (Join-Path $repoRoot "dccpeep.exe"), (Join-Path $repoRoot "dccrtlstrip.exe"))
+}
+
+function Get-UnixCompiler {
+    if ($CC) {
+        return $CC
+    }
+    if ($env:CC) {
+        return $env:CC
+    }
+    if ($IsMacOS) {
+        return "clang"
+    }
+    return "gcc"
+}
+
+function Build-UnixNative {
+    Remove-MisplacedArtifacts
+
+    $compiler = Get-UnixCompiler
+    $compilerVersion = & $compiler --version 2>&1 | Select-Object -First 1
+    if ($LASTEXITCODE -ne 0) {
+        throw "C compiler '$compiler' was not found. Install clang/gcc or pass -CC <compiler>."
+    }
+    Write-Host "C compiler: $compilerVersion"
+
+    $baseCflags = if ($env:CFLAGS) {
+        @($env:CFLAGS -split "\s+" | Where-Object { $_ })
+    } else {
+        @("-std=c89", "-Wall", "-Wextra", "-O2")
+    }
+    if ($IsMacOS -and ($baseCflags -notcontains "-fno-common")) {
+        $baseCflags += "-fno-common"
+    }
+
+    Write-Host "`n=== Building dcc compiler ==="
+    $dccObjDir = Join-Path $outputRoot "dcc"
+    $dccOut = Join-Path $repoRoot "dcc"
+    New-BuildDirectory $dccObjDir
+
+    $dccSources = Get-ChildItem -Path (Join-Path $repoRoot "src\dcc") -Filter "*.c" | Sort-Object Name
+    $dccObjects = @()
+    foreach ($source in $dccSources) {
+        $object = Join-Path $dccObjDir ([System.IO.Path]::ChangeExtension($source.Name, ".o"))
+        $dccObjects += $object
+        $arguments = @($baseCflags) + @("-I", (Join-Path $repoRoot "src\dcc"), "-c", $source.FullName, "-o", $object)
+        Invoke-Checked $compiler $arguments "compiling $($source.Name)"
+    }
+    Invoke-Checked $compiler (@($baseCflags) + $dccObjects + @("-o", $dccOut)) "linking dcc"
+
+    $tools = @(
+        @{ Name = "dccpeep"; Source = Join-Path $repoRoot "src\dccpeep\dccpeep.c" },
+        @{ Name = "dccrtlstrip"; Source = Join-Path $repoRoot "src\dccrtlstrip\dccrtlstrip.c" }
+    )
+
+    foreach ($tool in $tools) {
+        Write-Host "`n=== Building $($tool.Name) ==="
+        $toolObjDir = Join-Path $outputRoot $tool.Name
+        $toolObject = Join-Path $toolObjDir "$($tool.Name).o"
+        $toolOut = Join-Path $repoRoot $tool.Name
+        New-BuildDirectory $toolObjDir
+
+        Invoke-Checked $compiler (@($baseCflags) + @("-c", $tool.Source, "-o", $toolObject)) "compiling $($tool.Name)"
+        Invoke-Checked $compiler (@($baseCflags) + @($toolObject, "-o", $toolOut)) "linking $($tool.Name)"
+    }
+
+    return @($dccOut, (Join-Path $repoRoot "dccpeep"), (Join-Path $repoRoot "dccrtlstrip"))
+}
+
+Write-Host "Build artifacts will go to: $outputPathDisplay"
+Write-Host "Commands will be placed in: $repoRoot"
+
+$executables = if ($IsWindows) {
+    Build-WindowsMsvc
+} else {
+    Build-UnixNative
+}
+
+Write-Host "`n=== Build complete ==="
+Write-Host "Commands:"
+foreach ($executable in $executables) {
+    Write-Host "  $executable"
+}
+Write-Host "Build artifacts: $outputPathDisplay"

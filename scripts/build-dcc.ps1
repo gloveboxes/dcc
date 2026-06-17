@@ -264,19 +264,34 @@ function Build-UnixNative {
         throw (Get-UnixBuildToolsHelp $compiler)
     }
 
-    $compilerVersion = & $compiler --version 2>&1 | Select-Object -First 1
+    $compilerVersionOutput = & $compiler --version 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw (Get-UnixBuildToolsHelp $compiler)
     }
+    $compilerVersion = $compilerVersionOutput | Select-Object -First 1
     Write-Host "C compiler: $compilerVersion"
 
     $baseCflags = if ($env:CFLAGS) {
         @($env:CFLAGS -split "\s+" | Where-Object { $_ })
     } else {
-        @("-std=c89", "-Wall", "-Wextra", "-O2")
+        # Host build tools (run on the dev machine, not the Z80 target), so
+        # gnu89 is fine and lets glibc declare snprintf/etc. under C89.
+        @("-std=gnu89", "-Wall", "-Wextra", "-O2")
     }
     if ($IsMacOS -and ($baseCflags -notcontains "-fno-common")) {
         $baseCflags += "-fno-common"
+    }
+    # gcc + glibc on Linux emit warnings that clang (macOS) and MSVC (Windows)
+    # do not: a gcc-only misleading-indentation warning on intentional
+    # "if (cond) continue; next;" one-liners, plus conservative _FORTIFY_SOURCE
+    # heuristics under -O2. Silence those toolchain-specific diagnostics here.
+    $compilerIsGcc = ($compilerVersionOutput -join "`n") -match "(?im)^.*\bgcc\b"
+    if ($compilerIsGcc -and -not $env:CFLAGS) {
+        $baseCflags += @(
+            "-Wno-misleading-indentation",
+            "-Wno-format-overflow",
+            "-Wno-stringop-truncation"
+        )
     }
 
     Write-Host "`n=== Building dcc compiler ==="

@@ -1,0 +1,5 @@
+# DATA.TXT is read by test programs and must have LF line endings to avoid
+# spurious output differences when CP/M text-mode I/O is involved. Lock it to LF
+# on all platforms so a Windows checkout with core.autocrlf=true does not rewrite
+# it to CRLF.
+DATA.TXT -text eol=lf

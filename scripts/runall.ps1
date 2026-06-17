@@ -173,18 +173,46 @@ function Get-IgnoreApp {
     return ($appOverrides.ContainsKey($app) -and $appOverrides[$app]['ignore'])
 }
 
-# Stage CP/M data fixtures (E.*) into the build dir. Some interpreters read
-# these files from the current working directory, and apps are run from the
-# build dir (below), so the fixtures must live there too.
+# CP/M data fixtures are every file in tests/ that is not a C source or repo
+# metadata (.c, .json, .md, dotfiles). This is filesystem-independent: it does
+# not depend on the case of the stored filename, so it behaves the same on
+# case-sensitive (Linux) and case-insensitive (macOS, Windows) checkouts.
+function Get-FixtureFiles {
+    if (-not (Test-Path "tests" -PathType Container)) { return @() }
+    return @(Get-ChildItem -Path "tests" -File |
+        Where-Object { $_.Name -notlike '.*' -and $_.Extension -notin '.c', '.json', '.md' } |
+        ForEach-Object { $_.Name })
+}
+
+# Stage every CP/M data fixture into the shared build dir (serial mode). Some
+# interpreters read these files from the current working directory, and apps are
+# run from the build dir (below), so the fixtures must live there too.
 function Stage-FixtureInputs {
-    $fixtures = @("E.PAS", "E.COB", "E.FOR", "E.ADA", "E.BAS", "E.F", "eu.c", "DATA.TXT")
-    foreach ($f in $fixtures) {
-        $src = Join-Path "tests" $f
-        if (Test-Path $src) {
-            Copy-Item -Path $src -Destination (Join-Path $BuildDir $f) -Force -ErrorAction SilentlyContinue
-        }
-        elseif (Test-Path $f) {
-            Copy-Item -Path $f -Destination (Join-Path $BuildDir $f) -Force -ErrorAction SilentlyContinue
+    foreach ($f in $fixtureList) {
+        Copy-FixtureUpper -Name $f -DestDir $BuildDir
+    }
+}
+
+# Stage one CP/M data fixture into a run directory.
+#
+# CP/M (and the ntvcm emulator) uppercases every filename a program opens, so a
+# fixture must be present under its UPPERCASE name in the run directory to be
+# found on case-sensitive filesystems (Linux). macOS and Windows filesystems are
+# case-insensitive, so the uppercase name resolves there too. The source file is
+# resolved case-insensitively, so a single canonical copy in tests/ (in any
+# case, e.g. lowercase eu.c) is sufficient on every platform -- no need to commit
+# duplicate uppercase copies (which also collide in git on case-insensitive
+# checkouts).
+function Copy-FixtureUpper {
+    param([string]$Name, [string]$DestDir)
+    $dest = Join-Path $DestDir ($Name.ToUpper())
+    foreach ($dir in @("tests", ".")) {
+        if (-not (Test-Path $dir -PathType Container)) { continue }
+        $src = Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ieq $Name } | Select-Object -First 1
+        if ($src) {
+            Copy-Item -LiteralPath $src.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
+            return
         }
     }
 }
@@ -217,13 +245,7 @@ function Invoke-AppTest {
         New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
     }
     foreach ($f in $Fixtures) {
-        $src = Join-Path "tests" $f
-        if (Test-Path $src) {
-            Copy-Item -Path $src -Destination (Join-Path $BuildDir $f) -Force -ErrorAction SilentlyContinue
-        }
-        elseif (Test-Path $f) {
-            Copy-Item -Path $f -Destination (Join-Path $BuildDir $f) -Force -ErrorAction SilentlyContinue
-        }
+        Copy-FixtureUpper -Name $f -DestDir $BuildDir
     }
 
     foreach ($buildMode in $Modes) {
@@ -384,7 +406,10 @@ $skipped = 0
 $failedApps = @()
 
 $modes = if ($Mode -eq "both") { @("peep", "nopeep") } else { @($Mode) }
-$fixtureList = @("E.PAS", "E.COB", "E.FOR", "E.ADA", "E.BAS", "E.F", "eu.c", "DATA.TXT")
+
+# The CP/M data fixtures are derived once from the tests/ directory (see
+# Get-FixtureFiles). Every app gets the same set staged into its run dir.
+$fixtureList = @(Get-FixtureFiles)
 
 # Build the list of work items up front (resolving per-app args/stack in the
 # parent), so parallel workers don't need the $appOverrides table.
@@ -442,6 +467,7 @@ if ($Parallel) {
     $maPath       = (Join-Path $PSScriptRoot "ma.ps1")
     $tmbDef       = ${function:Test-MatchesBaseline}.ToString()
     $iatDef       = ${function:Invoke-AppTest}.ToString()
+    $cfuDef       = ${function:Copy-FixtureUpper}.ToString()
     $stackCheckOn = [bool]$StackCheck
 
     # ForEach-Object -Parallel streams each worker's result as it completes, so
@@ -455,6 +481,7 @@ if ($Parallel) {
         # Bring the needed functions into this runspace.
         . $using:maPath                                   # Invoke-MaBuild, ConvertTo-CRLF
         ${function:Test-MatchesBaseline} = $using:tmbDef
+        ${function:Copy-FixtureUpper}    = $using:cfuDef
         ${function:Invoke-AppTest}       = $using:iatDef
 
         $appBuildDir = Join-Path $using:BuildDir $item.App

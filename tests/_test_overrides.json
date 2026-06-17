@@ -19,6 +19,6 @@
     { "name": "spsmash", "ignore": true },
     { "name": "sieveu", "ignore": true },
     { "name": "tttu", "ignore": true },
-    { "name": "m6502", "ignore": true }
+    { "name": "snake", "ignore": true },
   ]
 }

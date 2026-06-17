@@ -23,10 +23,13 @@ are placed under build/; final commands are placed in the repository root.
 
 param(
     [string]$OutputPath = "build",
-    [string]$CC
+    [string]$CC,
+    [switch]$VerboseCommands
 )
 
 $ErrorActionPreference = "Stop"
+
+$script:VerboseCommands = [bool]$VerboseCommands
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).ProviderPath
 if ([System.IO.Path]::IsPathRooted($OutputPath)) {
@@ -56,7 +59,11 @@ function Invoke-Checked {
         [string]$Description
     )
 
-    Write-Host ($FilePath + " " + ($Arguments -join " "))
+    if ($script:VerboseCommands) {
+        Write-Host ($FilePath + " " + ($Arguments -join " "))
+    } elseif ($Description) {
+        Write-Host "  $Description"
+    }
     & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) {
         throw "$Description failed with exit code $LASTEXITCODE"
@@ -276,7 +283,8 @@ function Build-UnixNative {
     } else {
         # Host build tools (run on the dev machine, not the Z80 target), so
         # gnu89 is fine and lets glibc declare snprintf/etc. under C89.
-        @("-std=gnu89", "-Wall", "-Wextra", "-O2")
+        # -w suppresses compiler warnings for a quiet default build.
+        @("-std=gnu89", "-w", "-O2")
     }
     if ($IsMacOS -and ($baseCflags -notcontains "-fno-common")) {
         $baseCflags += "-fno-common"

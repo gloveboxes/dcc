@@ -98,15 +98,20 @@ clean_one() {
 }
 
 stage_fixture_inputs() {
-    # Some tests read CP/M data files (E.*). Since test binaries run from
-    # build/, ensure those files are present there. Prefer tests/ and keep
-    # root fallback for compatibility.
-    for f in E.PAS E.COB E.FOR E.ADA HELLO.BAS E.BAS E.F EU.C; do
-        if [ -f "tests/$f" ]; then
-            cp -f "tests/$f" "${BUILD_DIR}/$f"
-        elif [ -f "$f" ]; then
-            cp -f "$f" "${BUILD_DIR}/$f"
-        fi
+    # CP/M data fixtures are every file in tests/ that is not a C source or repo
+    # metadata (*.c, *.json, *.md, dotfiles). This is filesystem-independent: it
+    # does not depend on the case of the stored filename, so it behaves the same
+    # on case-sensitive (Linux) and case-insensitive (macOS) checkouts. CP/M
+    # uppercases every filename a program opens, so stage each under its
+    # UPPERCASE name; a single canonical copy in tests/ (any case) suffices.
+    for src in tests/*; do
+        [ -f "$src" ] || continue
+        base="$(basename "$src")"
+        case "$base" in
+            *.c|*.json|*.md|.*) continue ;;
+        esac
+        upper="$(printf '%s' "$base" | tr '[:lower:]' '[:upper:]')"
+        cp -f "$src" "${BUILD_DIR}/$upper"
     done
 }
 

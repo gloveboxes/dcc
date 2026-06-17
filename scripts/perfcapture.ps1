@@ -74,15 +74,33 @@ function Get-IgnoreApp {
     return $false
 }
 
-# Stage fixture input files
+# CP/M data fixtures are every file in tests/ that is not a C source or repo
+# metadata (.c, .json, .md, dotfiles). This is filesystem-independent: it does
+# not depend on the case of the stored filename, so it behaves the same on
+# case-sensitive (Linux) and case-insensitive (macOS, Windows) checkouts.
+function Get-FixtureFiles {
+    $testsDir = Join-Path $repoRoot "tests"
+    if (-not (Test-Path $testsDir -PathType Container)) { return @() }
+    return @(Get-ChildItem -Path $testsDir -File |
+        Where-Object { $_.Name -notlike '.*' -and $_.Extension -notin '.c', '.json', '.md' } |
+        ForEach-Object { $_.Name })
+}
+
+# Stage all CP/M data fixtures into the build dir. CP/M uppercases every filename
+# a program opens, so stage each under its UPPERCASE name (resolving the source
+# file case-insensitively). This works on case-sensitive (Linux) and
+# case-insensitive (macOS, Windows) filesystems from a single canonical copy.
 function Stage-FixtureInputs {
-    $fixtures = @("E.PAS", "E.COB", "E.FOR", "E.ADA", "E.BAS", "E.F", "eu.c")
-    foreach ($f in $fixtures) {
-        if (Test-Path "tests\$f") {
-            Copy-Item -Path "tests\$f" -Destination "$BuildDir\$f" -Force -ErrorAction SilentlyContinue
-        }
-        elseif (Test-Path $f) {
-            Copy-Item -Path $f -Destination "$BuildDir\$f" -Force -ErrorAction SilentlyContinue
+    foreach ($f in (Get-FixtureFiles)) {
+        $dest = Join-Path $BuildDir ($f.ToUpper())
+        foreach ($dir in @((Join-Path $repoRoot "tests"), $repoRoot)) {
+            if (-not (Test-Path $dir -PathType Container)) { continue }
+            $src = Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -ieq $f } | Select-Object -First 1
+            if ($src) {
+                Copy-Item -LiteralPath $src.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
+                break
+            }
         }
     }
 }

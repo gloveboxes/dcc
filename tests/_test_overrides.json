@@ -8,6 +8,7 @@
     { "name": "bint", "args": "e.bas" },
     { "name": "fint", "args": "e.f" },
     { "name": "cint", "args": "eu.c" },
+    { "name": "a1", "args": "-l:HELLO.BAS" },
     { "name": "wumpus", "args": "-c" },
     { "name": "tchess", "args": "-c" },
     { "name": "targs", "args": "a bb ccc dddd eeeee" },
@@ -19,7 +20,6 @@
     { "name": "eu", "ignore": true },
     { "name": "sieveu", "ignore": true },
     { "name": "tttu", "ignore": true },
-    { "name": "a1", "ignore": true },
     { "name": "m6502", "ignore": true }
   ]
 }

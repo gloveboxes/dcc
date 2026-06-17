@@ -6,7 +6,7 @@
  *   - 80x24 VT-100-ish console.
  *   - getch() is blocking, no echo.
  *   - kbhit() polls for pending input.
- *   - ESC, ^C, or ^Q quits at any time.
+ *   - ^C, or ^Q quits at any time.
  *
  * Controls:
  *   ^E / arrow up / W      up
@@ -14,7 +14,7 @@
  *   ^S / arrow left / A    left
  *   ^D / arrow right / D   right
  *   Space                  pause
- *   ESC ^C or ^Q           quit
+ *   ^C or ^Q               quit
  *
  * The code avoids host clocks.  At startup it asks the user to press a key
  * roughly once per second three times and uses the amount of busy looping
@@ -140,7 +140,7 @@ static int next_poll_key()
 static int is_quit_key(k)
 int k;
 {
-    return k == KEY_CTRL_C || k == KEY_CTRL_Q || k == 'q' || k == 'Q' || k == 27;
+    return k == KEY_CTRL_C || k == KEY_CTRL_Q || k == 'q' || k == 'Q';
 }
 
 static void update_status(msg)

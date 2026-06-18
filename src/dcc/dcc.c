@@ -506,6 +506,20 @@ char *filter_active_preprocessor_source(long *lenp)
             word[wi] = 0;
         }
 
+        /* '##' at directive position: the token-paste operator is only valid
+         * inside a macro replacement list.  Diagnose and skip the line. */
+        if (word[0] == 0 && s < e && *s == '#') {
+            char filebuf[256];
+            int lno;
+            source_location_at(line_start, filebuf, sizeof(filebuf), &lno);
+            fprintf(stderr, "%s:%d: error: '##' is not a valid preprocessor directive\n",
+                    filebuf, lno);
+            errors++;
+            if (errors > 40) fatal("too many errors");
+            append_mem(&out, &out_len, &out_cap, "\n", 1);
+            continue;
+        }
+
         if (!strcmp(word, "line")) {
             if (active)
                 append_mem(&out, &out_len, &out_cap, src + line_start, p - line_start);
@@ -729,7 +743,38 @@ char *filter_active_preprocessor_source(long *lenp)
             continue;
         }
 
-        /* Unknown directives in active code are ignored but keep a newline. */
+        if (!strcmp(word, "warning")) {
+            if (active) {
+                char msg[256];
+                char filebuf[256];
+                int lno;
+                int mi;
+                while (s < e && (*s == ' ' || *s == '\t')) s++;
+                mi = 0;
+                while (s < e && mi < (int)sizeof(msg) - 1)
+                    msg[mi++] = *s++;
+                while (mi > 0 && (msg[mi-1] == ' ' || msg[mi-1] == '\t' || msg[mi-1] == '\r'))
+                    mi--;
+                msg[mi] = 0;
+                source_location_at(line_start, filebuf, sizeof(filebuf), &lno);
+                fprintf(stderr, "%s:%d: warning: #warning %s\n", filebuf, lno, msg);
+            }
+            append_mem(&out, &out_len, &out_cap, "\n", 1);
+            continue;
+        }
+
+        /* Unknown directives in inactive code are silently dropped.
+         * In active code, #pragma and the null directive are silently ignored;
+         * anything else is a hard error. */
+        if (active && word[0] != 0 && strcmp(word, "pragma") != 0) {
+            char filebuf[256];
+            int lno;
+            source_location_at(line_start, filebuf, sizeof(filebuf), &lno);
+            fprintf(stderr, "%s:%d: error: unknown preprocessor directive '#%s'\n",
+                    filebuf, lno, word);
+            errors++;
+            if (errors > 40) fatal("too many errors");
+        }
         append_mem(&out, &out_len, &out_cap, "\n", 1);
     }
 

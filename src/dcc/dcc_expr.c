@@ -833,12 +833,36 @@ int skip_lvalue_syntax(void)
      * real parser later failed near '='.
      */
     if (tok.kind == '(') {
+        long sls_save_p = posi;
+        long sls_save_ts = tok_start_pos;
+        int sls_save_ln = line_no;
+        int sls_save_tl = tok_line;
+        struct Token sls_save_tok = tok;
+
         next_token();
-        if (!skip_lvalue_syntax())
-            return 0;
-        if (tok.kind != ')')
-            return 0;
-        next_token();
+        if (skip_lvalue_syntax() && tok.kind == ')') {
+            next_token();
+            /* fall through to postfix loop */
+        } else {
+            /* Restore to '(' then depth-skip the group */
+            posi = sls_save_p;
+            tok_start_pos = sls_save_ts;
+            line_no = sls_save_ln;
+            tok_line = sls_save_tl;
+            tok = sls_save_tok;
+            depth = 1;
+            next_token();
+            while (tok.kind != TOK_EOF && depth > 0) {
+                if (tok.kind == '(' || tok.kind == '[') depth++;
+                else if (tok.kind == ')' || tok.kind == ']') depth--;
+                next_token();
+            }
+            if (depth != 0)
+                return 0;
+            /* After the group, require a postfix operator to be an lvalue */
+            if (tok.kind != TOK_ARROW && tok.kind != '.' && tok.kind != '[')
+                return 0;
+        }
     } else if (tok.kind == '*') {
         next_token();
         if (tok.kind == '(') {
@@ -1518,8 +1542,135 @@ void gen_lvalue_addr(int *ptype)
     }
 
     if (accept('(')) {
-        gen_lvalue_addr(ptype);
-        expect(')');
+        /* Lookahead: is the inner expression itself a valid lvalue? */
+        long pa_save_p = posi;
+        long pa_save_ts = tok_start_pos;
+        int pa_save_ln = line_no;
+        int pa_save_tl = tok_line;
+        struct Token pa_save_tok = tok;
+        int inner_is_lvalue = skip_lvalue_syntax() && tok.kind == ')';
+        posi = pa_save_p; tok_start_pos = pa_save_ts;
+        line_no = pa_save_ln; tok_line = pa_save_tl; tok = pa_save_tok;
+
+        {
+            int pa_hl_is_value;
+            if (inner_is_lvalue) {
+                gen_lvalue_addr(ptype);
+                expect(')');
+                pa_hl_is_value = 0;
+            } else {
+                gen_expr();
+                expect(')');
+                if (ptype) ptype[0] = g_expr_type;
+                pa_hl_is_value = 1;
+            }
+
+            {
+                int pa_is_array = 0;
+                int pa_array_index_count = 0;
+                int pa_fa_dimc = 0;
+                int pa_fa_dims[4];
+                int pa_cur_type;
+                int pa_field_is_array;
+                int pa_arrow;
+                int pa_elem_size;
+                long pa_const_index;
+
+                /* Initial subscript loop: handles (*ipp)[6] etc. */
+                while (accept('[')) {
+                    pa_cur_type = ptype ? *ptype : TYPE_INT;
+                    if (!pa_hl_is_value && type_ptr_depth(pa_cur_type) > 0)
+                        emit_load_from_hl(pa_cur_type);
+                    pa_hl_is_value = 0;
+
+                    if (try_parse_const_subscript(&pa_const_index)) {
+                        pa_elem_size = type_index_elem_size(pa_cur_type);
+                        emit_add_const_to_hl(pa_const_index * pa_elem_size);
+                    } else {
+                        int old_dead;
+                        emit("\tpush hl\n");
+                        old_dead = expr_result_dead;
+                        expr_result_dead = 0;
+                        gen_expr();
+                        expr_result_dead = old_dead;
+                        expect(']');
+                        pa_elem_size = type_index_elem_size(pa_cur_type);
+                        scale_hl_by_elem_size(pa_elem_size);
+                        emit("\tex de,hl\n");
+                        emit("\tpop hl\n");
+                        emit("\tadd hl,de\n");
+                    }
+                    if (ptype) ptype[0] = type_decay_ptr(pa_cur_type);
+                }
+
+                /* Field + subscript chain */
+                while (tok.kind == '.' || tok.kind == TOK_ARROW) {
+                    pa_arrow = tok.kind == TOK_ARROW;
+                    next_token();
+
+                    pa_cur_type = ptype ? *ptype : TYPE_INT;
+                    if (pa_hl_is_value && pa_arrow) {
+                        /* HL is the pointer value; use decayed type with no-load */
+                        pa_cur_type = apply_field_access_from_addr(
+                            type_decay_ptr(pa_cur_type), 0, &pa_field_is_array);
+                    } else {
+                        /* HL is address; use current type with arrow flag */
+                        pa_cur_type = apply_field_access_from_addr(
+                            pa_cur_type, pa_arrow, &pa_field_is_array);
+                    }
+                    pa_hl_is_value = 0;
+                    pa_is_array = pa_field_is_array;
+                    pa_array_index_count = 0;
+                    if (ptype) ptype[0] = pa_cur_type;
+
+                    snapshot_field_array_dims(&pa_fa_dimc, pa_fa_dims);
+                    while (accept('[')) {
+                        pa_cur_type = ptype ? *ptype : TYPE_INT;
+                        if (!pa_is_array && type_ptr_depth(pa_cur_type) > 0)
+                            emit_load_from_hl(pa_cur_type);
+
+                        if (try_parse_const_subscript(&pa_const_index)) {
+                            if (pa_is_array)
+                                pa_elem_size = field_array_index_stride(
+                                    type_size(pa_cur_type),
+                                    pa_fa_dimc, pa_fa_dims,
+                                    pa_array_index_count);
+                            else
+                                pa_elem_size = type_index_elem_size(pa_cur_type);
+                            emit_add_const_to_hl(pa_const_index * pa_elem_size);
+                        } else {
+                            int old_dead;
+                            emit("\tpush hl\n");
+                            old_dead = expr_result_dead;
+                            expr_result_dead = 0;
+                            gen_expr();
+                            expr_result_dead = old_dead;
+                            expect(']');
+                            if (pa_is_array)
+                                pa_elem_size = field_array_index_stride(
+                                    type_size(pa_cur_type),
+                                    pa_fa_dimc, pa_fa_dims,
+                                    pa_array_index_count);
+                            else
+                                pa_elem_size = type_index_elem_size(pa_cur_type);
+                            scale_hl_by_elem_size(pa_elem_size);
+                            emit("\tex de,hl\n");
+                            emit("\tpop hl\n");
+                            emit("\tadd hl,de\n");
+                        }
+
+                        if (pa_is_array) {
+                            pa_array_index_count++;
+                            if (pa_array_index_count >= pa_fa_dimc)
+                                pa_is_array = 0;
+                        } else {
+                            pa_cur_type = type_decay_ptr(pa_cur_type);
+                            if (ptype) ptype[0] = pa_cur_type;
+                        }
+                    }
+                }
+            }
+        }
         return;
     }
 
@@ -2764,6 +2915,8 @@ void gen_primary(void)
     current_field_bit_width = 0;
     current_field_bit_shift = 0;
     current_field_bit_mask = 0;
+    g_array_decay_stride = 0;
+    g_expr_no_deref = 0;
     char name[64];
     struct Sym *s;
     int sid;
@@ -3378,6 +3531,10 @@ void gen_primary(void)
         if ((s->is_array && !indexed) || val_is_array) {
             /* array expression decays to pointer-to-element */
             g_expr_type = type_add_ptr(val_type);
+            /* For multi-dim arrays, preserve the row stride so ptr+n arithmetic
+             * uses the correct step size (e.g. gmat+1 steps by sizeof(int[4])=8). */
+            if (s->is_array && !indexed && s->dim_count > 1)
+                g_array_decay_stride = sym_array_index_elem_size(s, 0);
         } else {
             g_expr_type = val_type;
             emit_load_from_hl(val_type);
@@ -3720,6 +3877,11 @@ void gen_unary(void)
 
         accept('*');
         gen_unary();
+        if (g_expr_no_deref) {
+            /* Phantom deref: *(multi_dim_array + n) decays to row ptr, no memory load */
+            g_expr_no_deref = 0;
+            return;
+        }
         t = type_decay_ptr(g_expr_type);
         if ((t & 15) == TYPE_VOID)
             t = TYPE_CHAR;

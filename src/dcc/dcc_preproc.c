@@ -525,6 +525,20 @@ void parse_preprocessor_line(void)
         word[i++] = (char)getc_src();
     word[i] = 0;
 
+    /* A '#' where a directive keyword is expected means '##' was written at
+     * the start of a line.  '##' is the token-paste operator and is only
+     * valid inside a macro replacement list; at directive position it is
+     * always a hard error, even inside an inactive #if block. */
+    if (word[0] == 0 && peekc() == '#') {
+        fprintf(stderr, "%s:%d: error: '##' is not a valid preprocessor directive\n",
+                current_file_name[0] ? current_file_name : (input_name ? input_name : "<input>"),
+                line_no);
+        errors++;
+        if (errors > 40) fatal("too many errors");
+        while (peekc() && peekc() != '\n') getc_src();
+        return;
+    }
+
     if (!strcmp(word, "if")) {
         i = 0;
         while ((c = peekc()) != 0 && c != '\n' && i < (int)sizeof(val) - 1)
@@ -771,8 +785,29 @@ void parse_preprocessor_line(void)
             }
         }
         return;
+    } else if (!strcmp(word, "warning")) {
+        if (pp_active) {
+            i = 0;
+            while ((c = peekc()) != 0 && c != '\n' && i < (int)sizeof(val) - 1)
+                val[i++] = (char)getc_src();
+            val[i] = 0;
+            fprintf(stderr, "%s:%d: warning: #warning %s\n",
+                    current_file_name[0] ? current_file_name : (input_name ? input_name : "<input>"),
+                    line_no, val);
+        }
+    } else if (!strcmp(word, "pragma") || word[0] == 0) {
+        /* #pragma and null directive (#) are silently ignored */
     } else {
-        /* include/pragma/etc. ignored */
+        /* Any other unrecognised directive is an error when active.
+         * In an inactive block it is silently skipped so that unknown
+         * directives in dead code do not cascade into spurious errors. */
+        if (pp_active) {
+            fprintf(stderr, "%s:%d: error: unknown preprocessor directive '#%s'\n",
+                    current_file_name[0] ? current_file_name : (input_name ? input_name : "<input>"),
+                    line_no, word);
+            errors++;
+            if (errors > 40) fatal("too many errors");
+        }
     }
 
     while (peekc() && peekc() != '\n') getc_src();

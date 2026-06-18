@@ -147,6 +147,8 @@ int g_expr_type;
 int g_tok_long_suffix; /* set by lexer when L/l suffix seen on integer literal */
 int g_tok_unsigned_suffix; /* set for U/u suffix or non-decimal unsigned-int literal */
 int g_long_from16; /* the long value in DE:HL was just widened from 16-bit: 0 no, 1 signed, 2 unsigned */
+int g_array_decay_stride; /* stride override when multi-dim array decays to pointer; 0 = use type default */
+int g_expr_no_deref; /* 1 = suppress next * load (phantom deref for multi-dim array row pointer) */
 
 /* Pending #asm block output: buffered until a safe flush point (function
  * epilogue or end of translation unit) to avoid duplication from the

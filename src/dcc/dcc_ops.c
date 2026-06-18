@@ -1153,7 +1153,9 @@ void gen_add(void)
          *   ptr2 - ptr1   -> signed element distance
          */
         if ((lhs_type & (TYPE_PTR | TYPE_PTR2))) {
-            int elem = type_index_elem_size(lhs_type);
+            int was_row_ptr = (g_array_decay_stride > 0);
+            int elem = was_row_ptr ? g_array_decay_stride : type_index_elem_size(lhs_type);
+            g_array_decay_stride = 0;
 
             emit("\tpush hl\n");
             gen_mul();
@@ -1165,6 +1167,7 @@ void gen_add(void)
                     divide_hl_by_elem_size(elem);
                     lhs_type = TYPE_INT;
                     g_expr_type = TYPE_INT;
+                    was_row_ptr = 0;
                     continue;
                 }
 
@@ -1172,6 +1175,7 @@ void gen_add(void)
                 emit("\tpop de\n");
                 lhs_type = TYPE_INT;
                 g_expr_type = TYPE_INT;
+                was_row_ptr = 0;
                 continue;
             }
 
@@ -1179,6 +1183,8 @@ void gen_add(void)
             emit("\tex de,hl\n\tpop hl\n");
             gen_binop(op);
             g_expr_type = lhs_type;
+            if (was_row_ptr && op == '+')
+                g_expr_no_deref = 1;
             continue;
         }
 

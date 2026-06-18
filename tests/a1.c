@@ -45,8 +45,8 @@ struct MOS_6502
 {
     uint8_t a, x, y, sp;
     uint16_t pc;
-    uint8_t pf;   /* NV-BDIZC. State is tracked in bools below and only updated for pf and php */
-    bool fNegative, fOverflow, fDecimal, fInterruptDisable, fZero, fCarry;
+    /* uint8_t pf; */  /* NV-BDIZC. State is tracked in bools below. pf and php create a temporry copy */
+    bool fNegative, fOverflow, fDecimal, fInterruptDisable, fZero, fCarry; // 0 for false or non-zero for true
 };
 
 extern struct MOS_6502 cpu;
@@ -72,7 +72,6 @@ void soft_reset() { g_State |= stateSoftReset; }
 
 /*
     The Apple 1 shipped with 4k of RAM, and that's generally plenty.
-    Allocate 32k, which runs most apps.
     The 6502 functional tests require 16k.
     Apps built with cc65 or Aztec C read and write to address 0x7fff.
     Aztec C doesn't support 32k arrays, so break up RAM into two arrays.
@@ -132,6 +131,12 @@ void bad_address( address ) uint16_t address;
     exit( 1 );
 }
 
+#if true // this macro removes the function call overhead and is faster
+
+#define set_nz( x ) cpu.fNegative = ( ( x ) & 0x80 ), cpu.fZero = ! ( x )
+
+#else // set_nz() is a function either in assembly or C
+
 #ifdef Z80_ASM_OPTS
 extern void set_nz();
 #asm
@@ -167,6 +172,7 @@ void set_nz( x ) uint8_t x;
     cpu.fNegative = ( (int8_t) x < 0 );
     cpu.fZero = !x;
 }
+#endif
 #endif
 
 #ifdef Z80_ASM_OPTS
@@ -273,13 +279,13 @@ uint8_t op_rotate( op, val ) uint8_t op; uint8_t val;
     op &= 0xe0;
     if ( 0 == op ) /* asl */        
     {
-        cpu.fCarry = !! ( 0x80 & val );
+        cpu.fCarry = ( 0x80 & val ); // !! ( 0x80 & val );
         val <<= 1;
     }
     else if ( 0x20 == op ) /* rol */   
     {
         oldCarry = cpu.fCarry;
-        cpu.fCarry = !! ( 0x80 & val );
+        cpu.fCarry = ( 0x80 & val ); // !! ( 0x80 & val );
         val <<= 1;
         if ( oldCarry )
             val |= 1;
@@ -312,8 +318,8 @@ void op_cmp( lhs, rhs ) uint8_t lhs; uint8_t rhs;
 
 void op_bit( val ) uint8_t val;
 {
-    cpu.fNegative = !! ( val & 0x80 );
-    cpu.fOverflow = !! ( val & 0x40 );
+    cpu.fNegative = ( val & 0x80 );
+    cpu.fOverflow = ( val & 0x40 );
     cpu.fZero = ! ( cpu.a & val );
 }
 
@@ -392,7 +398,7 @@ void op_math( op, rhs ) uint8_t op; uint8_t rhs;
     if ( 0x60 == op )
     {
         res16 = (uint16_t) cpu.a + (uint16_t) rhs + (uint16_t) cpu.fCarry;
-        result = (uint8_t) res16; /* cast generates faster code for Aztec than & 0xff */
+        result = (uint8_t) res16;
         cpu.fCarry = ( 0 != ( res16 & 0xff00 ) );
         cpu.fOverflow = ( ! ( ( cpu.a ^ rhs ) & 0x80 ) ) && ( ( cpu.a ^ result ) & 0x80 );
         cpu.a = result;
@@ -409,25 +415,25 @@ void op_math( op, rhs ) uint8_t op; uint8_t rhs;
 
 void op_pop_pf()
 {
-    cpu.pf = pop();
-    cpu.fNegative = !! ( cpu.pf & 0x80 );
-    cpu.fOverflow = !! ( cpu.pf & 0x40 );
-    cpu.fDecimal = !! ( cpu.pf & 8 );
-    cpu.fInterruptDisable = !! ( cpu.pf & 4 );
-    cpu.fZero = !! ( cpu.pf & 2 );
-    cpu.fCarry = ( cpu.pf & 1 ); 
+    uint8_t pf = pop();
+    cpu.fNegative = ( pf & 0x80 );
+    cpu.fOverflow = ( pf & 0x40 );
+    cpu.fDecimal = ( pf & 8 );
+    cpu.fInterruptDisable = ( pf & 4 );
+    cpu.fZero = ( pf & 2 );
+    cpu.fCarry = ( pf & 1 ); 
 }
 
 void op_php()
 {
-    cpu.pf = 0x30;
-    if ( cpu.fNegative ) cpu.pf |= 0x80;
-    if ( cpu.fOverflow ) cpu.pf |= 0x40;
-    if ( cpu.fDecimal ) cpu.pf |= 8;
-    if ( cpu.fInterruptDisable ) cpu.pf |= 4;
-    if ( cpu.fZero ) cpu.pf |= 2;
-    if ( cpu.fCarry ) cpu.pf |= 1;
-    push( cpu.pf );
+    uint8_t pf = 0x30;
+    if ( cpu.fNegative ) pf |= 0x80;
+    if ( cpu.fOverflow ) pf |= 0x40;
+    if ( cpu.fDecimal ) pf |= 8;
+    if ( cpu.fInterruptDisable ) pf |= 4;
+    if ( cpu.fZero ) pf |= 2;
+    if ( cpu.fCarry ) pf |= 1;
+    push( pf );
 }
 
 #ifdef APPLE1_TRACE
@@ -502,8 +508,7 @@ void emulate()
             }
             case 0x01: case 0x21: case 0x41: case 0x61: case 0xc1: case 0xe1:          /* ora/and/eor/adc/cmp/sbc (a8, x) */
             {
-                val = get_byte( cpu.pc + 1 ) + cpu.x; /* reduce expression complexity for hisoft C by using local */
-                op_math( op, get_byte( get_word( val ) ) );
+                op_math( op, get_byte( get_word( get_byte( cpu.pc + 1 ) + cpu.x ) ) );
                 break;
             }
             case 0x05: case 0x25: case 0x45: case 0x65: case 0xc5: case 0xe5:          /* ora/and/eor/adc/cmp/sbc a8 */
@@ -523,8 +528,7 @@ void emulate()
             }
             case 0x11: case 0x31: case 0x51: case 0x71: case 0xd1: case 0xf1:          /* ora/and/eor/adc/cmp/sbc (a8), y */
             {
-                val = get_byte( cpu.pc + 1 ); /* reduce expression complexity for hisoft C by using local */
-                op_math( op, get_byte( cpu.y + get_word( val ) ) );
+                op_math( op, get_byte( cpu.y + get_word( get_byte( cpu.pc + 1 ) ) ) );
                 break;
             }
             case 0x15: case 0x35: case 0x55: case 0x75: case 0xd5: case 0xf5:          /* ora/and/eor/adc/cmp/sbc a8, x */  
@@ -574,7 +578,7 @@ _rot_complete:
                     break;                                               
 _branch_complete:
                 /* casting to a larger signed type doesn't sign-extend on Aztec C, so do it manually */
-                cpu.pc += ( 2 + sign_extend( get_byte( cpu.pc + 1 ), 7 ) );
+                cpu.pc += ( 2 + (int16_t) (int8_t) get_byte( cpu.pc + 1 ) );
                 continue;
             }
             case 0x18: { cpu.fCarry = false; break; }                                  /* clc */
@@ -1097,11 +1101,6 @@ int getc_load_file()
     if ( 3 == c || 17 == c )  /* ^c or ^q */
         end_emulation();
 
-#ifdef HISOFTCPM
-    if ( 0x0a == c )
-        c = 0x0d;
-#endif
-
     return c;
 }
 
@@ -1299,20 +1298,6 @@ static bool load_intel( fp ) FILE * fp;
     fclose( fp );
     return true;
 }
-
-#ifdef AZTECCPM
-char * strchr( p, c ) char * p; char c;
-{
-    while ( *p )
-    {
-        if ( c == *p )
-            return p;
-        p++;
-    }
-
-    return 0;
-}
-#endif
 
 bool loadFile( filePath ) char * filePath;
 {

@@ -6,7 +6,7 @@ baselines used to verify them.
 
 ## Layout
 
-```
+```text
 tests/
   _test_overrides.json # per-test run config (args, stack_size, ignore)
   <name>.c          # a test program (compiled + run by the harness)
@@ -41,22 +41,32 @@ order in which tests are discovered or run does not matter.
 
 ## Running the suite
 
-From the repo root, with PowerShell 7+:
+From the repo root, use the platform launcher or run the Python runner directly:
 
-```pwsh
+```sh
 # Build + run every test, verify against tests/baselines/ (parallel by default)
-pwsh ./scripts/runall.ps1
+./scripts/runall.sh       # macOS/Linux
+python3 ./scripts/runall.py
 
 # Sequential fallback (one app at a time in the shared build/ dir)
-pwsh ./scripts/runall.ps1 -Serial
+./scripts/runall.sh --serial
+python3 ./scripts/runall.py --serial
 
 # Build only one optimization pass (default builds both)
-pwsh ./scripts/runall.ps1 -Mode peep     # optimized (dccpeep) only
-pwsh ./scripts/runall.ps1 -Mode nopeep   # unoptimized only
+./scripts/runall.sh --mode peep
+./scripts/runall.sh --mode nopeep
+python3 ./scripts/runall.py --mode peep
+python3 ./scripts/runall.py --mode nopeep
 
 # Build without the stack-overflow guard (on by default)
-pwsh ./scripts/runall.ps1 -NoStackCheck
+./scripts/runall.sh --no-stack-check
+python3 ./scripts/runall.py --no-stack-check
 ```
+
+On Windows, use `scripts\runall.bat` with the same Python-style options. The
+PowerShell wrapper `scripts/runall.ps1` still exists for compatibility, but the
+suite implementation is `scripts/runall.py` and is independent of
+`scripts/ma.ps1`.
 
 By default the suite builds each app in **both** optimization modes \u2014 `peep`
 (optimized, via the dccpeep peephole optimizer) and `nopeep` (unoptimized) \u2014
@@ -64,10 +74,12 @@ and verifies both against the same baseline, so a default run does two builds
 per app. Use `-Mode peep` or `-Mode nopeep` to build just one.
 
 By default the suite runs **in parallel** (each app builds in its own
-`build/<app>/` subdirectory), which is much faster on multi-core machines. Pass
-`-Serial` to build sequentially in the shared `build/` directory. The
-lightweight stack-overflow guard (`-fstack-check`) is on by default; use
-`-NoStackCheck` to disable it.
+`build/<app>/` subdirectory), which is much faster on multi-core machines. The
+runner discovers all `tests/*.c` files dynamically, then schedules larger source
+files first so long-running apps start early; correctness is still keyed only by
+app name and `baselines/<name>.txt`, not by run order. Pass `--serial` to build
+sequentially in the shared `build/` directory. The lightweight stack-overflow
+guard (`-fstack-check`) is on by default; use `--no-stack-check` to disable it.
 
 A test **passes** when its program builds, runs, and its stdout matches the
 corresponding `baselines/<name>.txt` byte-for-byte (line endings normalized to
@@ -100,8 +112,8 @@ test tstdc completed with great success
 ```
 
 A baseline with no placeholder tokens is compared as an exact string. The token
-definitions are global (in `scripts/runall.ps1`); add a new one there if you
-need to mask another kind of volatile value.
+definitions are global (in `scripts/runall.py`); add a new one there if you need
+to mask another kind of volatile value.
 
 ## Adding a new test
 
@@ -112,7 +124,7 @@ need to mask another kind of volatile value.
    `tests/baselines/<name>.txt` (exact stdout, LF line endings, no extra
    trailing content). If any output is volatile (dates, times, paths), replace
    those parts with the placeholder tokens described above.
-4. Run `pwsh ./scripts/runall.ps1` and confirm the new test reports
+4. Run `./scripts/runall.sh` and confirm the new test reports
    "Output matches baseline".
 
 ## Regenerating baselines from the legacy file
@@ -126,8 +138,9 @@ pwsh ./scripts/convert-baseline.ps1
 ```
 
 That converter slices the legacy file using the authoritative ordered app list
-in `runall.sh` so that output lines which themselves begin with `test ` (e.g.
-`test tstdc completed with great success`) are not mistaken for section
+in `runall.sh` so that output lines which themselves begin with the literal
+prefix `test` followed by a space (e.g. `test tstdc completed with great
+success`) are not mistaken for section
 headers. The split reproduces the original baseline byte-for-byte.
 
 ## Notes for automated agents

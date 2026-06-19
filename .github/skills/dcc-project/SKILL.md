@@ -1,0 +1,105 @@
+---
+name: dcc-project
+description: 'Develop, build, and test the dcc toolchain itself — the host programs dcc (C89 -> Z80/M80 assembler), dccpeep (peephole optimizer), and dccrtlstrip (runtime stripper), plus the DCCRTL.MAC Z80 runtime. Use when modifying or debugging compiler/optimizer/runtime sources under src/, running the regression suite (runall.ps1), building one app (ma.ps1), or rebuilding the host tools (build-dcc.ps1). NOT for writing ordinary C apps that target CP/M — use the c89-cpm-z80 skill for that.'
+argument-hint: 'Describe the dcc-project task (change codegen, run the test suite, build a single app, rebuild host tools)'
+---
+
+# dcc project (compiler / optimizer / runtime development)
+
+dcc is a **cross** toolchain: the host programs `dcc`, `dccpeep`, and
+`dccrtlstrip` compile with a modern compiler and run on your desktop. They emit
+Z80 assembly and CP/M 2.2 `.COM` files that run under an emulator such as
+**ntvcm**. This skill is about changing and validating *those tools and the
+runtime*, not about authoring CP/M apps (use `c89-cpm-z80` for that).
+
+## When to use
+
+- Editing compiler/optimizer/runtime sources under `src/` or `DCCRTL.MAC`.
+- Running the regression suite or reproducing a single test failure.
+- Rebuilding the host tools after a source change.
+
+## Toolchain pipeline
+
+One `.c` file becomes a `.COM` through a short pipeline (each stage hands a file
+to the next):
+
+`dcc` (.c → .MAC) → `dccpeep` (.MAC → .MAC, optional) → `M80` (assemble) +
+`dccrtlstrip` (DCCRTL.MAC → RTLMIN.MAC, keep only referenced routines) → `M80` →
+`L80` (link → .COM). `M80`/`L80` are Microsoft's assembler/linker, run under
+ntvcm.
+
+## Source layout
+
+| Path | What |
+| ---- | ---- |
+| `src/dcc/` | The compiler. `dcc.c` driver; phases split across `dcc_preproc.c`, `dcc_decl.c`, `dcc_expr.c`, `dcc_stmt.c`, `dcc_func.c`, `dcc_ops.c`, `dcc_fold.c`/`dcc_constexpr.c` (folding), `dcc_types.c`/`dcc_type_oracle.c`, `dcc_symbols.c`, `dcc_data.c`, `dcc_diag_emit.c`. |
+| `src/dccpeep/` | Peephole optimizer (`-Ot` time / `-Os` size). |
+| `src/dccrtlstrip/` | Runtime dead-block stripper. |
+| `DCCRTL.MAC` | The Z80-assembly C runtime (entrypoint, heap, argv, libc subset, float). |
+| `tests/` | `*.c` test apps + `tests/baselines/<app>.txt` expected stdout + `tests/_test_overrides.json` (per-app args/stdin/stack/ignore). |
+| `scripts/` | `runall.ps1`, `ma.ps1`, `build-dcc.ps1`, `stacksize.*`. |
+| `docs/docs/en/appendix/00-architecture.md` | In-depth architecture reference. |
+
+Convention: source `.c` files are **lowercase** (only dcc reads them); generated
+`.MAC`, `.REL`, `.PRN`, `.COM` are **UPPERCASE** (CP/M filenames). Matters on
+case-sensitive (Linux) filesystems.
+
+## Prerequisites
+
+The scripts expect the `ntvcm` emulator on your `PATH` (it runs `M80`/`L80` and
+the built `.COM` files), along with the host tools `dcc`, `dccpeep`, and
+`dccrtlstrip` — these land in the repo root after a build, so add the repo root
+and ntvcm's directory to `PATH`. Override any tool individually with the
+`NTVCM`/`DCC`/`DCCPEEP`/`DCCRTLSTRIP`/`M80`/`L80` env vars if it isn't on `PATH`.
+
+## Run the regression tests
+
+Builds every `tests/*.c` app and diffs stdout against its baseline. Runs in
+parallel by default; the stack-overflow guard (`-fstack-check`) is on by default.
+
+```pwsh
+pwsh ./scripts/runall.ps1                 # default: BOTH peep + nopeep, every app
+pwsh ./scripts/runall.ps1 -Mode peep      # QUICK full run: optimized only (1 build/app)
+pwsh ./scripts/runall.ps1 -Mode nopeep    # unoptimized builds only
+pwsh ./scripts/runall.ps1 -Serial         # sequential fallback (debugging)
+```
+
+`-Mode both` (default) builds each app twice and verifies both against the same
+baseline — this is what catches `dccpeep` bugs that change a program's output.
+For a faster full-suite pass over every app, use `-Mode peep` (one build per app
+instead of two). Exit code 0 = all passed, 1 = one or more failed. Add `-Report`
+to append per-app cycle/size metrics to `perf_results.csv`.
+
+## Build / debug a single app
+
+Use `ma.ps1` to drive the full pipeline for one app — ideal for reproducing a
+failing test in isolation:
+
+```pwsh
+pwsh ./scripts/ma.ps1 <name>            # peep (optimized) — default
+pwsh ./scripts/ma.ps1 <name> nopeep     # skip the dccpeep optimizer
+```
+
+`<name>` is the test/app name without `.c` (e.g. `sieve`, `ttt`, `cobint`). To
+compare a suspected optimizer bug, build both ways and diff the run output or
+the generated `BUILD/<NAME>.MAC`. Useful env vars: `DCC_STACK_SIZE` (stack
+reserve), `DCC_FORCE_STACK_CHECK=1`, and `DCC`/`DCCPEEP`/`DCCRTLSTRIP`/`NTVCM`/
+`M80`/`L80` to pin tool paths.
+
+## Rebuild the host tools after a source change
+
+```pwsh
+pwsh ./scripts/build-dcc.ps1            # MSVC on Windows, clang on macOS, gcc on Linux
+```
+
+Or the platform root scripts: `m.bat` (Windows/MSVC), `m.sh` (Linux/gcc),
+`mmacos.sh` (macOS/clang). All three produce `dcc`, `dccpeep`, `dccrtlstrip` in
+the repo root. Rebuild before re-running `runall.ps1` so tests exercise your
+change.
+
+## Typical workflow
+
+1. Change a source file under `src/` (or `DCCRTL.MAC`).
+2. `pwsh ./scripts/build-dcc.ps1` to rebuild the host tools.
+3. `pwsh ./scripts/ma.ps1 <app>` to reproduce/iterate on one case.
+4. `pwsh ./scripts/runall.ps1` to confirm no regressions across all apps.

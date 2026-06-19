@@ -21,14 +21,15 @@ pwsh ./scripts/ma.ps1 <name> [mode] [options]
 ```
 
 - `<name>` — Test app name (e.g., `triangle`, `sieve`, `ttt`)
-- `[mode]` — Build mode: `peep` (optimized, default) or `nopeep`
+- `[mode]` — Build mode: `full` (both builds, default), `fast` (optimized), or
+  `nopeep` (unoptimized)
 
 ### Examples
 
 ```pwsh
 pwsh ./scripts/ma.ps1 triangle
 pwsh ./scripts/ma.ps1 sieve nopeep
-pwsh ./scripts/ma.ps1 cobint -Mode peep -BuildDir mybuild
+pwsh ./scripts/ma.ps1 cobint -Mode fast -BuildDir mybuild
 ```
 
 ### Parameters
@@ -36,7 +37,7 @@ pwsh ./scripts/ma.ps1 cobint -Mode peep -BuildDir mybuild
 | Parameter | Default | Purpose |
 | --------- | ------- | ------- |
 | `-Name` | (required) | App name without `.c` extension |
-| `-Mode` | `peep` | Build mode: `peep` or `nopeep` |
+| `-Mode` | `full` | Build mode: `full`, `fast`, or `nopeep` |
 | `-BuildDir` | `build` | Build directory for artifacts |
 | `-Emulator` | `ntvcm` | Emulator command for CP/M tools |
 
@@ -73,7 +74,7 @@ test discovery order does not matter.
 
 Validates the entire test suite by:
 
-- Building all tests in configured modes (peep, nopeep, or both)
+- Building all tests in configured modes (fast, nopeep, or full)
 - Running each under the emulator with test-specific arguments
 - Comparing output against per-app baselines (placeholder-aware)
 - Reporting build/run status per app and overall results
@@ -85,19 +86,20 @@ pwsh ./scripts/runall.ps1 [options]
 ```
 
 Run with no options, the suite uses these defaults: **parallel** execution,
-the **stack-overflow guard on** (`-fstack-check`), and **both build modes**
-(`peep` and `nopeep`). Use `-Mode peep` when you want the faster optimized-only
-pass.
+the **stack-overflow guard on** (`-fstack-check`), and the **fast
+optimized-only** build mode. Use `-Mode full` when you want both fast and nopeep
+builds.
 
 ### Examples
 
 ```pwsh
-pwsh ./scripts/runall.ps1                       # all defaults
+pwsh ./scripts/runall.ps1                       # quick optimized-only default
+pwsh ./scripts/runall.ps1 -Help                 # show help and exit
 pwsh ./scripts/runall.ps1 -Serial               # sequential fallback
 pwsh ./scripts/runall.ps1 -NoStackCheck         # build without the stack guard
 pwsh ./scripts/runall.ps1 -ThrottleLimit 8      # cap concurrency
 pwsh ./scripts/runall.ps1 -Emulator altair
-pwsh ./scripts/runall.ps1 -Mode peep            # optimized build only
+pwsh ./scripts/runall.ps1 -Mode fast            # optimized build only
 pwsh ./scripts/runall.ps1 -Mode nopeep          # unoptimized build only
 pwsh ./scripts/runall.ps1 -Report               # also append perf_results.csv
 ```
@@ -105,13 +107,15 @@ pwsh ./scripts/runall.ps1 -Report               # also append perf_results.csv
 ### Build Modes
 
 The `-Mode` parameter selects which optimization pass(es) to build and verify.
-**The default is `both`.**
+**The default is `fast`.**
 
-- **`peep`** — optimized: runs the `dccpeep` peephole optimizer after compiling.
-- **`nopeep`** — unoptimized: skips `dccpeep`.
-- **`both`** (default) — builds and verifies each app **twice**, once in each
-  mode, against the same baseline. This catches optimizer bugs that change a
-  program's output.
+- **`fast`** — optimized: runs the `dccpeep` peephole optimizer after compiling.
+  This produces the optimized CP/M Z80 binary.
+- **`nopeep`** — unoptimized: skips `dccpeep`. This produces the unoptimized
+  CP/M Z80 binary.
+- **`full`** — builds and verifies each app **twice**, once in each mode,
+  against the same baseline. This catches optimizer bugs that change a program's
+  output.
 
 ### Parameters
 
@@ -121,7 +125,8 @@ The `-Mode` parameter selects which optimization pass(es) to build and verify.
 | `-NoStackCheck` | (off) | Disable `-fstack-check` (the guard is ON by default) |
 | `-BuildDir` | `build` | Build directory for artifacts |
 | `-BaselineDir` | `tests/baselines` | Directory of per-app `<app>.txt` baselines |
-| `-Mode` | `both` | Build mode: `peep` (optimized), `nopeep` (unoptimized), or `both` |
+| `-Mode` | `fast` | Build mode: `fast` (optimized), `nopeep` (unoptimized), or `full` |
+| `-Help` | (off) | Show help text and exit without building or running tests |
 | `-Serial` | (off) | Run sequentially instead of the default parallel mode |
 | `-ThrottleLimit` | CPU core count | Max concurrent apps in parallel mode |
 | `-Report` | (off) | Append per-app execution time and `.COM` size metrics to a CSV report; implies `-NoStackCheck` |
@@ -243,8 +248,9 @@ mycomputer,2026-06-16T07:24:21Z,sieve,1000,2176,3000,2304
 - `nopeep_size` — Binary size in bytes (unoptimized)
 
 The `-ReportFile` parameter controls the output path. The `-Mode` parameter
-controls which CSV columns are populated: `-Mode both` fills both `peep_*` and
-`nopeep_*`; single-mode runs fill only the selected mode's columns.
+controls which CSV columns are populated: `-Mode full` fills both `peep_*` and
+`nopeep_*`; single-mode runs fill only the selected mode's columns. In the CSV,
+`peep_*` columns hold optimized-build measurements.
 
 ## Stack Size Measurement (`stacksize.sh` / `stacksize.bat`)
 

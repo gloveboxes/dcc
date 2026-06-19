@@ -58,24 +58,25 @@ Builds every `tests/*.c` app and diffs stdout against its baseline. Runs in
 parallel by default; the stack-overflow guard (`-fstack-check`) is on by default.
 
 ```pwsh
-pwsh ./scripts/runall.ps1                 # default: BOTH peep + nopeep, every app
-pwsh ./scripts/runall.ps1 -Mode peep      # QUICK full run: optimized only (1 build/app)
-pwsh ./scripts/runall.ps1 -Mode nopeep    # unoptimized builds only
+pwsh ./scripts/runall.ps1                 # default: fast, optimized CP/M Z80 binary
+pwsh ./scripts/runall.ps1 -Help           # show help and exit
+pwsh ./scripts/runall.ps1 -Mode fast      # default unless otherwise stated by the agent/developer
+pwsh ./scripts/runall.ps1 -Mode nopeep    # unoptimized CP/M Z80 binary
 pwsh ./scripts/runall.ps1 -Serial         # sequential fallback (debugging)
 ```
 
-`-Mode both` (default) builds each app twice and verifies both against the same
-baseline — this is what catches `dccpeep` bugs that change a program's output.
-For a faster full-suite pass over every app, use `-Mode peep` (one build per app
-instead of two). Exit code 0 = all passed, 1 = one or more failed. Add `-Report`
-to append per-app cycle/size metrics to `perf_results.csv`.
+The default `-Mode fast` builds each app once as an optimized CP/M Z80 binary.
+Use `-Mode full` to build each app twice, once optimized and once unoptimized,
+and verify both against the same baseline. Exit code 0 = all passed, 1 = one or
+more failed. Add `-Report` to append per-app cycle/size metrics to
+`perf_results.csv`.
 
 ## Test baselines and overrides
 
 Each runnable `tests/<app>.c` test has expected stdout in
 `tests/baselines/<app>.txt`. `runall.ps1` builds the app, runs the resulting
 `.COM` under the emulator, normalizes line endings for comparison, and checks
-that stdout matches the baseline for that app. In `-Mode both`, the peep and
+that stdout matches the baseline for that app. In `-Mode full`, the fast and
 nopeep builds must both match the same baseline; a baseline mismatch means the
 program output changed and should be investigated before updating the expected
 text.
@@ -100,8 +101,9 @@ Use `ma.ps1` to drive the full pipeline for one app — ideal for reproducing a
 failing test in isolation:
 
 ```pwsh
-pwsh ./scripts/ma.ps1 <name>            # peep (optimized) — default
-pwsh ./scripts/ma.ps1 <name> nopeep     # skip the dccpeep optimizer
+pwsh ./scripts/ma.ps1 <name>            # full (optimized + unoptimized) — default
+pwsh ./scripts/ma.ps1 <name> fast       # optimized CP/M Z80 binary
+pwsh ./scripts/ma.ps1 <name> nopeep     # unoptimized CP/M Z80 binary
 ```
 
 `<name>` is the test/app name without `.c` (e.g. `sieve`, `ttt`, `cobint`). To

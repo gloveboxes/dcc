@@ -14,12 +14,16 @@ stack sizes.
 Supports per-test arguments (e.g., ttt with "10" as input) and custom stack
 size overrides (e.g., cobint needs 1536 bytes, triangle needs 768).
 
-Pass -Report to append per-app run-time and .COM size measurements to a CSV
-report while the suite runs; no separate benchmark pass is required. Report
-mode disables stack checking and forces serial execution so the measurements
-reflect normal builds without parallel-run noise. When using ntvcm, normal app
-runs explicitly use full speed (`-s:0`), while report mode runs apps at a fixed
-1 GHz emulator clock by default.
+Pass -Report to append per-app metrics to a CSV report while the suite runs; no
+separate benchmark pass is required. Report mode disables stack checking and
+forces serial execution so the measurements reflect normal builds without
+parallel-run noise. When using ntvcm, normal app runs explicitly use full speed
+(`-s:0`), while report mode runs apps at a fixed 1 GHz emulator clock by
+default and passes -p so ntvcm emits its own performance data at app exit. The
+report records, per optimisation mode, ntvcm's reported elapsed milliseconds and
+Z80 cycle count (host-independent), the .COM size, and the ntvcm clock rate:
+    machine,utc-timestamp,app,peep_ms,peep_cycles,peep_size,
+    nopeep_ms,nopeep_cycles,nopeep_size,clock_hz
 
 .PARAMETER Emulator
   Emulator command to run .COM files (default: "ntvcm").
@@ -395,9 +399,33 @@ function Invoke-AppTest {
             Pop-Location
         }
 
+        # In report mode ntvcm is run with -p, which appends a performance block
+        # to stdout at app exit, e.g.:
+        #     elapsed milliseconds:               10
+        #     Z80  cycles:                    79,093
+        #     clock rate:                400,000,000 Hz
+        # Parse those values (commas stripped) for the report, then remove the
+        # block from the captured output so it doesn't break baseline matching.
+        $ntvcmMs = ""
+        $ntvcmCycles = ""
+        $ntvcmClockHz = ""
+        if ($output -match '(?m)^\s*elapsed milliseconds:\s*([\d,]+)') {
+            $ntvcmMs = $matches[1] -replace ',', ''
+        }
+        if ($output -match '(?m)^\s*Z80\s+cycles:\s*([\d,]+)') {
+            $ntvcmCycles = $matches[1] -replace ',', ''
+        }
+        if ($output -match '(?m)^\s*clock rate:\s*([\d,]+)') {
+            $ntvcmClockHz = $matches[1] -replace ',', ''
+        }
+        # Strip the ntvcm performance block (and any blank separator before it).
+        $output = [regex]::Replace($output, '(?s)\r?\n\s*elapsed milliseconds:.*$', '')
+
         $modeMetrics[$buildMode] = [pscustomobject]@{
-            Ms   = $runSw.ElapsedMilliseconds
-            Size = $comSize
+            Ms      = if ($ntvcmMs -ne "") { $ntvcmMs } else { $runSw.ElapsedMilliseconds }
+            Cycles  = $ntvcmCycles
+            ClockHz = $ntvcmClockHz
+            Size    = $comSize
         }
 
         # Compare against the per-app baseline (placeholder-aware).
@@ -513,7 +541,9 @@ $modes = if ($Mode -eq "both") { @("peep", "nopeep") } else { @($Mode) }
 $emulatorRunArgs = @()
 if (Test-IsNtvcmEmulator $Emulator) {
     if ($Report) {
-        $emulatorRunArgs = @("-s:$ReportClockHz")
+        # -p makes ntvcm print performance info (elapsed ms, Z80 cycles, clock
+        # rate) at app exit; the report parses those values from stdout.
+        $emulatorRunArgs = @("-p", "-s:$ReportClockHz")
     }
     else {
         $emulatorRunArgs = @("-s:0")
@@ -586,7 +616,7 @@ function Write-PerformanceReport {
     }
 
     if (-not (Test-Path $OutputFile)) {
-        Add-Content -Path $OutputFile -Value "machine,utc-timestamp,app,peep_ms,peep_size,nopeep_ms,nopeep_size"
+        Add-Content -Path $OutputFile -Value "machine,utc-timestamp,app,peep_ms,peep_cycles,peep_size,nopeep_ms,nopeep_cycles,nopeep_size,clock_hz"
     }
 
     $utcTimestamp = [System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -599,20 +629,28 @@ function Write-PerformanceReport {
         if (-not ($metrics.ContainsKey("peep") -or $metrics.ContainsKey("nopeep"))) { continue }
 
         $peepMs = ""
+        $peepCycles = ""
         $peepSize = ""
         $nopeepMs = ""
+        $nopeepCycles = ""
         $nopeepSize = ""
+        # clock_hz is the ntvcm-reported clock rate; identical for both modes.
+        $clockHz = ""
 
         if ($metrics.ContainsKey("peep")) {
             $peepMs = $metrics["peep"].Ms
+            $peepCycles = $metrics["peep"].Cycles
             $peepSize = $metrics["peep"].Size
+            if (-not $clockHz) { $clockHz = $metrics["peep"].ClockHz }
         }
         if ($metrics.ContainsKey("nopeep")) {
             $nopeepMs = $metrics["nopeep"].Ms
+            $nopeepCycles = $metrics["nopeep"].Cycles
             $nopeepSize = $metrics["nopeep"].Size
+            if (-not $clockHz) { $clockHz = $metrics["nopeep"].ClockHz }
         }
 
-        Add-Content -Path $OutputFile -Value "$MachineName,$utcTimestamp,$app,$peepMs,$peepSize,$nopeepMs,$nopeepSize"
+        Add-Content -Path $OutputFile -Value "$MachineName,$utcTimestamp,$app,$peepMs,$peepCycles,$peepSize,$nopeepMs,$nopeepCycles,$nopeepSize,$clockHz"
         $rows++
     }
 
@@ -620,6 +658,8 @@ function Write-PerformanceReport {
     if (Test-IsNtvcmEmulator $Emulator) {
         $clockLabel = if (($ReportClockHz % 1000000000) -eq 0) {
             "$($ReportClockHz / 1000000000)GHz"
+        } elseif (($ReportClockHz % 1000000) -eq 0) {
+            "$($ReportClockHz / 1000000)MHz"
         } else {
             "$ReportClockHz Hz"
         }

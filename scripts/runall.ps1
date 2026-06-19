@@ -22,7 +22,7 @@ parallel-run noise. When using ntvcm, normal app runs explicitly use full speed
 default and passes -p so ntvcm emits its own performance data at app exit. The
 report records, per optimisation mode, ntvcm's reported elapsed milliseconds and
 Z80 cycle count (host-independent), the .COM size, and the ntvcm clock rate:
-    machine,utc-timestamp,app,peep_ms,peep_cycles,peep_size,
+    machine,os,utc-timestamp,app,peep_ms,peep_cycles,peep_size,
     nopeep_ms,nopeep_cycles,nopeep_size,clock_hz
 
 .PARAMETER Emulator
@@ -168,6 +168,12 @@ if (!$machineName) {
     } catch { }
 }
 if (!$machineName) { $machineName = "unknown" }
+
+# Host OS label for the report (Windows, Linux, macOS).
+$osName = if ($IsWindows) { "Windows" }
+    elseif ($IsLinux) { "Linux" }
+    elseif ($IsMacOS) { "macOS" }
+    else { "unknown" }
 
 # Load app overrides
 $appOverridesPath = "tests/_test_overrides.json"
@@ -606,6 +612,7 @@ function Write-PerformanceReport {
         [string[]]$AppOrder,
         [string]$OutputFile,
         [string]$MachineName,
+        [string]$OsName,
         [string]$Emulator,
         [long]$ReportClockHz
     )
@@ -616,7 +623,7 @@ function Write-PerformanceReport {
     }
 
     if (-not (Test-Path $OutputFile)) {
-        Add-Content -Path $OutputFile -Value "machine,utc-timestamp,app,peep_ms,peep_cycles,peep_size,nopeep_ms,nopeep_cycles,nopeep_size,clock_hz"
+        Add-Content -Path $OutputFile -Value "machine,os,utc-timestamp,app,peep_ms,peep_cycles,peep_size,nopeep_ms,nopeep_cycles,nopeep_size,clock_hz"
     }
 
     $utcTimestamp = [System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -650,7 +657,7 @@ function Write-PerformanceReport {
             if (-not $clockHz) { $clockHz = $metrics["nopeep"].ClockHz }
         }
 
-        Add-Content -Path $OutputFile -Value "$MachineName,$utcTimestamp,$app,$peepMs,$peepCycles,$peepSize,$nopeepMs,$nopeepCycles,$nopeepSize,$clockHz"
+        Add-Content -Path $OutputFile -Value "$MachineName,$OsName,$utcTimestamp,$app,$peepMs,$peepCycles,$peepSize,$nopeepMs,$nopeepCycles,$nopeepSize,$clockHz"
         $rows++
     }
 
@@ -784,7 +791,7 @@ if ($failed -gt 0) {
 
 if ($Report) {
     Write-PerformanceReport -Results $results -AppOrder $testFiles -OutputFile $ReportFile -MachineName $machineName `
-        -Emulator $Emulator -ReportClockHz $ReportClockHz
+        -OsName $osName -Emulator $Emulator -ReportClockHz $ReportClockHz
 }
 
 Write-Host ""

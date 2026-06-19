@@ -152,6 +152,10 @@ subdirectory so concurrent builds don't clobber shared artifacts). Use
 `-Serial` to fall back to sequential builds in the shared `build/` directory.
 The lightweight stack-overflow guard (`-fstack-check`) is **on by default**;
 pass `-NoStackCheck` to build without it.
+Pass `-Report` to append per-app run-time and `.COM` size measurements while
+the suite runs. Report mode implies `-NoStackCheck`; when using `ntvcm`, normal
+app runs use `-s:0` for full speed and report runs use a fixed 400 MHz clock by
+default for more comparable timings across host machines.
 
 ### Usage
 
@@ -174,6 +178,9 @@ and `nopeep`). Use the switches below to change any of these.
 | `-Mode` | `both` | Build mode: `peep` (optimized), `nopeep` (unoptimized), or `both` |
 | `-Serial` | (off) | Run sequentially instead of the default parallel mode |
 | `-ThrottleLimit` | CPU core count | Max concurrent apps in parallel mode |
+| `-Report` | (off) | Append per-app execution time and `.COM` size metrics to a CSV report; implies `-NoStackCheck` |
+| `-ReportFile` | `perf_results.csv` | CSV path used by `-Report` |
+| `-ReportClockHz` | `400000000` | ntvcm clock speed used for measured report runs; set to `0` for full-speed report runs |
 
 ### Build modes
 
@@ -195,6 +202,8 @@ pwsh ./scripts/runall.ps1 -NoStackCheck         # build without the stack guard
 pwsh ./scripts/runall.ps1 -ThrottleLimit 8      # cap concurrency
 pwsh ./scripts/runall.ps1 -Mode peep            # optimized build only
 pwsh ./scripts/runall.ps1 -Mode nopeep          # unoptimized build only
+pwsh ./scripts/runall.ps1 -Report               # append perf_results.csv
+pwsh ./scripts/runall.ps1 -ReportClockHz 0 -Report  # full-speed report run
 ```
 
 Parallel mode is markedly faster on multi-core machines. Each app builds in its
@@ -209,6 +218,7 @@ Reports:
 - Passed/failed/skipped counts
 - Per-app build and execution status (live in parallel mode)
 - Output verification against baseline (if available)
+- Optional CSV performance report when `-Report` is passed
 - Exit code 0 on full success, 1 if any test fails
 
 ### Exit Status
@@ -270,155 +280,3 @@ The converter slices the legacy file using the authoritative ordered app list
 (`APPLIST` in `runall.sh`) so that output lines beginning with `test ` (e.g.
 `test tstdc completed with great success`) are not mistaken for section headers.
 The split reproduces the original baseline byte-for-byte.
-
-## `perfcapture.ps1`
-
-Captures performance benchmarks for all test applications (all `*.c` files in the
-tests/ folder). Builds each app in both optimized and unoptimized modes, measures
-execution time under the ntvcm emulator, records binary size, and outputs results
-as CSV with both metrics on a single line per app. **Cross-platform**: runs on
-macOS, Linux, and Windows with PowerShell 7+.
-
-### Purpose
-
-Compares performance and binary size across optimized (dccpeep) vs. unoptimized
-builds for the complete test suite. Useful for:
-
-- Measuring compiler optimization impact across all tests
-- Verifying dcc, dccpeep, or dccrtlstrip changes don't regress performance
-- Tracking binary size changes across runtime updates
-- Analyzing the impact of compiler flags like `-fstack-check`
-- Building performance history over time (results append to CSV)
-
-### Prerequisites: Installing PowerShell 7
-
-This script requires **PowerShell 7 or later** (cross-platform).
-
-#### macOS
-
-Install via Homebrew:
-
-```bash
-brew install powershell
-```
-
-#### Linux (Ubuntu/Debian)
-
-```bash
-# Add Microsoft repository
-wget https://aka.ms/powershell-release-deb
-sudo dpkg -i powershell-release-deb
-
-# Install
-sudo apt-get update
-sudo apt-get install powershell
-
-# Invoke
-pwsh scripts/perfcapture.ps1
-```
-
-For other Linux distributions, see [PowerShell Linux installation](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-linux).
-
-#### Windows
-
-Download and run the installer from [PowerShell releases](https://github.com/PowerShell/PowerShell/releases),
-or install via package manager:
-
-```powershell
-# Using Windows Package Manager
-winget install Microsoft.PowerShell
-```
-
-### Usage
-
-```pwsh
-pwsh scripts/perfcapture.ps1
-```
-
-No arguments needed — both modes (peep/nopeep) are captured automatically. Results
-are written to `perf_results.csv` in the project root. **Results append to the
-file**, so each run adds a new row per app for tracking performance over time.
-
-### Examples
-
-```pwsh
-# Capture both modes
-pwsh scripts/perfcapture.ps1
-
-# Check results
-Get-Content perf_results.csv | Select-Object -Last 10
-
-# Run again later to append more results
-pwsh scripts/perfcapture.ps1
-
-# View all results
-Get-Content perf_results.csv
-```
-
-### Output format
-
-The CSV file contains machine name, UTC timestamp, app name, and metrics for both peep and
-nopeep builds:
-
-```csv
-machine,utc-timestamp,app,peep_ms,peep_size,nopeep_ms,nopeep_size
-mycomputer,2026-06-16T07:18:39Z,tstring,17000,6400,19000,6912
-mycomputer,2026-06-16T07:18:39Z,sieve,1000,2176,3000,2304
-mycomputer,2026-06-16T07:18:40Z,e,1000,2560,1000,2560
-mycomputer,2026-06-16T07:18:40Z,tm,2000,4224,11000,4352
-mycomputer,2026-06-16T07:18:40Z,ttt,2000,2816,4000,5632
-mycomputer,2026-06-16T07:18:42Z,pihex,80000,14464,80000,14976
-mycomputer,2026-06-16T07:18:42Z,mm,4000,6784,4000,6912
-```
-
-**Columns:**
-
-- `machine` — Name of the machine running the benchmark
-- `utc-timestamp` — UTC timestamp (ISO 8601 format, e.g., `2026-06-16T07:18:39Z`)
-- `app` — Application name
-- `peep_ms` — Execution time in milliseconds (optimized with dccpeep)
-- `peep_size` — Binary size in bytes (optimized)
-- `nopeep_ms` — Execution time in milliseconds (unoptimized)
-- `nopeep_size` — Binary size in bytes (unoptimized)
-
-### Parameters
-
-```pwsh
-pwsh scripts/perfcapture.ps1 -BuildDir "mybuild" -OutputFile "results.csv" -Emulator "altair"
-```
-
-| Parameter | Default | Meaning |
-| --------- | ------- | ------- |
-| `BuildDir` | `build` | Working directory for build artifacts. |
-| `OutputFile` | `perf_results.csv` | CSV output file path (relative to project root). |
-| `Emulator` | `ntvcm` | Emulator command used to run `.COM` files. |
-
-### App Overrides
-
-Application-specific arguments, stack size requirements, and exclusions are stored in
-[`tests/_test_overrides.json`](../tests/_test_overrides.json). Each app entry specifies:
-
-- `name` — Application name (e.g., `ttt`, `pint`, `triangle`) (required)
-- `args` — Command-line arguments to pass when running the app (optional, e.g., `10`, `e.pas`, `-c`)
-- `stack_size` — C stack reserve in bytes (optional, e.g., `768`, `1536`), defaults to 512
-- `ignore` — Set to `true` to skip benchmarking this app (optional, e.g., for tests that don't compile)
-
-To add or modify overrides, simply edit the JSON file:
-
-```json
-{
-  "apps": [
-    { "name": "ttt", "args": "10" },
-    { "name": "triangle", "stack_size": 768 },
-    { "name": "cobint", "args": "e.cob", "stack_size": 1536 },
-    { "name": "tc89fltb", "ignore": true }
-  ]
-}
-```
-
-### Requirements
-
-- **PowerShell 7+** (cross-platform)
-- The in-repo `./dcc`, `./dccpeep`, `./dccrtlstrip` binaries
-- The `ntvcm` emulator (or alternative specified via `-Emulator` parameter)
-- `ma.sh` build driver (on macOS/Linux) or `ma.bat` (on Windows)

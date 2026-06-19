@@ -14,6 +14,17 @@ stack sizes.
 Supports per-test arguments (e.g., ttt with "10" as input) and custom stack
 size overrides (e.g., cobint needs 1536 bytes, triangle needs 768).
 
+Pass -Report to append per-app metrics to a CSV report while the suite runs; no
+separate benchmark pass is required. Report mode disables stack checking and
+forces serial execution so the measurements reflect normal builds without
+parallel-run noise. When using ntvcm, normal app runs explicitly use full speed
+(`-s:0`), while report mode runs apps at a fixed 400 MHz emulator clock by
+default and passes -p so ntvcm emits its own performance data at app exit. The
+report records, per optimisation mode, ntvcm's reported elapsed milliseconds and
+Z80 cycle count (host-independent), the .COM size, and the ntvcm clock rate:
+    machine,os,utc-timestamp,app,peep_ms,peep_cycles,peep_size,
+    nopeep_ms,nopeep_cycles,nopeep_size,clock_hz
+
 .PARAMETER Emulator
   Emulator command to run .COM files (default: "ntvcm").
 
@@ -29,7 +40,7 @@ size overrides (e.g., cobint needs 1536 bytes, triangle needs 768).
   Each file is named <app>.txt and holds that app's exact expected stdout.
 
 .PARAMETER Mode
-  Which optimization pass(es) to build and verify (default: "both"):
+    Which optimization pass(es) to build and verify (default: "both"):
     peep   - optimized (runs the dccpeep peephole optimizer)
     nopeep - unoptimized (skips dccpeep)
     both   - builds and verifies each app twice, once per mode, against the
@@ -43,16 +54,27 @@ size overrides (e.g., cobint needs 1536 bytes, triangle needs 768).
 .PARAMETER ThrottleLimit
   Max concurrent apps in parallel mode (default: CPU core count).
 
+.PARAMETER Report
+    Append per-app performance metrics to the report CSV. Implies -NoStackCheck and -Serial.
+
+.PARAMETER ReportFile
+    CSV path for -Report output (default: "perf_results.csv").
+
+.PARAMETER ReportClockHz
+    ntvcm clock speed used for measured app runs in -Report mode (default: 400000000).
+
 .EXAMPLE
   pwsh ./scripts/runall.ps1
   pwsh ./scripts/runall.ps1 -NoStackCheck
   pwsh ./scripts/runall.ps1 -Mode nopeep
   pwsh ./scripts/runall.ps1 -Serial
   pwsh ./scripts/runall.ps1 -ThrottleLimit 8
+    pwsh ./scripts/runall.ps1 -Report
 
 .NOTES
   App overrides are loaded from tests/_test_overrides.json:
     - args: command-line arguments for the app
+        - stdin: text piped to app stdin during execution
     - stack_size: C stack reserve override (default 512)
     - ignore: set to true to skip building/running this app
 
@@ -70,32 +92,58 @@ param(
     [string]$Mode = "both",
     [int]$RunTimeout = 60,
     [switch]$Serial,
-    [int]$ThrottleLimit = [Environment]::ProcessorCount
+    [int]$ThrottleLimit = [Environment]::ProcessorCount,
+    [switch]$Report,
+    [string]$ReportFile = "perf_results.csv",
+    [long]$ReportClockHz = 400000000
 )
 
-# Parallel is the default; -Serial forces the sequential fallback.
-$Parallel = -not $Serial
+# Parallel is the default; -Serial or -Report forces the sequential fallback.
+$Parallel = -not ($Serial -or $Report)
 
 # The lightweight stack-overflow guard (-fstack-check) is ON by default; pass
 # -NoStackCheck to build without it.
-$StackCheck = -not $NoStackCheck
+$StackCheck = -not ($NoStackCheck -or $Report)
 
 $ErrorActionPreference = "Stop"
 
-# Save terminal settings so ntvcm's raw-mode console I/O doesn't corrupt them.
-# stty is Linux-only; skip on Windows.
-$_savedStty = $null
-if ($IsLinux) {
-    $_savedStty = & stty -g 2>$null
-    if ($null -ne $_savedStty) {
-        Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action { stty $_savedStty 2>$null } | Out-Null
+# On Unix-like hosts, preserve the caller terminal mode and restore it before
+# script exit. Some emulator runs (especially keyboard-oriented tests) can
+# leave the tty in non-echo/raw mode when many apps run in parallel.
+$script:SavedSttyState = $null
+if (($IsLinux -or $IsMacOS) -and (Get-Command stty -ErrorAction SilentlyContinue)) {
+    try {
+        $captured = (& stty -g 2>$null)
+        if ($captured) { $script:SavedSttyState = $captured.Trim() }
     }
+    catch { }
+}
+
+function Restore-TerminalState {
+    if ($script:SavedSttyState) {
+        try {
+            & stty $script:SavedSttyState 2>$null | Out-Null
+        }
+        catch { }
+    }
+}
+
+trap {
+    Restore-TerminalState
+    throw
 }
 
 # Dot-source the build driver once so Invoke-MaBuild runs in-process. This
 # avoids spawning a fresh pwsh per build, which is the dominant cost over a
-# full suite (hundreds of builds).
+# full suite (hundreds of builds). ma.ps1 has its own param block, so preserve
+# this script's parameter values before dot-sourcing it.
+$requestedMode = $Mode
+$requestedBuildDir = $BuildDir
+$requestedEmulator = $Emulator
 . (Join-Path $PSScriptRoot "ma.ps1")
+$Mode = $requestedMode
+$BuildDir = $requestedBuildDir
+$Emulator = $requestedEmulator
 
 # Get machine name for reporting (platform-specific)
 $machineName = $null
@@ -121,6 +169,12 @@ if (!$machineName) {
 }
 if (!$machineName) { $machineName = "unknown" }
 
+# Host OS label for the report (Windows, Linux, macOS).
+$osName = if ($IsWindows) { "Windows" }
+    elseif ($IsLinux) { "Linux" }
+    elseif ($IsMacOS) { "macOS" }
+    else { "unknown" }
+
 # Load app overrides
 $appOverridesPath = "tests/_test_overrides.json"
 if (-not (Test-Path $appOverridesPath)) {
@@ -132,6 +186,7 @@ if (-not (Test-Path $appOverridesPath)) {
     foreach ($app in $config.apps) {
         $appOverrides[$app.name] = @{}
         if ($app.args) { $appOverrides[$app.name]['args'] = $app.args }
+        if ($app.stdin) { $appOverrides[$app.name]['stdin'] = $app.stdin }
         if ($app.stack_size) { $appOverrides[$app.name]['stack_size'] = $app.stack_size }
         if ($app.ignore) { $appOverrides[$app.name]['ignore'] = $app.ignore }
     }
@@ -178,20 +233,38 @@ function Get-StackSize {
     return ""
 }
 
+function Get-AppStdin {
+    param([string]$app)
+    if ($appOverrides.ContainsKey($app) -and $appOverrides[$app]['stdin']) {
+        return $appOverrides[$app]['stdin']
+    }
+    return ""
+}
+
 function Get-IgnoreApp {
     param([string]$app)
     return ($appOverrides.ContainsKey($app) -and $appOverrides[$app]['ignore'])
 }
 
+function Test-IsNtvcmEmulator {
+    param([string]$Command)
+    $leaf = [System.IO.Path]::GetFileNameWithoutExtension($Command)
+    return ($leaf -ieq "ntvcm")
+}
+
 # CP/M data fixtures are every file in tests/ that is not a C source or repo
-# metadata (.c, .json, .md, dotfiles). This is filesystem-independent: it does
-# not depend on the case of the stored filename, so it behaves the same on
-# case-sensitive (Linux) and case-insensitive (macOS, Windows) checkouts.
+# metadata (.c, .json, .md, dotfiles). Each fixture is resolved once to its
+# source path so staging does not repeatedly rescan tests/ for every app.
 function Get-FixtureFiles {
     if (-not (Test-Path "tests" -PathType Container)) { return @() }
     return @(Get-ChildItem -Path "tests" -File |
         Where-Object { $_.Name -notlike '.*' -and $_.Extension -notin '.c', '.json', '.md' } |
-        ForEach-Object { $_.Name })
+        ForEach-Object {
+            [pscustomobject]@{
+                Name   = $_.Name
+                Source = $_.FullName
+            }
+        })
 }
 
 # Stage every CP/M data fixture into the shared build dir (serial mode). Some
@@ -199,7 +272,7 @@ function Get-FixtureFiles {
 # run from the build dir (below), so the fixtures must live there too.
 function Stage-FixtureInputs {
     foreach ($f in $fixtureList) {
-        Copy-FixtureUpper -Name $f -DestDir $BuildDir
+        Copy-FixtureUpper -Fixture $f -DestDir $BuildDir
     }
 }
 
@@ -214,12 +287,21 @@ function Stage-FixtureInputs {
 # duplicate uppercase copies (which also collide in git on case-insensitive
 # checkouts).
 function Copy-FixtureUpper {
-    param([string]$Name, [string]$DestDir)
-    $dest = Join-Path $DestDir ($Name.ToUpper())
+    param([object]$Fixture, [string]$DestDir)
+    $name = if ($Fixture -is [string]) { $Fixture } else { $Fixture.Name }
+    $source = if ($Fixture -is [string]) { $null } else { $Fixture.Source }
+    if (-not $name) { return }
+
+    $dest = Join-Path $DestDir ($name.ToUpper())
+    if ($source -and (Test-Path $source -PathType Leaf)) {
+        Copy-Item -LiteralPath $source -Destination $dest -Force -ErrorAction SilentlyContinue
+        return
+    }
+
     foreach ($dir in @("tests", ".")) {
         if (-not (Test-Path $dir -PathType Container)) { continue }
         $src = Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -ieq $Name } | Select-Object -First 1
+            Where-Object { $_.Name -ieq $name } | Select-Object -First 1
         if ($src) {
             Copy-Item -LiteralPath $src.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
             return
@@ -242,20 +324,35 @@ function Invoke-AppTest {
         [string]$Emulator,
         [System.Collections.IDictionary]$Placeholders,
         [string]$RunArgs,
+        [string]$RunStdin,
         [string]$StackSize,
-        [string[]]$Fixtures
+        [string[]]$EmulatorRunArgs,
+        [object[]]$Fixtures,
+        [bool]$StageFixtures = $true
     )
 
     $lines = [System.Collections.Generic.List[string]]::new()
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $appPassed = $true
+    $modeMetrics = @{}
 
     # Ensure the (possibly per-app) build dir exists and stage CP/M fixtures.
     if (-not (Test-Path $BuildDir -PathType Container)) {
         New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
     }
-    foreach ($f in $Fixtures) {
-        Copy-FixtureUpper -Name $f -DestDir $BuildDir
+    if ($StageFixtures) {
+        foreach ($f in $Fixtures) {
+            Copy-FixtureUpper -Fixture $f -DestDir $BuildDir
+        }
+    }
+
+    # Load and normalize this app baseline once; when running both modes we
+    # compare twice against the same expected output.
+    $blPath = Join-Path $BaselineDir "$AppName.txt"
+    $hasBaseline = Test-Path $blPath -PathType Leaf
+    $expected = $null
+    if ($hasBaseline) {
+        $expected = (((Get-Content -Path $blPath -Raw) -replace "`r`n", "`n")).TrimEnd("`n")
     }
 
     foreach ($buildMode in $Modes) {
@@ -284,18 +381,18 @@ function Invoke-AppTest {
             $appPassed = $false
             continue
         }
+        $comSize = (Get-Item $comFile).Length
 
         Push-Location $BuildDir
+        $runSw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
-            if ($AppName -eq "tkbd") {
-                $out = "x" | & $Emulator "$upper.COM" 2>&1
-            }
-            elseif ($RunArgs) {
-                $al = $RunArgs -split '\s+'
-                $out = & $Emulator "$upper.COM" @al 2>&1
+            $appArgs = if ($RunArgs) { @($RunArgs -split '\s+') } else { @() }
+            $nativeArgs = @($EmulatorRunArgs) + @("$upper.COM") + $appArgs
+            if ($RunStdin) {
+                $out = $RunStdin | & $Emulator @nativeArgs 2>&1
             }
             else {
-                $out = & $Emulator "$upper.COM" 2>&1
+                $out = & $Emulator @nativeArgs 2>&1
             }
             $output = ($out -join "`n")
         }
@@ -304,13 +401,41 @@ function Invoke-AppTest {
             $lines.Add("    ERROR running $AppName : $_")
         }
         finally {
+            $runSw.Stop()
             Pop-Location
         }
 
+        # In report mode ntvcm is run with -p, which appends a performance block
+        # to stdout at app exit, e.g.:
+        #     elapsed milliseconds:               10
+        #     Z80  cycles:                    79,093
+        #     clock rate:                400,000,000 Hz
+        # Parse those values (commas stripped) for the report, then remove the
+        # block from the captured output so it doesn't break baseline matching.
+        $ntvcmMs = ""
+        $ntvcmCycles = ""
+        $ntvcmClockHz = ""
+        if ($output -match '(?m)^\s*elapsed milliseconds:\s*([\d,]+)') {
+            $ntvcmMs = $matches[1] -replace ',', ''
+        }
+        if ($output -match '(?m)^\s*Z80\s+cycles:\s*([\d,]+)') {
+            $ntvcmCycles = $matches[1] -replace ',', ''
+        }
+        if ($output -match '(?m)^\s*clock rate:\s*([\d,]+)') {
+            $ntvcmClockHz = $matches[1] -replace ',', ''
+        }
+        # Strip the ntvcm performance block (and any blank separator before it).
+        $output = [regex]::Replace($output, '(?s)\r?\n\s*elapsed milliseconds:.*$', '')
+
+        $modeMetrics[$buildMode] = [pscustomobject]@{
+            Ms      = if ($ntvcmMs -ne "") { $ntvcmMs } else { $runSw.ElapsedMilliseconds }
+            Cycles  = $ntvcmCycles
+            ClockHz = $ntvcmClockHz
+            Size    = $comSize
+        }
+
         # Compare against the per-app baseline (placeholder-aware).
-        $blPath = Join-Path $BaselineDir "$AppName.txt"
-        if (Test-Path $blPath -PathType Leaf) {
-            $expected = (((Get-Content -Path $blPath -Raw) -replace "`r`n", "`n")).TrimEnd("`n")
+        if ($hasBaseline) {
             $actual = ($output -replace "`r`n", "`n").TrimEnd("`n")
             if (-not (Test-MatchesBaseline -Actual $actual -Baseline $expected -Placeholders $Placeholders)) {
                 $lines.Add("    OUTPUT MISMATCH (vs $BaselineDir/$AppName.txt)")
@@ -324,6 +449,7 @@ function Invoke-AppTest {
         else {
             $lines.Add("    ERROR: no baseline at $BaselineDir/$AppName.txt (every app must have one)")
             $appPassed = $false
+            break
         }
     }
 
@@ -333,6 +459,7 @@ function Invoke-AppTest {
         Passed  = $appPassed
         Elapsed = $sw.Elapsed
         Lines   = $lines.ToArray()
+        Metrics = $modeMetrics
     }
 }
 
@@ -417,6 +544,18 @@ $failedApps = @()
 
 $modes = if ($Mode -eq "both") { @("peep", "nopeep") } else { @($Mode) }
 
+$emulatorRunArgs = @()
+if (Test-IsNtvcmEmulator $Emulator) {
+    if ($Report) {
+        # -p makes ntvcm print performance info (elapsed ms, Z80 cycles, clock
+        # rate) at app exit; the report parses those values from stdout.
+        $emulatorRunArgs = @("-p", "-s:$ReportClockHz")
+    }
+    else {
+        $emulatorRunArgs = @("-s:0")
+    }
+}
+
 # The CP/M data fixtures are derived once from the tests/ directory (see
 # Get-FixtureFiles). Every app gets the same set staged into its run dir.
 $fixtureList = @(Get-FixtureFiles)
@@ -432,6 +571,7 @@ foreach ($app in $testFiles) {
     $workItems.Add([pscustomobject]@{
         App          = $app
         RunArgs      = (Get-AppArgs $app)
+        RunStdin     = (Get-AppStdin $app)
         StackSize    = (Get-StackSize $app)
     })
 }
@@ -466,6 +606,74 @@ function Show-AppResult {
     Write-Host $line -ForegroundColor $(if ($result.Passed) { "Green" } else { "Red" })
 }
 
+function Write-PerformanceReport {
+    param(
+        [object[]]$Results,
+        [string[]]$AppOrder,
+        [string]$OutputFile,
+        [string]$MachineName,
+        [string]$OsName,
+        [string]$Emulator,
+        [long]$ReportClockHz
+    )
+
+    $byApp = @{}
+    foreach ($result in $Results) {
+        $byApp[$result.App] = $result
+    }
+
+    if (-not (Test-Path $OutputFile)) {
+        Add-Content -Path $OutputFile -Value "machine,os,utc-timestamp,app,peep_ms,peep_cycles,peep_size,nopeep_ms,nopeep_cycles,nopeep_size,clock_hz"
+    }
+
+    $utcTimestamp = [System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $rows = 0
+
+    foreach ($app in $AppOrder) {
+        if (-not $byApp.ContainsKey($app)) { continue }
+        $metrics = $byApp[$app].Metrics
+        if (-not $metrics) { continue }
+        if (-not ($metrics.ContainsKey("peep") -or $metrics.ContainsKey("nopeep"))) { continue }
+
+        $peepMs = ""
+        $peepCycles = ""
+        $peepSize = ""
+        $nopeepMs = ""
+        $nopeepCycles = ""
+        $nopeepSize = ""
+        # clock_hz is the ntvcm-reported clock rate; identical for both modes.
+        $clockHz = ""
+
+        if ($metrics.ContainsKey("peep")) {
+            $peepMs = $metrics["peep"].Ms
+            $peepCycles = $metrics["peep"].Cycles
+            $peepSize = $metrics["peep"].Size
+            if (-not $clockHz) { $clockHz = $metrics["peep"].ClockHz }
+        }
+        if ($metrics.ContainsKey("nopeep")) {
+            $nopeepMs = $metrics["nopeep"].Ms
+            $nopeepCycles = $metrics["nopeep"].Cycles
+            $nopeepSize = $metrics["nopeep"].Size
+            if (-not $clockHz) { $clockHz = $metrics["nopeep"].ClockHz }
+        }
+
+        Add-Content -Path $OutputFile -Value "$MachineName,$OsName,$utcTimestamp,$app,$peepMs,$peepCycles,$peepSize,$nopeepMs,$nopeepCycles,$nopeepSize,$clockHz"
+        $rows++
+    }
+
+    Write-Host "  Report:       $OutputFile ($rows apps)"
+    if (Test-IsNtvcmEmulator $Emulator) {
+        $clockLabel = if (($ReportClockHz % 1000000000) -eq 0) {
+            "$($ReportClockHz / 1000000000)GHz"
+        } elseif (($ReportClockHz % 1000000) -eq 0) {
+            "$($ReportClockHz / 1000000)MHz"
+        } else {
+            "$ReportClockHz Hz"
+        }
+        Write-Host "  Clock:        ntvcm clock speed normalised to $clockLabel"
+    }
+}
+
 $results = @()
 $totalToRun = $workItems.Count
 
@@ -479,6 +687,7 @@ if ($Parallel) {
     $iatDef       = ${function:Invoke-AppTest}.ToString()
     $cfuDef       = ${function:Copy-FixtureUpper}.ToString()
     $stackCheckOn = [bool]$StackCheck
+    $runArgs      = @($emulatorRunArgs)
 
     # ForEach-Object -Parallel streams each worker's result as it completes, so
     # pipe straight into a loop that prints a live status line per app. Results
@@ -498,7 +707,9 @@ if ($Parallel) {
         Invoke-AppTest -AppName $item.App -Modes $using:modes -BuildDir $appBuildDir `
             -BaselineDir $using:BaselineDir -Emulator $using:Emulator `
             -Placeholders $using:Placeholders -RunArgs $item.RunArgs `
-            -StackSize $item.StackSize -Fixtures $using:fixtureList
+            -RunStdin $item.RunStdin `
+            -StackSize $item.StackSize -EmulatorRunArgs $using:runArgs `
+            -Fixtures $using:fixtureList -StageFixtures $true
     } | ForEach-Object {
         $result = $_
         $results += $result
@@ -529,7 +740,9 @@ else {
     foreach ($item in $workItems) {
         $result = Invoke-AppTest -AppName $item.App -Modes $modes -BuildDir $BuildDir `
             -BaselineDir $BaselineDir -Emulator $Emulator -Placeholders $Placeholders `
-            -RunArgs $item.RunArgs -StackSize $item.StackSize -Fixtures $fixtureList
+            -RunArgs $item.RunArgs -RunStdin $item.RunStdin `
+            -StackSize $item.StackSize -EmulatorRunArgs $emulatorRunArgs `
+            -Fixtures $fixtureList -StageFixtures $false
         Show-AppResult $result
         $results += $result
     }
@@ -561,6 +774,12 @@ Write-Host "  Passed:       $passed" -ForegroundColor Green
 Write-Host "  Failed:       $failed" -ForegroundColor $(if ($failed -eq 0) { "Green" } else { "Red" })
 Write-Host "  Skipped:      $skipped"
 Write-Host "  Total time:   $suiteElapsedStr"
+$optimisationSummary = switch ($Mode) {
+    "peep"   { "peep" }
+    "nopeep" { "nopeep" }
+    "both"   { "both (peep + nopeep)" }
+}
+Write-Host "  Optimisation: $optimisationSummary"
 
 if ($failed -gt 0) {
     Write-Host ""
@@ -570,12 +789,19 @@ if ($failed -gt 0) {
     }
 }
 
+if ($Report) {
+    Write-PerformanceReport -Results $results -AppOrder $testFiles -OutputFile $ReportFile -MachineName $machineName `
+        -OsName $osName -Emulator $Emulator -ReportClockHz $ReportClockHz
+}
+
 Write-Host ""
 if ($null -ne $_savedStty) { stty $_savedStty 2>$null }
 if ($failed -eq 0) {
     Write-Host ">>> SUCCESS: All tests passed <<<" -ForegroundColor Green
+    Restore-TerminalState
     exit 0
 } else {
     Write-Host ">>> FAILURE: $failed test(s) failed <<<" -ForegroundColor Red
+    Restore-TerminalState
     exit 1
 }

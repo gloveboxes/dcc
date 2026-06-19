@@ -1225,6 +1225,39 @@ int main()
     rl = *((*gwpp[0])->n[0].plong + 0);
     check_long("lm064", rl, 1000310L);
 
+    /* Direct identifier-path access to 2D field arrays, e.g. gw[i].n[j].cm[r][c].
+     * Tests that val_type is correctly decayed after consuming all dimensions of a
+     * 1D field array (n[]) so subsequent 2D field array access uses the right type.
+     * Without the fix, emit_load_from_hl receives char* or long* instead of char/long,
+     * producing wrong-width loads. */
+    ri = gw[0].n[0].m[1][2];
+    check_int("id2d_i1", ri, 1212);
+    rc = gw[0].n[0].cm[1][2];
+    check_char("id2d_c1", rc, 43);
+    rl = gw[0].n[0].lm[1][2];
+    check_long("id2d_l1", rl, 1000312L);
+
+    ri = gw[1].n[1].m[0][1];
+    check_int("id2d_i2", ri, 2301);
+    rc = gw[1].n[1].cm[0][1];
+    check_char("id2d_c2", rc, 33);
+    rl = gw[1].n[1].lm[0][1];
+    check_long("id2d_l2", rl, 2000401L);
+
+    ri = lw[0].n[0].m[1][2];
+    check_int("id2d_i3", ri, 3212);
+    rc = lw[0].n[0].cm[1][2];
+    check_char("id2d_c3", rc, 123);
+    rl = lw[0].n[0].lm[1][2];
+    check_long("id2d_l3", rl, 3000312L);
+
+    ri = lw[1].n[1].m[0][1];
+    check_int("id2d_i4", ri, 4301);
+    rc = lw[1].n[1].cm[0][1];
+    check_char("id2d_c4", rc, 113);
+    rl = lw[1].n[1].lm[0][1];
+    check_long("id2d_l4", rl, 4000401L);
+
     if (fails) {
         printf("FAILED %d\n", fails);
         return 1;

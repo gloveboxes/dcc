@@ -258,6 +258,14 @@ int emit_simple_local_index_to_hl(void)
         return 0;
     }
 
+    if (idx->offset < -128 || idx->offset + 1 > 127) {
+        posi = save_pos;
+        tok_start_pos = save_tok_start;
+        line_no = save_line;
+        tok_line = save_tok_line;
+        tok = save_tok;
+        return 0;
+    }
     fprintf(outf, "\tld l,(ix%+d)\n", idx->offset);
     fprintf(outf, "\tld h,(ix%+d)\n", idx->offset + 1);
     return 1;

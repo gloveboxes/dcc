@@ -3,7 +3,7 @@
 
 static int g_failed = 0;
 
-void verify_int(int actual, int expected, const char *test_name) {
+static void verify_int(int actual, int expected, const char *test_name) {
     if (actual == expected) {
         printf("PASS: %s\n", test_name);
     } else {
@@ -12,7 +12,7 @@ void verify_int(int actual, int expected, const char *test_name) {
     }
 }
 
-void verify_str(const char *actual, const char *expected, const char *test_name) {
+static void verify_str(const char *actual, const char *expected, const char *test_name) {
     if (strcmp(actual, expected) == 0) {
         printf("PASS: %s\n", test_name);
     } else {

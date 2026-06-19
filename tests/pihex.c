@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#if 0
 long atol(const char *str)
 {
     long result = 0;
@@ -36,6 +37,7 @@ long atol(const char *str)
 
     return sign * result;
 } //atol
+#endif
 
 float nmfpart( float x ) // nm = no mod. so it's faster.
 {

@@ -82,6 +82,12 @@ $StackCheck = -not $NoStackCheck
 
 $ErrorActionPreference = "Stop"
 
+# Save terminal settings so ntvcm's raw-mode console I/O doesn't corrupt them.
+$_savedStty = & stty -g 2>$null
+if ($null -ne $_savedStty) {
+    Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action { stty $_savedStty 2>$null } | Out-Null
+}
+
 # Dot-source the build driver once so Invoke-MaBuild runs in-process. This
 # avoids spawning a fresh pwsh per build, which is the dominant cost over a
 # full suite (hundreds of builds).
@@ -561,6 +567,7 @@ if ($failed -gt 0) {
 }
 
 Write-Host ""
+if ($null -ne $_savedStty) { stty $_savedStty 2>$null }
 if ($failed -eq 0) {
     Write-Host ">>> SUCCESS: All tests passed <<<" -ForegroundColor Green
     exit 0

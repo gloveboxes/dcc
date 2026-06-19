@@ -2910,6 +2910,131 @@ fail:
     return 0;
 }
 
+/* Handle a postfix chain (-> . []) after a paren-expression or function call.
+ * On entry: HL holds the rvalue of the expression, g_expr_type is its type.
+ * Handles ->, ., and [] in any combination, updating HL and g_expr_type.
+ * For struct/array accesses that have no value to "load", HL stays as the
+ * address so that further postfix operators can add offsets.            */
+static void gen_primary_postfix_chain(void)
+{
+    int is_array = 0;           /* tracking field-array subscript state  */
+    int array_index_count = 0;
+    int fa_dimc = 0;
+    int fa_dims[4];
+
+    for (;;) {
+        /* ── subscript ──────────────────────────────────────────────── */
+        if (accept('[')) {
+            int cur_type = g_expr_type;
+            int elem_size;
+            long const_index;
+
+            if (try_parse_const_subscript(&const_index)) {
+                if (is_array)
+                    elem_size = field_array_index_stride(type_index_elem_size(cur_type),
+                                    fa_dimc, fa_dims, array_index_count);
+                else
+                    elem_size = type_index_elem_size(cur_type);
+                emit_add_const_to_hl(const_index * elem_size);
+            } else {
+                emit("\tpush hl\n");
+                gen_expr();
+                expect(']');
+                if (is_array)
+                    elem_size = field_array_index_stride(type_index_elem_size(cur_type),
+                                    fa_dimc, fa_dims, array_index_count);
+                else
+                    elem_size = type_index_elem_size(cur_type);
+                scale_hl_by_elem_size(elem_size);
+                emit("\tex de,hl\n\tpop hl\n\tadd hl,de\n");
+            }
+
+            if (is_array) {
+                array_index_count++;
+                if (array_index_count >= fa_dimc) {
+                    is_array = 0;
+                    g_expr_type = type_decay_ptr(g_expr_type);
+                }
+            } else {
+                g_expr_type = type_decay_ptr(cur_type);
+            }
+
+            /* Load the element value at the end of the chain, unless it is
+             * a struct (HL stays as address for further field access).   */
+            if (tok.kind != '[' && tok.kind != '.' && tok.kind != TOK_ARROW) {
+                if (!type_is_struct_object(g_expr_type))
+                    emit_load_from_hl(g_expr_type);
+            }
+            continue;
+        }
+
+        /* ── field access (-> or .) ─────────────────────────────────── */
+        if (tok.kind == '.' || tok.kind == TOK_ARROW) {
+            int arrow = (tok.kind == TOK_ARROW);
+            int base_type;
+            int sid2;
+            struct FieldDef *fd;
+            int field_is_array;
+
+            next_token();
+
+            if (arrow)
+                base_type = type_decay_ptr(g_expr_type);
+            else
+                base_type = g_expr_type;   /* already the struct type */
+
+            sid2 = base_struct_id_from_type(base_type);
+            if (tok.kind != TOK_ID) {
+                error_here("field name expected");
+                return;
+            }
+            fd = find_field_def(sid2, tok.text);
+            if (!fd) {
+                error_here("unknown struct field");
+                next_token();
+                return;
+            }
+            next_token();
+
+            emit_add_field_offset(fd);
+            /* Update dimension metadata so snapshot_field_array_dims reflects
+             * this field's array dimensions (emit_add_field_offset doesn't). */
+            current_field_array_elem_size = fd->elem_size ? fd->elem_size : type_size(fd->type);
+            current_field_array_dim_count = fd->dim_count;
+            {
+                int _di;
+                for (_di = 0; _di < 4; ++_di)
+                    current_field_array_dims[_di] = fd->dims[_di];
+            }
+            field_is_array = fd->is_array;
+
+            if (field_is_array) {
+                g_expr_type = type_add_ptr(fd->elem_type);
+                is_array = 1;
+                array_index_count = 0;
+                snapshot_field_array_dims(&fa_dimc, fa_dims);
+            } else if (type_is_struct_object(fd->type)) {
+                /* Nested struct field: HL = field address; no load. */
+                g_expr_type = fd->type;
+                is_array = 0;
+            } else {
+                emit_load_from_hl(fd->type);
+                if (fd->bit_width > 0) {
+                    current_field_bit_width = fd->bit_width;
+                    current_field_bit_shift = fd->bit_shift;
+                    current_field_bit_mask = fd->bit_mask;
+                    emit_extract_bitfield();
+                }
+                g_expr_type = fd->type;
+                is_array = 0;
+            }
+            continue;
+        }
+
+        break;
+    }
+}
+
 void gen_primary(void)
 {
     current_field_bit_width = 0;
@@ -3014,38 +3139,7 @@ void gen_primary(void)
         gen_expr();
         expect(')');
 
-        while (tok.kind == TOK_ARROW) {
-            struct FieldDef *fd;
-            int sid2;
-            int base_type;
-
-            next_token();
-            if (tok.kind != TOK_ID) {
-                error_here("field name expected");
-                return;
-            }
-
-            base_type = type_decay_ptr(g_expr_type);
-            sid2 = base_struct_id_from_type(base_type);
-            fd = find_field_def(sid2, tok.text);
-            if (!fd) {
-                error_here("unknown struct field");
-                next_token();
-                return;
-            }
-            next_token();
-            emit_add_field_offset(fd);
-            g_expr_type = fd->is_array ? type_add_ptr(fd->elem_type) : fd->type;
-            if (!fd->is_array) {
-                emit_load_from_hl(fd->type);
-                if (fd->bit_width > 0) {
-                    current_field_bit_width = fd->bit_width;
-                    current_field_bit_shift = fd->bit_shift;
-                    current_field_bit_mask = fd->bit_mask;
-                    emit_extract_bitfield();
-                }
-            }
-        }
+        gen_primary_postfix_chain();
 
         if (tok.kind == '(' && type_ptr_depth(g_expr_type) > 0) {
             long fp_arg_start[MAX_SNAPSHOT];
@@ -3221,6 +3315,7 @@ void gen_primary(void)
 
                 emit_cleanup_stack_bytes(arg_bytes);
             }
+            gen_primary_postfix_chain();
             return;
         }
 
@@ -3885,8 +3980,9 @@ void gen_unary(void)
         t = type_decay_ptr(g_expr_type);
         if ((t & 15) == TYPE_VOID)
             t = TYPE_CHAR;
-        emit_load_from_hl(t);
         g_expr_type = t;
+        if (!type_is_struct_object(t))
+            emit_load_from_hl(t);
         return;
     }
 

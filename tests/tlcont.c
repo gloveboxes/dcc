@@ -5,7 +5,7 @@
 static int g_failed = 0;
 
 /* Helper function to validate string results */
-void verify_string(const char *actual, const char *expected, const char *test_name) {
+static void verify_string(const char *actual, const char *expected, const char *test_name) {
     if (strcmp(actual, expected) == 0) {
         printf("PASS: %s\n", test_name);
     } else {
@@ -17,7 +17,7 @@ void verify_string(const char *actual, const char *expected, const char *test_na
 }
 
 /* Helper function to validate integer results */
-void verify_int(int actual, int expected, const char *test_name) {
+static void verify_int(int actual, int expected, const char *test_name) {
     if (actual == expected) {
         printf("PASS: %s\n", test_name);
     } else {

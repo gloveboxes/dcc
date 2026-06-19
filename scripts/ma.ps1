@@ -257,6 +257,15 @@ function Invoke-MaBuild {
         }
     }
 
+    # Treat M80/L80 warnings as errors (e.g. %Mult. Def. Global from 6-char name collisions)
+    $allBuildOut = @($m80Out) + @($rtlOut) + @($linkOut)
+    $buildWarnings = $allBuildOut | Where-Object { $_ -match '%Mult\. Def\.|%Phase error|%Undefined' }
+    if ($buildWarnings) {
+        $buildWarnings | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+        Write-Error "Build warnings treated as errors for $Name"
+        return $false
+    }
+
     if (Test-Path $appCom) {
         Write-Step "  Build successful: $appCom" "Green"
         return $true

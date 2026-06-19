@@ -1,7 +1,7 @@
 #include <stdio.h>
 
 /* Custom frexpf implementation using an arithmetic reduction loop */
-float frexpf(float value, int *exp) {
+static float frexpf(float value, int *exp) {
     *exp = 0;
     if (value == 0.0f) {
         return 0.0f;
@@ -21,7 +21,7 @@ float frexpf(float value, int *exp) {
 }
 
 /* Custom logf implementation using Taylor series centered via frexpf */
-float logf(float x) {
+static float logf(float x) {
     float m, z, z2, sum_z, term, ln_m;
     int k;
     const float ln_2 = 0.69314718f;
@@ -58,7 +58,7 @@ float logf(float x) {
 }
 
 /* Custom log10f implementation using change of base formula */
-float log10f(float x) {
+static float log10f(float x) {
     const float inv_ln10 = 0.43429448f; /* 1 / ln(10) */
     return logf(x) * inv_ln10;
 }

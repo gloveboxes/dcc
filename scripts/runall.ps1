@@ -795,6 +795,7 @@ if ($Report) {
 }
 
 Write-Host ""
+if ($null -ne $_savedStty) { stty $_savedStty 2>$null }
 if ($failed -eq 0) {
     Write-Host ">>> SUCCESS: All tests passed <<<" -ForegroundColor Green
     Restore-TerminalState

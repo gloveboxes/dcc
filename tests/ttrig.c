@@ -28,7 +28,7 @@ static void check_same_f( const char * operation, float a, float b, float dbgval
     }
 } //check_same_f
 
-uint32_t factorial( uint32_t n )
+static uint32_t factorial( uint32_t n )
 {
     if ( 0 == n )
         return 1;
@@ -37,7 +37,7 @@ uint32_t factorial( uint32_t n )
 
 #define LN2 0.69314718056f
 
-float expf(float x)
+static float expf(float x)
 {
     float sum, term, r;
     int n, i;
@@ -82,7 +82,7 @@ float expf(float x)
     return sum;
 } //expf
 
-float logf(float x)
+static float logf(float x)
 {
     float m, y, y2, term, sum;
     int n, i;
@@ -124,7 +124,7 @@ float logf(float x)
     return sum + (float)n * LN2;
 } //logf
 
-float powf(float base, float exponent)
+static float powf(float base, float exponent)
 {
     float result;
     long int_exp;
@@ -197,7 +197,7 @@ float xsinf(float x) /* this version is much slower than the sinf() version. It'
 /* results compare to msvc's results aside from the occasional least-significant digit */
 
 /* Core loopless ATAN polynomial function used by both atanf and atan2f */
-float atanf(float x) 
+static float atanf(float x)
 {
     float sign = 1.0f;
     float bias = 0.0f;
@@ -221,7 +221,7 @@ float atanf(float x)
     return sign * (bias + poly);
 }
 
-float cosf(float x) 
+static float cosf(float x)
 {
     const float PI = 3.14159265f;
     const float TWO_PI = 6.28318531f;
@@ -243,7 +243,7 @@ float cosf(float x)
     return sign * ( 1.0f + x2 * (-0.49999286f + x2 * (0.04163351f + x2 * (-0.00136122f))) );
 }
 
-float sinf(float x) 
+static float sinf(float x)
 {
     const float PI = 3.14159265f;
     const float TWO_PI = 6.28318531f;
@@ -266,7 +266,7 @@ float sinf(float x)
     return x + x * x2 * (-0.16665724f + x2 * (0.00831348f + x2 * (-0.00018521f)));
 }
 
-float tanf(float x) 
+static float tanf(float x)
 {
     const float PI = 3.14159265f;
     const float HALF_PI = 1.57079632f;
@@ -303,7 +303,7 @@ float tanf(float x)
     return result;
 }
 
-float atan2f(float y, float x) 
+static float atan2f(float y, float x) 
 {
     const float PI = 3.14159265f;
     const float HALF_PI = 1.57079632f;
@@ -327,7 +327,7 @@ float atan2f(float y, float x)
     }
 }
 
-float asinf(float x) 
+static float asinf(float x) 
 {
     const float HALF_PI = 1.57079632f;
     float sign = 1.0f;
@@ -351,7 +351,7 @@ float asinf(float x)
     return sign * poly;
 }
 
-float acosf(float x) 
+static float acosf(float x) 
 {
     const float HALF_PI = 1.57079632f;
     return HALF_PI - asinf(x);

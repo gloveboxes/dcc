@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#if 0
 long atol(const char *str)
 {
     long result = 0;
@@ -28,6 +29,7 @@ long atol(const char *str)
 
     return sign * result;
 } //atol
+#endif
 
 uint32_t ulsqrt( uint32_t n )
 {

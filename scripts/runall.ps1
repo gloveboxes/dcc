@@ -16,9 +16,10 @@ size overrides (e.g., cobint needs 1536 bytes, triangle needs 768).
 
 Pass -Report to append per-app run-time and .COM size measurements to a CSV
 report while the suite runs; no separate benchmark pass is required. Report
-mode disables stack checking so the measurements reflect normal builds. When
-using ntvcm, normal app runs explicitly use full speed (`-s:0`), while report
-mode runs apps at a fixed 1 GHz emulator clock by default.
+mode disables stack checking and forces serial execution so the measurements
+reflect normal builds without parallel-run noise. When using ntvcm, normal app
+runs explicitly use full speed (`-s:0`), while report mode runs apps at a fixed
+1 GHz emulator clock by default.
 
 .PARAMETER Emulator
   Emulator command to run .COM files (default: "ntvcm").
@@ -50,7 +51,7 @@ mode runs apps at a fixed 1 GHz emulator clock by default.
   Max concurrent apps in parallel mode (default: CPU core count).
 
 .PARAMETER Report
-    Append per-app performance metrics to the report CSV. Implies -NoStackCheck.
+    Append per-app performance metrics to the report CSV. Implies -NoStackCheck and -Serial.
 
 .PARAMETER ReportFile
     CSV path for -Report output (default: "perf_results.csv").
@@ -93,8 +94,8 @@ param(
     [long]$ReportClockHz = 1000000000
 )
 
-# Parallel is the default; -Serial forces the sequential fallback.
-$Parallel = -not $Serial
+# Parallel is the default; -Serial or -Report forces the sequential fallback.
+$Parallel = -not ($Serial -or $Report)
 
 # The lightweight stack-overflow guard (-fstack-check) is ON by default; pass
 # -NoStackCheck to build without it.

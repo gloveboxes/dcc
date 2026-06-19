@@ -70,6 +70,30 @@ For a faster full-suite pass over every app, use `-Mode peep` (one build per app
 instead of two). Exit code 0 = all passed, 1 = one or more failed. Add `-Report`
 to append per-app cycle/size metrics to `perf_results.csv`.
 
+## Test baselines and overrides
+
+Each runnable `tests/<app>.c` test has expected stdout in
+`tests/baselines/<app>.txt`. `runall.ps1` builds the app, runs the resulting
+`.COM` under the emulator, normalizes line endings for comparison, and checks
+that stdout matches the baseline for that app. In `-Mode both`, the peep and
+nopeep builds must both match the same baseline; a baseline mismatch means the
+program output changed and should be investigated before updating the expected
+text.
+
+`tests/_test_overrides.json` is the per-app run configuration used by
+`runall.ps1`. Use it instead of hard-coding special cases in the runner:
+
+- `args`: command-line arguments passed to the CP/M app (for example interpreter
+	input files or test depth flags).
+- `stdin`: text piped to the app's stdin for keyboard/input-oriented tests.
+- `stack_size`: per-app stack reserve override when the default stack is too
+	small.
+- `ignore`: skip an app that should not be built or compared in the full suite.
+
+When adding or changing a test, update `_test_overrides.json` for its runtime
+needs first, then regenerate or edit `tests/baselines/<app>.txt` only when the
+new output is the intended behavior.
+
 ## Build / debug a single app
 
 Use `ma.ps1` to drive the full pipeline for one app — ideal for reproducing a

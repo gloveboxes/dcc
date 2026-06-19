@@ -83,9 +83,13 @@ $StackCheck = -not $NoStackCheck
 $ErrorActionPreference = "Stop"
 
 # Save terminal settings so ntvcm's raw-mode console I/O doesn't corrupt them.
-$_savedStty = & stty -g 2>$null
-if ($null -ne $_savedStty) {
-    Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action { stty $_savedStty 2>$null } | Out-Null
+# stty is Linux-only; skip on Windows.
+$_savedStty = $null
+if ($IsLinux) {
+    $_savedStty = & stty -g 2>$null
+    if ($null -ne $_savedStty) {
+        Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action { stty $_savedStty 2>$null } | Out-Null
+    }
 }
 
 # Dot-source the build driver once so Invoke-MaBuild runs in-process. This

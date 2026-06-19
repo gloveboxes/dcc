@@ -101,7 +101,7 @@ single test app with optional peephole optimization, strips runtime symbols,
 and links to produce a `.COM` executable. The complete pipeline:
 
 1. Compile source with `dcc` (auto-detect floatio and stack-check flags)
-2. Optimize with `dccpeep` (optional, peep mode only)
+2. Optimize with `dccpeep` (optional, fast mode only)
 3. Assemble app.MAC with M80
 4. Strip DCCRTL runtime using dccrtlstrip
 5. Assemble stripped RTLMIN.MAC
@@ -110,18 +110,19 @@ and links to produce a `.COM` executable. The complete pipeline:
 ### Usage
 
 ```pwsh
-pwsh ./scripts/ma.ps1 <name> [peep|nopeep]
+pwsh ./scripts/ma.ps1 <name> [full|fast|nopeep]
 ```
 
 - `<name>` — test app name (e.g., `triangle`, `sieve`, `ttt`)
-- `[mode]` — build mode: `peep` (optimized, default) or `nopeep` (unoptimized)
+- `[mode]` — build mode: `full` (both builds, default), `fast` (optimized), or
+  `nopeep` (unoptimized)
 
 ### Examples
 
 ```pwsh
 pwsh ./scripts/ma.ps1 triangle
 pwsh ./scripts/ma.ps1 sieve nopeep
-pwsh ./scripts/ma.ps1 cobint -Mode peep -BuildDir mybuild
+pwsh ./scripts/ma.ps1 cobint -Mode fast -BuildDir mybuild
 ```
 
 ### Parameters
@@ -129,7 +130,7 @@ pwsh ./scripts/ma.ps1 cobint -Mode peep -BuildDir mybuild
 | Parameter | Default | Meaning |
 | --------- | ------- | ------- |
 | `-Name` | (required) | Test app name (without `.c` extension) |
-| `-Mode` | `peep` | Build mode: `peep` or `nopeep` |
+| `-Mode` | `full` | Build mode: `full`, `fast`, or `nopeep` |
 | `-BuildDir` | `build` | Working directory for build artifacts |
 | `-Emulator` | `ntvcm` | Emulator command for running CP/M tools |
 
@@ -164,8 +165,8 @@ pwsh ./scripts/runall.ps1 [options]
 ```
 
 Run with no options, the suite uses these defaults: **parallel** execution, the
-**stack-overflow guard on** (`-fstack-check`), and **both build modes** (`peep`
-and `nopeep`). Use the switches below to change any of these.
+**stack-overflow guard on** (`-fstack-check`), and the **fast optimized-only**
+build mode. Use `-Mode full` when you want both fast and nopeep builds.
 
 ### Parameters
 
@@ -175,7 +176,8 @@ and `nopeep`). Use the switches below to change any of these.
 | `-NoStackCheck` | (off) | Disable `-fstack-check` (the guard is ON by default) |
 | `-BuildDir` | `build` | Working directory for artifacts |
 | `-BaselineDir` | `tests/baselines` | Directory of per-app `<app>.txt` baselines |
-| `-Mode` | `both` | Build mode: `peep` (optimized), `nopeep` (unoptimized), or `both` |
+| `-Mode` | `fast` | Build mode: `fast` (optimized), `nopeep` (unoptimized), or `full` |
+| `-Help` | (off) | Show help text and exit without building or running tests |
 | `-Serial` | (off) | Run sequentially instead of the default parallel mode |
 | `-ThrottleLimit` | CPU core count | Max concurrent apps in parallel mode |
 | `-Report` | (off) | Append per-app execution time and `.COM` size metrics to a CSV report; implies `-NoStackCheck` |
@@ -185,22 +187,24 @@ and `nopeep`). Use the switches below to change any of these.
 ### Build modes
 
 The `-Mode` parameter selects which optimization pass(es) to build and verify.
-**The default is `both`.**
+**The default is `fast`.**
 
-- **`peep`** — optimized: runs the `dccpeep` peephole optimizer after compiling.
+- **`fast`** — optimized: runs the `dccpeep` peephole optimizer after compiling.
 - **`nopeep`** — unoptimized: skips `dccpeep`.
-- **`both`** (default) — builds and verifies each app **twice**, once in each
+- **`full`** — builds and verifies each app **twice**, once in each
   mode, against the same baseline. A default run therefore performs two builds
-  per app (this catches optimizer bugs that change a program's output).
+  per app when you select `-Mode full` (this catches optimizer bugs that change
+  a program's output).
 
 ### Examples
 
 ```pwsh
-pwsh ./scripts/runall.ps1                       # all defaults
+pwsh ./scripts/runall.ps1                       # quick optimized-only default
+pwsh ./scripts/runall.ps1 -Help                 # show help and exit
 pwsh ./scripts/runall.ps1 -Serial               # sequential fallback
 pwsh ./scripts/runall.ps1 -NoStackCheck         # build without the stack guard
 pwsh ./scripts/runall.ps1 -ThrottleLimit 8      # cap concurrency
-pwsh ./scripts/runall.ps1 -Mode peep            # optimized build only
+pwsh ./scripts/runall.ps1 -Mode fast            # optimized build only
 pwsh ./scripts/runall.ps1 -Mode nopeep          # unoptimized build only
 pwsh ./scripts/runall.ps1 -Report               # append perf_results.csv
 pwsh ./scripts/runall.ps1 -ReportClockHz 0 -Report  # full-speed report run

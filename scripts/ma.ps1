@@ -25,8 +25,9 @@ parameters below are forwarded to Invoke-MaBuild.
   Searches: tests/{name}.c, tests/{name}.C, {name}.c, {name}.C
 
 .PARAMETER Mode
-  Build mode: "peep" or "nopeep" (default: peep).
-  Peep mode runs dccpeep optimization; nopeep skips it.
+    Build mode: "full", "fast", or "nopeep" (default: full).
+    Full mode builds both fast and nopeep. Fast mode runs dccpeep optimization;
+    nopeep skips it.
 
 .PARAMETER BuildDir
   Working directory for build artifacts (default: "build").
@@ -37,7 +38,7 @@ parameters below are forwarded to Invoke-MaBuild.
 .EXAMPLE
   pwsh ./scripts/ma.ps1 triangle
   pwsh ./scripts/ma.ps1 sieve nopeep
-  pwsh ./scripts/ma.ps1 cobint -Mode peep -BuildDir mybuild
+    pwsh ./scripts/ma.ps1 cobint -Mode fast -BuildDir mybuild
 
 .NOTES
   Environment Variables:
@@ -56,8 +57,8 @@ param(
     [string]$Name,
 
     [Parameter(Position = 1)]
-    [ValidateSet("peep", "nopeep", "opt", "optimized", "o", "noopt", "unopt", "u", "1", "0", "yes", "no", "true", "false")]
-    [string]$Mode = "peep",
+    [ValidateSet("full", "fast", "peep", "nopeep", "opt", "optimized", "o", "noopt", "unopt", "u", "1", "0", "yes", "no", "true", "false")]
+    [string]$Mode = "full",
 
     [string]$BuildDir = "build",
     [string]$Emulator = "ntvcm"
@@ -90,7 +91,7 @@ function Invoke-MaBuild {
     param(
         [Parameter(Mandatory)]
         [string]$Name,
-        [string]$Mode = "peep",
+        [string]$Mode = "fast",
         [string]$BuildDir = "build",
         [string]$Emulator = "ntvcm",
         [switch]$Quiet
@@ -103,7 +104,12 @@ function Invoke-MaBuild {
 
     # Normalize mode
     $modeLower = $Mode.ToLower()
-    $usePeep = @("peep", "opt", "optimized", "o", "1", "yes", "true") -contains $modeLower
+    if ($modeLower -eq "full") {
+        $fastOk = Invoke-MaBuild -Name $Name -Mode fast -BuildDir $BuildDir -Emulator $Emulator -Quiet:$Quiet
+        $nopeepOk = Invoke-MaBuild -Name $Name -Mode nopeep -BuildDir $BuildDir -Emulator $Emulator -Quiet:$Quiet
+        return ($fastOk -and $nopeepOk)
+    }
+    $usePeep = @("fast", "peep", "opt", "optimized", "o", "1", "yes", "true") -contains $modeLower
 
     # Resolve app name
     $base = [System.IO.Path]::GetFileNameWithoutExtension($Name)
@@ -281,7 +287,7 @@ function Invoke-MaBuild {
 # exposing Invoke-MaBuild and ConvertTo-CRLF to the caller.
 if ($MyInvocation.InvocationName -ne '.') {
     if (-not $Name) {
-        Write-Error "Name is required. Usage: ma.ps1 <name> [peep|nopeep]"
+        Write-Error "Name is required. Usage: ma.ps1 <name> [full|fast|nopeep]"
         exit 1
     }
     $ok = Invoke-MaBuild -Name $Name -Mode $Mode -BuildDir $BuildDir -Emulator $Emulator

@@ -40,11 +40,14 @@ Z80 cycle count (host-independent), the .COM size, and the ntvcm clock rate:
   Each file is named <app>.txt and holds that app's exact expected stdout.
 
 .PARAMETER Mode
-    Which optimization pass(es) to build and verify (default: "both"):
-    peep   - optimized (runs the dccpeep peephole optimizer)
+    Which optimization pass(es) to build and verify (default: "fast"):
+    fast   - optimized (runs the dccpeep peephole optimizer)
     nopeep - unoptimized (skips dccpeep)
-    both   - builds and verifies each app twice, once per mode, against the
+    full   - builds and verifies each app twice, once per mode, against the
              same baseline (two builds per app)
+
+.PARAMETER Help
+    Show this help text and exit without building or running tests.
 
 .PARAMETER Serial
   Build and verify apps sequentially in the shared build directory. By default
@@ -65,6 +68,7 @@ Z80 cycle count (host-independent), the .COM size, and the ntvcm clock rate:
 
 .EXAMPLE
   pwsh ./scripts/runall.ps1
+    pwsh ./scripts/runall.ps1 -Help
   pwsh ./scripts/runall.ps1 -NoStackCheck
   pwsh ./scripts/runall.ps1 -Mode nopeep
   pwsh ./scripts/runall.ps1 -Serial
@@ -88,15 +92,37 @@ param(
     [switch]$NoStackCheck,
     [string]$BuildDir = "build",
     [string]$BaselineDir = "tests/baselines",
-    [ValidateSet("peep", "nopeep", "both")]
-    [string]$Mode = "both",
+    [ValidateSet("fast", "nopeep", "full")]
+    [string]$Mode = "fast",
+    [switch]$Help,
     [int]$RunTimeout = 60,
     [switch]$Serial,
     [int]$ThrottleLimit = [Environment]::ProcessorCount,
     [switch]$Report,
     [string]$ReportFile = "perf_results.csv",
-    [long]$ReportClockHz = 400000000
+    [long]$ReportClockHz = 400000000,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$ExtraArgs
 )
+
+foreach ($extraArg in $ExtraArgs) {
+    if ($extraArg -match '^-mode=(fast|nopeep|full)$') {
+        $Mode = $Matches[1]
+    }
+    elseif ($extraArg -match '^-mode=') {
+        Write-Error "Invalid mode '$($extraArg.Substring(6))'. Valid modes are: fast, nopeep, full."
+        exit 1
+    }
+    else {
+        Write-Error "Unknown argument: $extraArg"
+        exit 1
+    }
+}
+
+if ($Help) {
+    Get-Help -Detailed $PSCommandPath
+    return
+}
 
 # Parallel is the default; -Serial or -Report forces the sequential fallback.
 $Parallel = -not ($Serial -or $Report)
@@ -356,6 +382,7 @@ function Invoke-AppTest {
     }
 
     foreach ($buildMode in $Modes) {
+        $displayMode = if ($buildMode -eq "peep") { "fast" } else { $buildMode }
         if ($StackSize) { $env:DCC_STACK_SIZE = $StackSize }
         $ok = $false
         try {
@@ -367,11 +394,11 @@ function Invoke-AppTest {
         }
 
         if (-not $ok) {
-            $lines.Add("  Building $AppName ($buildMode)... FAILED")
+            $lines.Add("  Building $AppName ($displayMode)... FAILED")
             $appPassed = $false
             break
         }
-        $lines.Add("  Building $AppName ($buildMode)... done")
+        $lines.Add("  Building $AppName ($displayMode)... done")
 
         # Run from the build dir so interpreters find their staged data fixtures.
         $upper = $AppName.ToUpper()
@@ -542,7 +569,17 @@ $failed = 0
 $skipped = 0
 $failedApps = @()
 
-$modes = if ($Mode -eq "both") { @("peep", "nopeep") } else { @($Mode) }
+$modes = switch ($Mode) {
+    "fast"   { @("peep") }
+    "nopeep" { @("nopeep") }
+    "full"   { @("peep", "nopeep") }
+}
+
+$optimisationSummary = switch ($Mode) {
+    "fast"   { "fast" }
+    "nopeep" { "nopeep" }
+    "full"   { "full (fast + nopeep)" }
+}
 
 $emulatorRunArgs = @()
 if (Test-IsNtvcmEmulator $Emulator) {
@@ -579,6 +616,7 @@ foreach ($app in $testFiles) {
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "STARTING BUILD AND RUN SUITE" -ForegroundColor Cyan
+Write-Host "Mode: $optimisationSummary" -ForegroundColor Cyan
 if ($Parallel) {
     Write-Host "(parallel, throttle = $ThrottleLimit)" -ForegroundColor Cyan
 }
@@ -774,11 +812,6 @@ Write-Host "  Passed:       $passed" -ForegroundColor Green
 Write-Host "  Failed:       $failed" -ForegroundColor $(if ($failed -eq 0) { "Green" } else { "Red" })
 Write-Host "  Skipped:      $skipped"
 Write-Host "  Total time:   $suiteElapsedStr"
-$optimisationSummary = switch ($Mode) {
-    "peep"   { "peep" }
-    "nopeep" { "nopeep" }
-    "both"   { "both (peep + nopeep)" }
-}
 Write-Host "  Optimisation: $optimisationSummary"
 
 if ($failed -gt 0) {

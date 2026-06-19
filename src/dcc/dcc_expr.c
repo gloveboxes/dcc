@@ -2940,6 +2940,7 @@ static void gen_primary_postfix_chain(void)
                 emit("\tpush hl\n");
                 gen_expr();
                 expect(']');
+                g_expr_type = cur_type; /* restore type clobbered by gen_expr() */
                 if (is_array)
                     elem_size = field_array_index_stride(type_index_elem_size(cur_type),
                                     fa_dimc, fa_dims, array_index_count);

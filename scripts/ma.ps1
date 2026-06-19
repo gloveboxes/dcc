@@ -67,7 +67,13 @@ param(
 # LF, then emits CRLF without a BOM so M80 sees clean bytes.
 function ConvertTo-CRLF {
     param([string]$FilePath)
-    if (-not (Test-Path $FilePath)) { return }
+    if (-not (Test-Path -LiteralPath $FilePath)) { return }
+    # Resolve to an absolute filesystem path. The [System.IO.File] APIs below
+    # resolve relative paths against [Environment]::CurrentDirectory, which is
+    # NOT kept in sync with PowerShell's $PWD (e.g. when the caller cd'd into
+    # the repo from another directory). Resolve via the PowerShell provider so
+    # the path is anchored to $PWD, matching the Test-Path check above.
+    $FilePath = (Resolve-Path -LiteralPath $FilePath).ProviderPath
     $text = [System.IO.File]::ReadAllText($FilePath)
     $text = $text -replace "`r`n", "`n"   # collapse existing CRLF to LF
     $text = $text -replace "`r", "`n"      # handle any lone CR

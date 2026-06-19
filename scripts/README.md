@@ -154,7 +154,7 @@ The lightweight stack-overflow guard (`-fstack-check`) is **on by default**;
 pass `-NoStackCheck` to build without it.
 Pass `-Report` to append per-app run-time and `.COM` size measurements while
 the suite runs. Report mode implies `-NoStackCheck`; when using `ntvcm`, normal
-app runs use `-s:0` for full speed and report runs use a fixed 1 GHz clock by
+app runs use `-s:0` for full speed and report runs use a fixed 400 MHz clock by
 default for more comparable timings across host machines.
 
 ### Usage
@@ -180,7 +180,7 @@ and `nopeep`). Use the switches below to change any of these.
 | `-ThrottleLimit` | CPU core count | Max concurrent apps in parallel mode |
 | `-Report` | (off) | Append per-app execution time and `.COM` size metrics to a CSV report; implies `-NoStackCheck` |
 | `-ReportFile` | `perf_results.csv` | CSV path used by `-Report` |
-| `-ReportClockHz` | `1000000000` | ntvcm clock speed used for measured report runs; set to `0` for full-speed report runs |
+| `-ReportClockHz` | `400000000` | ntvcm clock speed used for measured report runs; set to `0` for full-speed report runs |
 
 ### Build modes
 

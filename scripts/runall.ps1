@@ -18,7 +18,7 @@ Pass -Report to append per-app metrics to a CSV report while the suite runs; no
 separate benchmark pass is required. Report mode disables stack checking and
 forces serial execution so the measurements reflect normal builds without
 parallel-run noise. When using ntvcm, normal app runs explicitly use full speed
-(`-s:0`), while report mode runs apps at a fixed 1 GHz emulator clock by
+(`-s:0`), while report mode runs apps at a fixed 400 MHz emulator clock by
 default and passes -p so ntvcm emits its own performance data at app exit. The
 report records, per optimisation mode, ntvcm's reported elapsed milliseconds and
 Z80 cycle count (host-independent), the .COM size, and the ntvcm clock rate:
@@ -61,7 +61,7 @@ Z80 cycle count (host-independent), the .COM size, and the ntvcm clock rate:
     CSV path for -Report output (default: "perf_results.csv").
 
 .PARAMETER ReportClockHz
-    ntvcm clock speed used for measured app runs in -Report mode (default: 1000000000).
+    ntvcm clock speed used for measured app runs in -Report mode (default: 400000000).
 
 .EXAMPLE
   pwsh ./scripts/runall.ps1
@@ -95,7 +95,7 @@ param(
     [int]$ThrottleLimit = [Environment]::ProcessorCount,
     [switch]$Report,
     [string]$ReportFile = "perf_results.csv",
-    [long]$ReportClockHz = 1000000000
+    [long]$ReportClockHz = 400000000
 )
 
 # Parallel is the default; -Serial or -Report forces the sequential fallback.

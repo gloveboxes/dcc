@@ -56,6 +56,14 @@ if not errorlevel 1 (
     set "STRIP_FLAGS=%STRIP_FLAGS% -k _pffio"
 )
 
+rem Enable long printf only when the source appears to use %ld/%lu/%lx/%lX/%ls.
+rem This keeps ordinary binaries smaller because _pflng and 32-bit helpers are not rooted.
+findstr /C:"%%ld" /C:"%%lu" /C:"%%lx" /C:"%%lX" /C:"%%ls" "%SOURCE_FILE%" >nul 2>&1
+if not errorlevel 1 (
+    set "DCC_FLAGS=%DCC_FLAGS% -flongio"
+    set "STRIP_FLAGS=%STRIP_FLAGS% -k _pflng"
+)
+
 rem Enable the lightweight stack-overflow guard when the source opts in with a
 rem DCC_STACK_CHECK marker, or when DCC_FORCE_STACK_CHECK=1 is set (runall.bat
 rem --stack-check guards the whole suite).

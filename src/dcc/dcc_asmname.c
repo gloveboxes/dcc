@@ -116,8 +116,19 @@ const char *asm_name_for(const char *cname)
 {
     int i;
 
-    if (opt_floatio && !strcmp(cname, "printf"))
-        return "_pffio";
+    if (!strcmp(cname, "printf")) {
+        if (opt_floatio && opt_longio) return "_pflio";
+        if (opt_floatio)               return "_pffio";
+        if (opt_longio)                return "_pflng";
+    }
+
+    if (opt_longio) {
+        if (!strcmp(cname, "sprintf"))  return "_splng";
+        if (!strcmp(cname, "fprintf"))  return "_fplng";
+        if (!strcmp(cname, "vprintf"))  return "_vplng";
+        if (!strcmp(cname, "vsprintf")) return "_vslng";
+        if (!strcmp(cname, "vfprintf")) return "_vflng";
+    }
 
     {
         const char *rtlname;

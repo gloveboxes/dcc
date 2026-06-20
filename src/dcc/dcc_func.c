@@ -1816,6 +1816,32 @@ void parse_function_or_global(int base_type)
                 check_undefined_user_labels();
                 emit_function_epilogue();
 
+                /* Emit the __mrun shim that start: dispatches to.  When main has
+                 * no args the shim omits any reference to __build_argv/__argc/argv
+                 * so dccrtlstrip drops those runtime blocks (~350 bytes). */
+                if (strcmp(name, "main") == 0) {
+                    int has_args = !(s->has_proto && s->proto_nargs == 0);
+                    fprintf(outf, "\n\tpublic __mrun\n");
+                    if (has_args) {
+                        fprintf(outf, "\textrn __build_argv\n");
+                        fprintf(outf, "\textrn __argc\n");
+                        fprintf(outf, "\textrn argv\n");
+                        fprintf(outf, "__mrun:\n");
+                        fprintf(outf, "\tcall __build_argv\n");
+                        fprintf(outf, "\tld hl,argv\n");
+                        fprintf(outf, "\tpush hl\n");
+                        fprintf(outf, "\tld hl,(__argc)\n");
+                        fprintf(outf, "\tpush hl\n");
+                        fprintf(outf, "\tcall _main\n");
+                        fprintf(outf, "\tpop de\n");
+                        fprintf(outf, "\tpop de\n");
+                    } else {
+                        fprintf(outf, "__mrun:\n");
+                        fprintf(outf, "\tcall _main\n");
+                    }
+                    fprintf(outf, "\tret\n");
+                }
+
                 posi = body_end_pos;
                 tok_start_pos = body_end_tok_start;
                 line_no = body_end_line;

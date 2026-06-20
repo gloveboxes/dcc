@@ -852,7 +852,7 @@ void print_version(void)
 
 void usage(void)
 {
-    fprintf(stderr, "usage: dcc [-c|-module] [-f|-ffloatio] [-v] [-s|-stack bytes] [-Idir] [-Dname[=value]] [-Uname] input.c -o output.mac\n");
+    fprintf(stderr, "usage: dcc [-c|-module] [-f|-ffloatio] [-fl|-flongio] [-v] [-s|-stack bytes] [-Idir] [-Dname[=value]] [-Uname] input.c -o output.mac\n");
     exit(1);
 }
 
@@ -865,6 +865,7 @@ void print_help(void)
     printf("  -o <file>        write M80 assembly to <file> ('-' for stdout)\n");
     printf("  -c, -module      emit a linkable helper module (not a final program)\n");
     printf("  -f, -ffloatio    enable floating-point printf/scanf support\n");
+    printf("  -fl, -flongio    enable 32-bit long printf format specifiers (%%ld/%%lu/%%lx)\n");
     printf("  -s, -stack <bytes>   reserve <bytes> for the C stack (default 512)\n");
     printf("  -fstack-check    abort gracefully if the stack overflows its reserve\n");
     printf("  -I<dir>          add <dir> to the include search path\n");
@@ -891,6 +892,8 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-ffloatio") || !strcmp(argv[i], "-f")) {
             opt_floatio = 1;
+        } else if (!strcmp(argv[i], "-flongio") || !strcmp(argv[i], "-fl")) {
+            opt_longio = 1;
         } else if (!strcmp(argv[i], "-fstack-check")) {
             opt_stack_check = 1;
         } else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--version")) {

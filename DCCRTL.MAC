@@ -4,7 +4,7 @@
 ;
 ;        org     100h
 
-        extrn   _main
+        extrn   __mrun     ; app-supplied main shim (see dcc_func.c)
         extrn   __hstart   ; heap start
         extrn   __bssb     ; bss begin
         extrn   __bsse     ; bss end
@@ -32,8 +32,6 @@ __brk:          dw      0
 __hlimit:       dw      0
 
 start:
-        call    __build_argv
-
         ; Initialize heap allocator.
         ; __hlimit = initial SP - __stack_size
         ld      hl,0
@@ -69,11 +67,7 @@ start:
         ldir
 bss_done:
 
-        ld      hl,argv
-        push    hl              ; argv
-        ld      hl,(__argc)
-        push    hl              ; argc
-        call    _main
+        call    __mrun
         call    __cflush                ; flush any buffered console output
         call    __cpm_set_retcode
         jp      0000h
@@ -92,6 +86,8 @@ bss_done:
 ;   argv[1..] = pointers into __argbuf
 
         public  __build_argv
+        public  __argc
+        public  argv
 
 __build_argv:
         ld      hl,argv0
@@ -179,8 +175,6 @@ argv:
 __argbuf:
         ds      128
 
-COBSZ   equ     128
-
 ; __conout: output char in E to console with LF->CR/LF translation.
 ; Buffered: the character is appended to __cobuf and the buffer is flushed to
 ; the BDOS lazily.  The flush policy is set by setvbuf()/setbuf():
@@ -189,6 +183,8 @@ COBSZ   equ     128
 ;                1 (_IOLBF)  additionally flush at each newline (the default);
 ;                2 (_IONBF)  flush after every character.
 ; Preserves all registers except F (callers rely on this).
+        public  __conout
+COBSZ   equ     128
 __conout:
         push    af
         push    bc
@@ -3014,7 +3010,11 @@ pf_pct_done_width:
         cp      'X'
         jp      z,pf_xu
         cp      'l'
-        jp      z,pf_l
+        jr      nz,pf_pct_not_l
+        push    hl                      ; save fmt ptr before clobbering HL
+        ld      hl,(pf_long_hook)
+        jp      (hl)                    ; handler pops HL to restore fmt ptr
+pf_pct_not_l:
         cp      'f'
         jr      nz,pf_emit_and_loop
         push    hl                      ; save fmt ptr before clobbering HL
@@ -3289,151 +3289,6 @@ pf_x:
         pop     hl
         jp      pf_loop
 
-pf_l:
-        ; 'l' length modifier: read next char for ld/lu/lx/ls
-        ld      a,(hl)
-        inc     hl
-        cp      'd'
-        jp      z,pf_ld
-        cp      'u'
-        jp      z,pf_lu
-        cp      'x'
-        jp      z,pf_lxl
-        cp      'X'
-        jp      z,pf_lxu
-        cp      's'
-        jp      z,pf_ls
-        call    pf_emit_a
-        jp      pf_loop
-
-pf_ls:
-        ; wchar_t * string.  DCC wchar_t is 16-bit for L"..." literals.
-        ; Print the low byte as ASCII and ignore the high byte.
-        push    hl
-        call    pf_arg_hl
-        push    de
-        push    hl
-        call    pf_wstrlen_hl      ; A = wide string length, HL preserved by stack
-        call    pf_pad_a
-        pop     hl
-pf_ls_loop:
-        ld      a,(hl)
-        inc     hl
-        ld      e,a                ; save low byte
-        ld      a,(hl)
-        inc     hl                 ; skip high byte
-        or      e
-        jr      z,pf_ls_done
-        ld      a,e
-        call    pf_emit_a
-        jr      pf_ls_loop
-pf_ls_done:
-        pop     de
-        pop     hl
-        jp      pf_loop
-
-pf_wstrlen_hl:
-        push    hl
-        ld      c,0
-pf_wstrlen_loop:
-        ld      a,(hl)
-        inc     hl
-        ld      e,a
-        ld      a,(hl)
-        inc     hl
-        or      e
-        jr      z,pf_wstrlen_done
-        inc     c
-        jr      pf_wstrlen_loop
-pf_wstrlen_done:
-        ld      a,c
-        pop     hl
-        ret
-
-pf_ld:
-        ; Signed 32-bit decimal
-        push    hl
-        call    pf_arg_dehl     ; loads __pf32_l/__pf32_h, advances DE by 4
-        push    de
-        ld      hl,(__pf32_h)
-        bit     7,h
-        jr      z,pf_ld_pos
-        ; Negative: negate, build digits once, then print with '-'
-        call    pf_neg32
-        call    pf_build_u32    ; A = count, HL -> first digit
-        ld      (pf_digit),a
-        call    pf_zero_prec_blank
-        push    hl
-        ld      a,1             ; sign length = 1 ('-')
-        call    pf_zsetup       ; honour the '0' zero-pad flag
-        call    pf_efflen       ; A = max(digits, precision)
-        inc     a               ; +1 for '-'
-        call    pf_pad_a
-        ld      a,'-'
-        call    pf_emit_a
-        jr      pf_ld_tail
-pf_ld_pos:
-        call    pf_build_u32    ; A = count, HL -> first digit
-        ld      (pf_digit),a
-        call    pf_zero_prec_blank
-        push    hl
-        xor     a               ; sign length = 0
-        call    pf_zsetup
-        call    pf_efflen       ; A = max(digits, precision)
-        call    pf_pad_a
-pf_ld_tail:
-        pop     hl
-        call    pf_zfd          ; precision/zero-fill then emit digits
-        pop     de
-        pop     hl
-        jp      pf_loop
-
-pf_lu:
-        ; Unsigned 32-bit decimal
-        push    hl
-        call    pf_arg_dehl
-        push    de
-        call    pf_build_u32    ; A = count, HL -> first digit
-        ld      (pf_digit),a
-        call    pf_zero_prec_blank
-        push    hl
-        xor     a               ; unsigned: no sign
-        call    pf_zsetup
-        call    pf_efflen       ; A = max(digits, precision)
-        call    pf_pad_a
-        pop     hl
-        call    pf_zfd
-        pop     de
-        pop     hl
-        jp      pf_loop
-
-pf_lxu:
-        ld      a,1                     ; %lX -> uppercase A-F
-        ld      (pf_hexup),a
-        jr      pf_lx
-pf_lxl:
-        xor     a                       ; %lx -> lowercase a-f
-        ld      (pf_hexup),a
-pf_lx:
-        ; Unsigned 32-bit hex (%lx/%lX): minimum-width hex digits.
-        ; Width still works normally, so %08lx emits eight digits.
-        push    hl
-        call    pf_arg_dehl     ; loads __pf32_l/__pf32_h, advances DE by 4
-        push    de
-        call    pf_build_hex32  ; A = digit count, HL -> first hex digit
-        ld      (pf_digit),a
-        call    pf_zero_prec_blank
-        push    hl
-        xor     a               ; unsigned: no sign
-        call    pf_zsetup       ; honour the '0' zero-pad flag
-        call    pf_efflen       ; A = max(digits, precision)
-        call    pf_pad_a        ; emit leading spaces when needed
-        pop     hl
-        call    pf_zfd          ; precision/zero-fill then emit digits
-        pop     de
-        pop     hl
-        jp      pf_loop
-
 pf_done:
         ret                     ; count in BC; caller cleans up
 
@@ -3627,64 +3482,6 @@ pf_hnc_up:
         pop     af
         ret
 
-; pf_build_hex32: convert __pf32_h:__pf32_l (unsigned 32-bit) to minimal hex text.
-; Out: A = digit count, HL -> first digit in pf_decbuf32, null-terminated.
-; Uses pf_hexup to choose lowercase/uppercase.  Preserves BC and DE.
-pf_build_hex32:
-        push    ix
-        push    de
-        ld      ix,pf_decbuf32
-        ld      d,0             ; D = digit count / nonzero seen
-
-        ld      hl,(__pf32_h)
-        ld      a,h             ; high word, high byte, high nibble
-        rrca
-        rrca
-        rrca
-        rrca
-        call    pf_hex_store_nz
-
-        ld      a,h             ; high word, high byte, low nibble
-        call    pf_hex_store_nz
-
-        ld      a,l             ; high word, low byte, high nibble
-        rrca
-        rrca
-        rrca
-        rrca
-        call    pf_hex_store_nz
-
-        ld      a,l             ; high word, low byte, low nibble
-        call    pf_hex_store_nz
-
-        ld      hl,(__pf32_l)
-        ld      a,h             ; low word, high byte, high nibble
-        rrca
-        rrca
-        rrca
-        rrca
-        call    pf_hex_store_nz
-
-        ld      a,h             ; low word, high byte, low nibble
-        call    pf_hex_store_nz
-
-        ld      a,l             ; low word, low byte, high nibble
-        rrca
-        rrca
-        rrca
-        rrca
-        call    pf_hex_store_nz
-
-        ld      a,l             ; low word, low byte, low nibble; always emit one digit
-        call    pf_hex_store_force
-
-        ld      (ix+0),0
-        ld      a,d             ; return digit count
-        ld      hl,pf_decbuf32
-        pop     de
-        pop     ix
-        ret
-
 pf_print_x:
         ld      a,h
         call    pf_hex_byte
@@ -3771,19 +3568,6 @@ pf_arg_dehl:
         pop     bc              ; restore running char count
         ret
 
-; pf_neg32: negate __pf32_l/__pf32_h (two's complement)
-pf_neg32:
-        ld      de,(__pf32_l)
-        ld      hl,0
-        or      a
-        sbc     hl,de
-        ld      (__pf32_l),hl
-        ld      de,(__pf32_h)
-        ld      hl,0
-        sbc     hl,de
-        ld      (__pf32_h),hl
-        ret
-
 ; pf_divu32_10: divide __pf32_l/__pf32_h by 10
 ; Output: __pf32_l/__pf32_h = quotient, A = remainder (0-9)
 ; Register-based: holds the 32-bit value in DE:HL and uses the same in-place
@@ -3868,6 +3652,13 @@ pf_float_stub:
         jp      pf_loop
 pf_float_hook:
         dw      pf_float_stub
+pf_long_stub:
+        pop     hl                      ; restore fmt ptr pushed by dispatch
+        ld      a,'l'
+        call    pf_emit_a
+        jp      pf_loop
+pf_long_hook:
+        dw      pf_long_stub
 
 ; printf/sprintf/fprintf shared sink and buffer (here so they stay in the
 ; _printf block; placing them elsewhere forces dccrtlstrip to keep that block)
@@ -4089,6 +3880,320 @@ pf_rndtab:
         dw      0BF95H,03356H        ; 0.5e-7
         dw      0CC77H,031ABH        ; 0.5e-8
         dw      0705FH,03009H        ; 0.5e-9
+
+; ---- long-enabled printf (-flongio) -----------------------------------------
+; _pflng and friends are drop-ins for the printf family that pre-install the
+; 32-bit integer handler via pf_long_hook before calling __pf_run.
+; dccrtlstrip omits this block (and all 32-bit long helpers below) for programs
+; that never use %ld / %lu / %lx / %ls.
+; The hook is installed permanently on first call so that all subsequent
+; printf-family calls (fprintf, sprintf, vfprintf, etc.) also get long support.
+        public  _pflng
+        public  _splng
+        public  _fplng
+        public  _vplng
+        public  _vslng
+        public  _vflng
+_pflng:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        push    bc
+        push    de
+        ld      hl,0
+        ld      (pf_sink),hl            ; console mode
+        ld      hl,pf_lng               ; install long handler (permanent)
+        ld      (pf_long_hook),hl
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      de,6
+        ld      bc,0
+        call    __pf_run
+        ld      h,b
+        ld      l,c
+        pop     de
+        pop     bc
+        pop     ix
+        ret
+
+; pf_lng: the %l handler installed via pf_long_hook when _pflng (or _pflio) is
+; active.  Lives in the _pflng block so dccrtlstrip omits it for non-long builds.
+; Uses __pf32_l/__pf32_h, pf_arg_dehl, pf_build_u32, pf_divu32_10 from _printf.
+pf_lng:
+        pop     hl                      ; restore fmt ptr pushed by dispatch
+        ld      a,(hl)
+        inc     hl
+        cp      'd'
+        jp      z,pf_ld
+        cp      'u'
+        jp      z,pf_lu
+        cp      'x'
+        jp      z,pf_lxl
+        cp      'X'
+        jp      z,pf_lxu
+        cp      's'
+        jp      z,pf_ls
+        call    pf_emit_a
+        jp      pf_loop
+
+pf_ls:
+        ; wchar_t * string.  DCC wchar_t is 16-bit for L"..." literals.
+        ; Print the low byte as ASCII and ignore the high byte.
+        push    hl
+        call    pf_arg_hl
+        push    de
+        push    hl
+        call    pf_wstrlen_hl      ; A = wide string length, HL preserved by stack
+        call    pf_pad_a
+        pop     hl
+pf_ls_loop:
+        ld      a,(hl)
+        inc     hl
+        ld      e,a                ; save low byte
+        ld      a,(hl)
+        inc     hl                 ; skip high byte
+        or      e
+        jr      z,pf_ls_done
+        ld      a,e
+        call    pf_emit_a
+        jr      pf_ls_loop
+pf_ls_done:
+        pop     de
+        pop     hl
+        jp      pf_loop
+
+pf_wstrlen_hl:
+        push    hl
+        ld      c,0
+pf_wstrlen_loop:
+        ld      a,(hl)
+        inc     hl
+        ld      e,a
+        ld      a,(hl)
+        inc     hl
+        or      e
+        jr      z,pf_wstrlen_done
+        inc     c
+        jr      pf_wstrlen_loop
+pf_wstrlen_done:
+        ld      a,c
+        pop     hl
+        ret
+
+pf_ld:
+        ; Signed 32-bit decimal
+        push    hl
+        call    pf_arg_dehl     ; loads __pf32_l/__pf32_h, advances DE by 4
+        push    de
+        ld      hl,(__pf32_h)
+        bit     7,h
+        jr      z,pf_ld_pos
+        ; Negative: negate, build digits once, then print with '-'
+        call    pf_neg32
+        call    pf_build_u32    ; A = count, HL -> first digit
+        ld      (pf_digit),a
+        call    pf_zero_prec_blank
+        push    hl
+        ld      a,1             ; sign length = 1 ('-')
+        call    pf_zsetup       ; honour the '0' zero-pad flag
+        call    pf_efflen       ; A = max(digits, precision)
+        inc     a               ; +1 for '-'
+        call    pf_pad_a
+        ld      a,'-'
+        call    pf_emit_a
+        jr      pf_ld_tail
+pf_ld_pos:
+        call    pf_build_u32    ; A = count, HL -> first digit
+        ld      (pf_digit),a
+        call    pf_zero_prec_blank
+        push    hl
+        xor     a               ; sign length = 0
+        call    pf_zsetup
+        call    pf_efflen       ; A = max(digits, precision)
+        call    pf_pad_a
+pf_ld_tail:
+        pop     hl
+        call    pf_zfd          ; precision/zero-fill then emit digits
+        pop     de
+        pop     hl
+        jp      pf_loop
+
+pf_lu:
+        ; Unsigned 32-bit decimal
+        push    hl
+        call    pf_arg_dehl
+        push    de
+        call    pf_build_u32    ; A = count, HL -> first digit
+        ld      (pf_digit),a
+        call    pf_zero_prec_blank
+        push    hl
+        xor     a               ; unsigned: no sign
+        call    pf_zsetup
+        call    pf_efflen       ; A = max(digits, precision)
+        call    pf_pad_a
+        pop     hl
+        call    pf_zfd
+        pop     de
+        pop     hl
+        jp      pf_loop
+
+pf_lxu:
+        ld      a,1                     ; %lX -> uppercase A-F
+        ld      (pf_hexup),a
+        jr      pf_lx
+pf_lxl:
+        xor     a                       ; %lx -> lowercase a-f
+        ld      (pf_hexup),a
+pf_lx:
+        ; Unsigned 32-bit hex (%lx/%lX): minimum-width hex digits.
+        ; Width still works normally, so %08lx emits eight digits.
+        push    hl
+        call    pf_arg_dehl     ; loads __pf32_l/__pf32_h, advances DE by 4
+        push    de
+        call    pf_build_hex32  ; A = digit count, HL -> first hex digit
+        ld      (pf_digit),a
+        call    pf_zero_prec_blank
+        push    hl
+        xor     a               ; unsigned: no sign
+        call    pf_zsetup       ; honour the '0' zero-pad flag
+        call    pf_efflen       ; A = max(digits, precision)
+        call    pf_pad_a        ; emit leading spaces when needed
+        pop     hl
+        call    pf_zfd          ; precision/zero-fill then emit digits
+        pop     de
+        pop     hl
+        jp      pf_loop
+
+; pf_neg32: negate __pf32_l/__pf32_h (two's complement)
+pf_neg32:
+        ld      de,(__pf32_l)
+        ld      hl,0
+        or      a
+        sbc     hl,de
+        ld      (__pf32_l),hl
+        ld      de,(__pf32_h)
+        ld      hl,0
+        sbc     hl,de
+        ld      (__pf32_h),hl
+        ret
+
+; pf_build_hex32: convert __pf32_h:__pf32_l (unsigned 32-bit) to minimal hex text.
+; Out: A = digit count, HL -> first digit in pf_decbuf32, null-terminated.
+; Uses pf_hexup/pf_hex_store_nz/pf_hex_store_force from the _printf block.
+pf_build_hex32:
+        push    ix
+        push    de
+        ld      ix,pf_decbuf32
+        ld      d,0             ; D = digit count / nonzero seen
+
+        ld      hl,(__pf32_h)
+        ld      a,h             ; high word, high byte, high nibble
+        rrca
+        rrca
+        rrca
+        rrca
+        call    pf_hex_store_nz
+
+        ld      a,h             ; high word, high byte, low nibble
+        call    pf_hex_store_nz
+
+        ld      a,l             ; high word, low byte, high nibble
+        rrca
+        rrca
+        rrca
+        rrca
+        call    pf_hex_store_nz
+
+        ld      a,l             ; high word, low byte, low nibble
+        call    pf_hex_store_nz
+
+        ld      hl,(__pf32_l)
+        ld      a,h             ; low word, high byte, high nibble
+        rrca
+        rrca
+        rrca
+        rrca
+        call    pf_hex_store_nz
+
+        ld      a,h             ; low word, high byte, low nibble
+        call    pf_hex_store_nz
+
+        ld      a,l             ; low word, low byte, high nibble
+        rrca
+        rrca
+        rrca
+        rrca
+        call    pf_hex_store_nz
+
+        ld      a,l             ; low word, low byte, low nibble; always emit one digit
+        call    pf_hex_store_force
+
+        ld      (ix+0),0
+        ld      a,d             ; return digit count
+        ld      hl,pf_decbuf32
+        pop     de
+        pop     ix
+        ret
+
+; Thin long-aware wrappers for the rest of the printf family.  Each installs
+; pf_long_hook permanently, then tail-jumps to the corresponding original entry
+; point.  Because these are JP (not CALL), the caller's stack frame is unchanged:
+; IX+N offsets inside _sprintf/_fprintf/etc. are correct.
+_splng:
+        ld      hl,pf_lng
+        ld      (pf_long_hook),hl
+        jp      _sprintf
+
+_fplng:
+        ld      hl,pf_lng
+        ld      (pf_long_hook),hl
+        jp      _fprintf
+
+_vplng:
+        ld      hl,pf_lng
+        ld      (pf_long_hook),hl
+        jp      _vprintf
+
+_vslng:
+        ld      hl,pf_lng
+        ld      (pf_long_hook),hl
+        jp      _vsprintf
+
+_vflng:
+        ld      hl,pf_lng
+        ld      (pf_long_hook),hl
+        jp      _vfprintf
+
+; ---- long+float printf (-ffloatio -flongio) ----------------------------------
+; _pflio is a drop-in for printf that pre-installs both the float handler and the
+; 32-bit integer handler before calling __pf_run.  The ld hl,pf_f and ld hl,pf_lng
+; references inside _pflio cause dccrtlstrip to keep both _pffio and _pflng.
+        public  _pflio
+_pflio:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        push    bc
+        push    de
+        ld      hl,0
+        ld      (pf_sink),hl            ; console mode
+        ld      hl,pf_f                 ; install float handler
+        ld      (pf_float_hook),hl
+        ld      hl,pf_lng               ; install long handler
+        ld      (pf_long_hook),hl
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      de,6
+        ld      bc,0
+        call    __pf_run
+        ld      hl,pf_float_stub        ; restore float hook; long hook stays
+        ld      (pf_float_hook),hl
+        ld      h,b
+        ld      l,c
+        pop     de
+        pop     bc
+        pop     ix
+        ret
 
         public  _exit
 _exit:

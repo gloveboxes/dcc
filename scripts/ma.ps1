@@ -178,11 +178,15 @@ function Invoke-MaBuild {
         return $false
     }
 
-    # Detect floatio requirement
+    # Detect floatio / longio requirements
     $dccFloatio = 0
+    $dccLongio = 0
     $sourceContent = Get-Content -Path $sourceFile -Raw
     if ($sourceContent -match '%[-+ #0-9.*]*[fF]') {
         $dccFloatio = 1
+    }
+    if ($sourceContent -match '%[-+ #0-9.*]*l[duxXs]') {
+        $dccLongio = 1
     }
 
     # Detect/enable stack check
@@ -199,9 +203,8 @@ function Invoke-MaBuild {
 
     # Compile to .MAC
     $dccArgs = @($dccStackChk, "-stack", $dccStackSize)
-    if ($dccFloatio -eq 1) {
-        $dccArgs = @($dccStackChk, "-ffloatio", "-stack", $dccStackSize)
-    }
+    if ($dccFloatio -eq 1) { $dccArgs += "-ffloatio" }
+    if ($dccLongio  -eq 1) { $dccArgs += "-flongio"  }
     $dccArgs += @($sourceFile, "-o", $appMac)
 
     Write-Step "  Compiling with: $DCC $($dccArgs -join ' ')"
@@ -236,11 +239,10 @@ function Invoke-MaBuild {
     Copy-Item -Path $rootRtlSrc -Destination $rtlSrc -Force
     ConvertTo-CRLF $rtlSrc
 
-    $stripArgs = @("-r", $rtlSrc, "-o", $rtlMin)
-    if ($dccFloatio -eq 1) {
-        $stripArgs = @("-k", "_pffio", "-r", $rtlSrc, "-o", $rtlMin)
-    }
-    $stripArgs += $appMac
+    $stripArgs = @()
+    if ($dccFloatio -eq 1) { $stripArgs += @("-k", "_pffio") }
+    if ($dccLongio  -eq 1) { $stripArgs += @("-k", "_pflng") }
+    $stripArgs += @("-r", $rtlSrc, "-o", $rtlMin, $appMac)
 
     $stripOut = & $DCCRTLSTRIP @stripArgs 2>&1
     if (-not $Quiet) { $stripOut | Write-Host }

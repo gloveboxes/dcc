@@ -100,10 +100,14 @@ to_crlf() {
 }
 
 # Detect optional compiler/runtime roots from source. Keep this conservative so
-# normal non-float programs do not pull in float printf code.
+# ordinary programs do not pull in float or long printf code.
 dcc_floatio=0
 if grep -Eiq '%[-+ #0-9.*]*[fF]' "$source_file"; then
     dcc_floatio=1
+fi
+dcc_longio=0
+if grep -Eiq '%[-+ #0-9.*]*l[duxXs]' "$source_file"; then
+    dcc_longio=1
 fi
 
 # Enable the lightweight stack-overflow guard (-fstack-check) when the source
@@ -124,11 +128,14 @@ rm -f "$app_mac" "$app_rel" "$app_com" "${build_dir}/${upper_base}.PRN" \
 # DCC_STACK_SIZE overrides the default 512-byte C stack reserve (handy for
 # sweeping stack sizes under -fstack-check).
 dcc_stack_size="${DCC_STACK_SIZE:-512}"
+dcc_io_flags=""
 if [ "$dcc_floatio" -eq 1 ]; then
-    "$DCC" ${dcc_stackchk} -ffloatio -stack "$dcc_stack_size" "$source_file" -o "$app_mac"
-else
-    "$DCC" ${dcc_stackchk} -stack "$dcc_stack_size" "$source_file" -o "$app_mac"
+    dcc_io_flags="$dcc_io_flags -ffloatio"
 fi
+if [ "$dcc_longio" -eq 1 ]; then
+    dcc_io_flags="$dcc_io_flags -flongio"
+fi
+"$DCC" ${dcc_stackchk} $dcc_io_flags -stack "$dcc_stack_size" "$source_file" -o "$app_mac"
 
 if [ "$use_peep" -eq 1 ]; then
     "$DCCPEEP" "$app_mac" "$peep_tmp"
@@ -146,11 +153,14 @@ to_crlf "$app_mac"
 # Strip runtime using the final app .MAC, then assemble/link uppercase modules.
 cp -f "$root_rtl_src" "$rtl_src"
 to_crlf "$rtl_src"
+strip_keep=""
 if [ "$dcc_floatio" -eq 1 ]; then
-    "$DCCRTLSTRIP" -k _pffio -r "$rtl_src" -o "$rtl_min" "$app_mac"
-else
-    "$DCCRTLSTRIP" -r "$rtl_src" -o "$rtl_min" "$app_mac"
+    strip_keep="$strip_keep -k _pffio"
 fi
+if [ "$dcc_longio" -eq 1 ]; then
+    strip_keep="$strip_keep -k _pflng"
+fi
+"$DCCRTLSTRIP" $strip_keep -r "$rtl_src" -o "$rtl_min" "$app_mac"
 to_crlf "$rtl_min"
 
 (

@@ -43,12 +43,55 @@ int current_void_is_empty_param_list(void)
 
 void skip_prototype_array_suffixes(int *ptype)
 {
+    int dims[8];
+    int ndims = 0;
+    int i, n, inner, elem_bytes;
+    int orig_type = *ptype;
+
+    if (tok.kind != '[') return;
+
+    /* Reset: we're taking over array suffix parsing from scratch. */
+    g_ptr_array_dim_count = 0;
+    g_ptr_array_elem_size = 0;
+    memset(g_ptr_array_dims, 0, sizeof(g_ptr_array_dims));
+
     while (accept('[')) {
-        while (tok.kind != ']' && tok.kind != TOK_EOF)
+        if (tok.kind == ']') {
+            n = 0;
             next_token();
-        expect(']');
-        ptype[0] = type_add_ptr(ptype[0]);
+        } else {
+            n = parse_const_int_expr();
+            expect(']');
+        }
+        if (n < 0) n = 0;
+        if (ndims < 8) dims[ndims] = n;
+        ndims++;
     }
+
+    if (ndims == 0) return;
+
+    /* Any array parameter decays to a single pointer to its element group.
+     * int a[]      -> int *a  (dim_count = 0, no inner dims)
+     * int a[N][M]  -> int (*a)[M], stride = M*sizeof(int)
+     *                 (dim_count = 1, dims = {M}, elem_size = M*sizeof(int))
+     */
+    ptype[0] = type_add_ptr(orig_type);
+
+    if (ndims <= 1) return;
+
+    elem_bytes = type_size(orig_type);
+    if (elem_bytes <= 0) elem_bytes = 2;
+
+    inner = 1;
+    for (i = 1; i < ndims; ++i) {
+        if (dims[i] <= 0) { inner = 0; break; }
+        inner *= dims[i];
+    }
+
+    g_ptr_array_dim_count = ndims - 1;
+    g_ptr_array_elem_size = (inner > 0) ? inner * elem_bytes : elem_bytes;
+    for (i = 0; i < ndims - 1 && i < 8; ++i)
+        g_ptr_array_dims[i] = dims[i + 1];
 }
 
 void skip_prototype_function_suffix(void)
@@ -217,7 +260,16 @@ void parse_old_style_param_declarations(void)
             if (!s || s->storage != SC_PARAM) {
                 error_here("old-style parameter declaration does not match parameter list");
             } else {
+                int pi;
                 s->type = type;
+                if (g_ptr_array_dim_count > 0) {
+                    s->elem_size = g_ptr_array_elem_size;
+                    s->dim_count = g_ptr_array_dim_count;
+                    for (pi = 0; pi < 8; ++pi)
+                        s->dims[pi] = (pi < g_ptr_array_dim_count) ? g_ptr_array_dims[pi] : 0;
+                }
+                g_ptr_array_dim_count = 0;
+                g_ptr_array_elem_size = 0;
             }
 
             if (!accept(','))

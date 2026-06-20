@@ -29,6 +29,19 @@ int parse_float_assignment_literal(unsigned long *bits)
     return 1;
 }
 
+/* True when the current token is an infix binary/ternary operator that can
+ * follow a primary expression.  Used to detect "a + b" vs "a;" in a float
+ * rvalue context: if the token continues an expression, the simple fast path
+ * is not applicable and the caller must fall back to gen_assign(). */
+static int tok_continues_expr(void)
+{
+    int k = tok.kind;
+    return k == '+' || k == '-' || k == '*' || k == '/' || k == '%' ||
+           k == '&' || k == '|' || k == '^' || k == '<' || k == '>' || k == '?' ||
+           k == TOK_EQ || k == TOK_NE || k == TOK_LE || k == TOK_GE ||
+           k == TOK_ANDAND || k == TOK_OROR || k == TOK_SHL || k == TOK_SHR;
+}
+
 int try_emit_float_rvalue_dehl(void)
 {
     struct Sym *rs;
@@ -81,7 +94,7 @@ int try_emit_float_rvalue_dehl(void)
         save_tok = tok;
 
         gen_lvalue_addr(&rt);
-        if (type_is_float(rt)) {
+        if (type_is_float(rt) && !tok_continues_expr()) {
             emit_load_from_hl(rt);
             g_expr_type = rt;
             return 1;
@@ -134,7 +147,20 @@ int try_emit_float_rvalue_dehl(void)
 
         rs = find_sym(tok.text);
         if (rs && type_is_float(rs->type) && !rs->is_array && rs->storage != SC_FUNC) {
+            long sv_pos = posi;
+            long sv_tok_start = tok_start_pos;
+            int sv_line = line_no;
+            int sv_tok_line = tok_line;
+            struct Token sv_tok = tok;
             next_token();
+            if (tok_continues_expr()) {
+                posi = sv_pos;
+                tok_start_pos = sv_tok_start;
+                line_no = sv_line;
+                tok_line = sv_tok_line;
+                tok = sv_tok;
+                return 0;
+            }
             if (sym_can_ix_direct(rs)) {
                 emit_load_sym_value_direct(rs);
             } else {
@@ -168,7 +194,7 @@ int try_emit_float_rvalue_dehl(void)
             save_tok = tok;
 
             gen_lvalue_addr(&rt);
-            if (type_is_float(rt)) {
+            if (type_is_float(rt) && !tok_continues_expr()) {
                 emit_load_from_hl(rt);
                 g_expr_type = rt;
                 return 1;

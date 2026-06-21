@@ -65,8 +65,8 @@ your own `printf`-style wrappers that forward a format string — see the worked
 
 Length modifiers:
 
-- `l` — promotes integer conversions to 32-bit `long`: `%ld`, `%li`, `%lu`,
-  `%lx`, `%lX`.
+- `l` — 32-bit `long` integer conversions: `%ld`, `%li`, `%lu`, `%lx`, `%lX`.
+  **Requires the `-fl` / `-flongio` compiler flag.**
 - `z` — `size_t` width. Since `size_t` is 16-bit here, `%zu` / `%zd` and friends
   behave like the plain 16-bit conversions.
 

@@ -149,6 +149,7 @@ Common options:
 | `-o file` | Write M80 assembly to `file`; default is `out.mac`, `-` is stdout. |
 | `-c`, `-module` | Emit a linkable helper module, not a final program translation unit. |
 | `-f`, `-ffloatio` | Enable floating-point `printf` formatting support. |
+| `-fl`, `-flongio` | Enable 32-bit `long` `printf` format specifiers (`%ld`, `%lu`, `%lx`). |
 | `-fstack-check` | Emit a lightweight stack-overflow guard in each function prologue. |
 | `-s bytes`, `-stack bytes`, `--stack bytes` | Reserve stack bytes; default is 512. |
 | `-s=bytes`, `-stack=bytes`, `--stack=bytes` | Equivalent attached forms for the stack size. |
@@ -164,6 +165,9 @@ Common options:
   family. You **must** pass this if your format strings use `%f`; otherwise
   float formatting is not linked in. This is also the single biggest code-size
   lever — see the [appendix](appendix/01-dccrtlstrip.md).
+- **`-fl` / `-flongio`** — enable 32-bit `long` integer `printf` format
+    specifiers (`%ld`, `%lu`, `%lx`). Use this when formatting `long` values;
+    without it, long integer formatting support is not linked.
 - **`-s` / `-stack` / `--stack`** — reserve stack space (default 512; accepted
   range 0..32767). The heap used by `malloc` lives between the end of BSS and
   the bottom of the stack, so growing the stack shrinks the heap and vice versa.

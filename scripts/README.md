@@ -2,6 +2,59 @@
 
 Developer utility scripts for the `dcc` (CP/M-80 / Z80) toolchain.
 
+## Host compilers to install
+
+The PowerShell scripts are intended to work on Windows, macOS, and Linux. For
+the dcc host tools themselves, use the normal native compiler for each platform:
+
+| Platform | Recommended compiler | Install notes |
+| -------- | -------------------- | ------------- |
+| Windows | MSVC x64 | Install Visual Studio 2022 or Visual Studio Build Tools with **Desktop development with C++**. |
+| macOS | Apple clang | Install Xcode Command Line Tools with `xcode-select --install`. |
+| Linux | GCC | Install your distribution's C/C++ build tools. |
+
+`build-dcc.ps1` and `validate-unit-test.ps1` follow those defaults: MSVC on
+Windows, clang on macOS, and gcc on Linux. On Unix-like hosts, pass `-CC` or set
+`CC` when you intentionally want a different compiler.
+
+### Linux 32-bit GCC support for baseline validation
+
+32-bit/multilib support is only useful for `validate-unit-test.ps1`; it is not
+needed to build `dcc`, `dccpeep`, or `dccrtlstrip`. The host tools should be
+built with the normal native compiler for the platform.
+
+The validator can get closer to dcc's target model on Linux if GCC can build and
+link 32-bit executables. When running on Linux with GCC, it probes `gcc -m32`; if
+the probe succeeds, it adds `-m32` to host test builds and prints `(-m32)` in the
+compiler summary. If the probe fails, validation continues with normal
+host-width GCC.
+
+Common package installs:
+
+```sh
+# Debian / Ubuntu
+sudo apt update
+sudo apt install build-essential gcc-multilib g++-multilib
+
+# Fedora
+sudo dnf groupinstall "Development Tools"
+sudo dnf install glibc-devel.i686 libgcc.i686
+
+# openSUSE
+sudo zypper install -t pattern devel_C_C++
+sudo zypper install gcc-32bit glibc-devel-32bit
+
+# Arch Linux
+sudo pacman -S base-devel gcc-multilib
+```
+
+The 32-bit host compiler mainly helps validation tests that depend on 32-bit
+`long` width. It does not fully emulate dcc: dcc still has 16-bit `int`, 16-bit
+pointers, CP/M file records, BDOS/BIOS calls, Z80 port I/O, and dcc-specific
+stack-check runtime behavior. Tests that depend on those semantics should remain
+marked with `"host": true` in `tests/_test_overrides.json` or skipped by the
+validator's explicit CP/M/Z80 source checks.
+
 ## `stacksize.sh` / `stacksize.bat`
 
 Finds the minimum **C stack reserve** an app needs under dcc's lightweight

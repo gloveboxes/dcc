@@ -1,0 +1,578 @@
+#Requires -Version 7
+<#
+.SYNOPSIS
+Validate test baselines by compiling test apps with the host C compiler.
+
+.DESCRIPTION
+Builds each tests/*.c app with the platform-native host compiler and compares
+stdout against tests/baselines/<app>.txt. This is a read-only baseline check: it
+never rewrites baseline files.
+
+Compiler selection follows scripts/build-dcc.ps1: MSVC on Windows, clang on
+macOS, and gcc on Linux by default. On Linux, GCC is used with -m32 when the
+compiler can build and link 32-bit executables. On Unix-like hosts, pass -CC or
+set CC to override the compiler.
+
+The runner honors tests/_test_overrides.json for per-app args, stdin, ignore,
+and host-only skip settings. Tests that explicitly depend on CP/M/Z80-only
+services (BDOS, direct port I/O, getch/kbhit console polling, #asm blocks, or
+CP/M vector reads) are skipped because host compilers cannot execute those
+semantics.
+
+.PARAMETER RunTimeout
+    Max seconds to let a host test executable run (default: 10).
+
+.PARAMETER BuildDir
+  Working directory for host build artifacts (default: build/host-validate).
+
+.PARAMETER BaselineDir
+  Directory of per-app baseline files for verification (default: tests/baselines).
+
+.PARAMETER CC
+  Override the C compiler used on macOS/Linux. Ignored on Windows, where MSVC
+  cl.exe is used.
+
+.PARAMETER App
+  Validate only one test app name, without .c.
+
+.PARAMETER Help
+  Show this help text and exit without building or running tests.
+
+.EXAMPLE
+  pwsh ./scripts/validate-unit-test.ps1
+  pwsh ./scripts/validate-unit-test.ps1 -App tprintf
+  pwsh ./scripts/validate-unit-test.ps1 -CC clang
+
+.NOTES
+  Exit codes:
+    0 = all runnable host validations passed
+    1 = one or more runnable host validations failed
+#>
+
+param(
+    [string]$BuildDir = "build/host-validate",
+    [string]$BaselineDir = "tests/baselines",
+    [string]$CC,
+    [string]$App,
+    [int]$RunTimeout = 10,
+    [switch]$Help
+)
+
+if ($Help) {
+    Get-Help -Detailed $PSCommandPath
+    return
+}
+
+$ErrorActionPreference = "Stop"
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).ProviderPath
+Push-Location $repoRoot
+try {
+    $buildRoot = if ([System.IO.Path]::IsPathRooted($BuildDir)) {
+        [System.IO.Path]::GetFullPath($BuildDir)
+    }
+    else {
+        Join-Path $repoRoot $BuildDir
+    }
+    if (-not (Test-Path $buildRoot -PathType Container)) {
+        New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
+    }
+
+    function Get-WindowsBuildToolsHelp {
+        @"
+Could not find MSVC build tools.
+
+Install one of these, then rerun this script:
+    winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait"
+    winget install --id Microsoft.VisualStudio.2022.Community -e
+
+If Visual Studio is already installed, open Visual Studio Installer and add:
+    Desktop development with C++
+
+This script looks for vcvars64.bat and requires the MSVC x64 C++ toolchain.
+"@
+    }
+
+    function Get-UnixBuildToolsHelp {
+        param([string]$Compiler)
+
+        if ($IsMacOS) {
+            return @"
+C compiler '$Compiler' was not found.
+
+Install Apple's Command Line Tools, then rerun this script:
+    xcode-select --install
+
+After installation, verify the compiler is available:
+    clang --version
+
+You can also pass a compiler explicitly:
+    pwsh ./scripts/validate-unit-test.ps1 -CC clang
+"@
+        }
+
+        return @"
+C compiler '$Compiler' was not found.
+
+Install a C build toolchain, then rerun this script. Common Linux commands:
+    Debian/Ubuntu: sudo apt update && sudo apt install build-essential
+    Fedora:        sudo dnf groupinstall "Development Tools"
+    RHEL/CentOS:   sudo dnf groupinstall "Development Tools"
+    Arch:          sudo pacman -S base-devel
+    openSUSE:      sudo zypper install -t pattern devel_C_C++
+    Alpine:        sudo apk add build-base
+
+After installation, verify the compiler is available:
+    gcc --version
+
+You can also pass a compiler explicitly:
+    pwsh ./scripts/validate-unit-test.ps1 -CC clang
+"@
+    }
+
+    function Get-MsvcVarsPath {
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+        if (Test-Path $vswhere) {
+            $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if ($installPath) {
+                $candidate = Join-Path $installPath "VC\Auxiliary\Build\vcvars64.bat"
+                if (Test-Path $candidate) { return $candidate }
+            }
+        }
+
+        $versions = @("18", "2022", "2019", "17")
+        $editions = @("Community", "Professional", "Enterprise", "BuildTools")
+        $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
+        foreach ($root in $roots) {
+            foreach ($version in $versions) {
+                foreach ($edition in $editions) {
+                    $candidate = Join-Path $root "Microsoft Visual Studio\$version\$edition\VC\Auxiliary\Build\vcvars64.bat"
+                    if (Test-Path $candidate) { return $candidate }
+                }
+            }
+        }
+        return $null
+    }
+
+    function Initialize-Msvc {
+        $vcvars = Get-MsvcVarsPath
+        if (-not $vcvars) { throw (Get-WindowsBuildToolsHelp) }
+
+        Write-Host "Found MSVC: $vcvars"
+        $envBlock = & cmd /c "`"$vcvars`" >nul 2>&1 && set"
+        foreach ($line in $envBlock) {
+            if ($line -match "^([^=]+)=(.*)$") {
+                [Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
+            }
+        }
+
+        $clVersion = cl 2>&1 | Select-Object -First 1
+        if ($LASTEXITCODE -ne 0) { throw "MSVC cl.exe not found in PATH after vcvars setup." }
+        Write-Host "MSVC cl.exe: $clVersion"
+    }
+
+    function Get-UnixCompiler {
+        if ($CC) { return $CC }
+        if ($env:CC) { return $env:CC }
+        if ($IsMacOS) { return "clang" }
+        return "gcc"
+    }
+
+    function Test-GccM32Support {
+        param([string]$Compiler)
+
+        if (-not $IsLinux) { return $false }
+
+        $probeDir = Join-Path $buildRoot ".m32-probe"
+        New-Item -ItemType Directory -Path $probeDir -Force | Out-Null
+        $probeSource = Join-Path $probeDir "m32_probe.c"
+        $probeExe = Join-Path $probeDir "m32_probe"
+
+        Set-Content -Path $probeSource -Value "int main(void) { return sizeof(void *) == 4 ? 0 : 1; }" -NoNewline
+        try {
+            $null = & $Compiler -m32 $probeSource -o $probeExe 2>&1
+            return ($LASTEXITCODE -eq 0 -and (Test-Path $probeExe -PathType Leaf))
+        }
+        finally {
+            Remove-Item -LiteralPath $probeSource, $probeExe -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $probeDir -Force -Recurse -ErrorAction SilentlyContinue
+        }
+    }
+
+    function Get-HostCompiler {
+        if ($IsWindows) {
+            Initialize-Msvc
+            return [pscustomobject]@{
+                Kind = "msvc"
+                Command = "cl"
+                Version = (cl 2>&1 | Select-Object -First 1)
+            }
+        }
+
+        $compiler = Get-UnixCompiler
+        if (-not (Get-Command $compiler -ErrorAction SilentlyContinue)) {
+            throw (Get-UnixBuildToolsHelp $compiler)
+        }
+        $compilerVersionOutput = & $compiler --version 2>&1
+        if ($LASTEXITCODE -ne 0) { throw (Get-UnixBuildToolsHelp $compiler) }
+        $compilerVersion = $compilerVersionOutput | Select-Object -First 1
+        $extraCFlags = @()
+        if ($IsLinux -and $compilerVersion -match 'gcc|GNU' -and (Test-GccM32Support $compiler)) {
+            $extraCFlags += "-m32"
+            $compilerVersion = "$compilerVersion (-m32)"
+        }
+        return [pscustomobject]@{
+            Kind = "unix"
+            Command = $compiler
+            Version = $compilerVersion
+            CFlags = $extraCFlags
+        }
+    }
+
+    function Get-FixtureFiles {
+        if (-not (Test-Path "tests" -PathType Container)) { return @() }
+        return @(Get-ChildItem -Path "tests" -File |
+            Where-Object { $_.Name -notlike '.*' -and $_.Extension -notin '.c', '.json', '.md' } |
+            ForEach-Object {
+                [pscustomobject]@{
+                    Name = $_.Name
+                    Source = $_.FullName
+                }
+            })
+    }
+
+    function Copy-FixtureForHostRun {
+        param([object]$Fixture, [string]$DestDir)
+        if (-not $Fixture -or -not $Fixture.Name -or -not (Test-Path $Fixture.Source -PathType Leaf)) { return }
+
+        $names = @($Fixture.Name, $Fixture.Name.ToUpper(), $Fixture.Name.ToLower()) | Select-Object -Unique
+        foreach ($name in $names) {
+            Copy-Item -LiteralPath $Fixture.Source -Destination (Join-Path $DestDir $name) -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    function Test-UsesCpmOnlyFeature {
+        param([string]$SourceContent)
+
+        $patterns = @(
+            @{ Pattern = '(?m)^\s*#\s*asm\b|(?m)^\s*#\s*endasm\b'; Reason = '#asm/#endasm Z80 inline assembly' },
+            @{ Pattern = '(?<![A-Za-z0-9_])bdos\s*\('; Reason = 'BDOS call' },
+            @{ Pattern = '(?<![A-Za-z0-9_])__BDOS\b'; Reason = 'BDOS call' },
+            @{ Pattern = '(?<![A-Za-z0-9_])bios\s*\('; Reason = 'BIOS call' },
+            @{ Pattern = '(?<![A-Za-z0-9_])inp\s*\('; Reason = 'Z80 port input' },
+            @{ Pattern = '(?<![A-Za-z0-9_])outp\s*\('; Reason = 'Z80 port output' },
+            @{ Pattern = '(?<![A-Za-z0-9_])getch\s*\('; Reason = 'CP/M non-echo console input' },
+            @{ Pattern = '(?<![A-Za-z0-9_])kbhit\s*\('; Reason = 'CP/M console polling' },
+            @{ Pattern = '\*\s*\([^\)]*\*\)\s*6\b'; Reason = 'CP/M BDOS vector memory access' }
+        )
+
+        foreach ($entry in $patterns) {
+            if ($SourceContent -match $entry.Pattern) { return $entry.Reason }
+        }
+        return $null
+    }
+
+    function Test-MatchesBaseline {
+        param(
+            [string]$Actual,
+            [string]$Baseline,
+            [System.Collections.IDictionary]$Placeholders
+        )
+
+        if ($Baseline -notmatch '\{\{[A-Z]+\}\}') {
+            return ($Actual -ceq $Baseline)
+        }
+
+        $tokenRegex = [regex]'\{\{([A-Z]+)\}\}'
+        $sb = [System.Text.StringBuilder]::new()
+        $last = 0
+        foreach ($m in $tokenRegex.Matches($Baseline)) {
+            $literal = $Baseline.Substring($last, $m.Index - $last)
+            [void]$sb.Append([regex]::Escape($literal))
+            $token = '{{' + $m.Groups[1].Value + '}}'
+            if ($Placeholders.Contains($token)) {
+                [void]$sb.Append($Placeholders[$token])
+            }
+            else {
+                [void]$sb.Append([regex]::Escape($m.Value))
+            }
+            $last = $m.Index + $m.Length
+        }
+        [void]$sb.Append([regex]::Escape($Baseline.Substring($last)))
+        return ($Actual -cmatch ('^' + $sb.ToString() + '$'))
+    }
+
+    function Invoke-HostCompile {
+        param(
+            [object]$Compiler,
+            [string]$SourceFile,
+            [string]$ExePath,
+            [string]$WorkDir
+        )
+
+        if ($Compiler.Kind -eq "msvc") {
+            $objPath = Join-Path $WorkDir ([System.IO.Path]::GetFileNameWithoutExtension($ExePath) + ".obj")
+            $arguments = @("/nologo", "/w", "/O2", "/std:c11", "/Fe:$ExePath", "/Fo:$objPath", $SourceFile)
+            $output = & $Compiler.Command @arguments 2>&1
+            return [pscustomobject]@{ Success = ($LASTEXITCODE -eq 0 -and (Test-Path $ExePath -PathType Leaf)); Output = ($output -join "`n") }
+        }
+
+        $baseCflags = if ($env:CFLAGS) { @($env:CFLAGS -split "\s+" | Where-Object { $_ }) } else { @("-std=gnu89", "-w", "-O2") }
+        if ($IsMacOS -and ($baseCflags -notcontains "-fno-common")) { $baseCflags += "-fno-common" }
+        $arguments = @($baseCflags) + @($Compiler.CFlags) + @($SourceFile, "-o", $ExePath, "-lm")
+        $output = & $Compiler.Command @arguments 2>&1
+        return [pscustomobject]@{ Success = ($LASTEXITCODE -eq 0 -and (Test-Path $ExePath -PathType Leaf)); Output = ($output -join "`n") }
+    }
+
+    function Invoke-HostApp {
+        param(
+            [string]$ExePath,
+            [string]$WorkDir,
+            [string]$RunArgs,
+            [string]$RunStdin,
+            [int]$TimeoutSeconds
+        )
+
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $ExePath
+        $startInfo.WorkingDirectory = $WorkDir
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardInput = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+
+        $appArgs = if ($RunArgs) { @($RunArgs.Split([char]' ', [System.StringSplitOptions]::RemoveEmptyEntries)) } else { @() }
+        foreach ($arg in $appArgs) { [void]$startInfo.ArgumentList.Add($arg) }
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        [void]$process.Start()
+        if ($RunStdin) { $process.StandardInput.Write($RunStdin) }
+        $process.StandardInput.Close()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $completed) {
+            try { $process.Kill($true) } catch { }
+            return [pscustomobject]@{ ExitCode = $null; Output = ""; TimedOut = $true }
+        }
+
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+
+        $output = if ($stderr) { $stdout + $stderr } else { $stdout }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $output; TimedOut = $false }
+    }
+
+    function Invoke-AppValidation {
+        param(
+            [string]$AppName,
+            [object]$Compiler,
+            [object[]]$Fixtures,
+            [System.Collections.IDictionary]$Placeholders
+        )
+
+        $lines = [System.Collections.Generic.List[string]]::new()
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $sourceFile = Join-Path "tests" "$AppName.c"
+        $sourceContent = Get-Content -Path $sourceFile -Raw
+        $skipReason = Test-UsesCpmOnlyFeature $sourceContent
+        if ($skipReason) {
+            $sw.Stop()
+            $lines.Add("    SKIP: $skipReason")
+            return [pscustomobject]@{ App = $AppName; Status = "Skipped"; Passed = $true; Elapsed = $sw.Elapsed; Lines = $lines.ToArray() }
+        }
+
+        $appBuildDir = Join-Path $buildRoot $AppName
+        if (-not (Test-Path $appBuildDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $appBuildDir -Force | Out-Null
+        }
+        foreach ($fixture in $Fixtures) { Copy-FixtureForHostRun -Fixture $fixture -DestDir $appBuildDir }
+
+        $exeName = if ($IsWindows) { "$AppName.exe" } else { $AppName }
+        $exePath = Join-Path $appBuildDir $exeName
+        Remove-Item -LiteralPath $exePath -Force -ErrorAction SilentlyContinue
+
+        $compile = Invoke-HostCompile -Compiler $Compiler -SourceFile $sourceFile -ExePath $exePath -WorkDir $appBuildDir
+        if (-not $compile.Success) {
+            $sw.Stop()
+            $lines.Add("    COMPILE FAILED")
+            if ($compile.Output) { $lines.Add("    " + (($compile.Output -split "`n" | Select-Object -First 5) -join " | ")) }
+            return [pscustomobject]@{ App = $AppName; Status = "Failed"; Passed = $false; Elapsed = $sw.Elapsed; Lines = $lines.ToArray() }
+        }
+        $lines.Add("    Host build complete")
+
+        $run = Invoke-HostApp -ExePath $exePath -WorkDir $appBuildDir -RunArgs (Get-AppArgs $AppName) -RunStdin (Get-AppStdin $AppName) -TimeoutSeconds $RunTimeout
+        if ($run.TimedOut) {
+            $sw.Stop()
+            $lines.Add("    ERROR: host app timed out after $RunTimeout seconds")
+            return [pscustomobject]@{ App = $AppName; Status = "Failed"; Passed = $false; Elapsed = $sw.Elapsed; Lines = $lines.ToArray() }
+        }
+        if ($run.ExitCode -ne 0) { $lines.Add("    WARNING: host app exited with code $($run.ExitCode)") }
+
+        $blPath = Join-Path $BaselineDir "$AppName.txt"
+        if (-not (Test-Path $blPath -PathType Leaf)) {
+            $sw.Stop()
+            $lines.Add("    ERROR: no baseline at $BaselineDir/$AppName.txt")
+            return [pscustomobject]@{ App = $AppName; Status = "Failed"; Passed = $false; Elapsed = $sw.Elapsed; Lines = $lines.ToArray() }
+        }
+
+        $expected = (((Get-Content -Path $blPath -Raw) -replace "`r`n", "`n")).TrimEnd("`n")
+        $actual = (($run.Output -replace "`r`n", "`n") -replace "`r", "`n").TrimEnd("`n")
+        if (-not (Test-MatchesBaseline -Actual $actual -Baseline $expected -Placeholders $Placeholders)) {
+            $sw.Stop()
+            $lines.Add("    OUTPUT MISMATCH (vs $BaselineDir/$AppName.txt)")
+            $lines.Add("    Got: " + (($actual -split "`n" | Select-Object -First 3) -join ' | '))
+            return [pscustomobject]@{ App = $AppName; Status = "Failed"; Passed = $false; Elapsed = $sw.Elapsed; Lines = $lines.ToArray() }
+        }
+
+        $sw.Stop()
+        $lines.Add("    Output matches baseline")
+        return [pscustomobject]@{ App = $AppName; Status = "Passed"; Passed = $true; Elapsed = $sw.Elapsed; Lines = $lines.ToArray() }
+    }
+
+    function Show-AppResult {
+        param($Result)
+
+        $elapsed = $Result.Elapsed
+        $elapsedStr = if ($elapsed.TotalSeconds -ge 60) { "{0:m\m\ s\.f\s}" -f $elapsed } else { "{0:0.00}s" -f $elapsed.TotalSeconds }
+        $status = switch ($Result.Status) { "Passed" { "PASS" } "Skipped" { "SKIP" } default { "FAIL" } }
+        $color = switch ($Result.Status) { "Passed" { "Green" } "Skipped" { "DarkGray" } default { "Red" } }
+        Write-Host ("  {0}  {1,-12} {2,8}" -f $status, $Result.App, $elapsedStr) -ForegroundColor $color
+        foreach ($detail in $Result.Lines) {
+            if ($Result.Status -ne "Passed" -or $detail -match 'matches baseline') {
+                $detailColor = if ($detail -match 'FAILED|MISMATCH|WARNING|ERROR') { "Red" } elseif ($detail -match 'SKIP') { "DarkGray" } else { "Green" }
+                Write-Host $detail -ForegroundColor $detailColor
+            }
+        }
+    }
+
+    $appOverridesPath = "tests/_test_overrides.json"
+    if (-not (Test-Path $appOverridesPath -PathType Leaf)) {
+        Write-Warning "App overrides not found: $appOverridesPath"
+        $appOverrides = @{}
+    }
+    else {
+        $config = Get-Content $appOverridesPath | ConvertFrom-Json
+        $appOverrides = @{}
+        foreach ($item in $config.apps) {
+            $appOverrides[$item.name] = @{}
+            if ($item.args) { $appOverrides[$item.name]['args'] = $item.args }
+            if ($item.stdin) { $appOverrides[$item.name]['stdin'] = $item.stdin }
+            if ($item.ignore) { $appOverrides[$item.name]['ignore'] = $item.ignore }
+            if ($item.host) { $appOverrides[$item.name]['host'] = $item.host }
+        }
+    }
+
+    function Get-AppArgs {
+        param([string]$Name)
+        if ($appOverrides.ContainsKey($Name) -and $appOverrides[$Name]['args']) { return $appOverrides[$Name]['args'] }
+        return ""
+    }
+
+    function Get-AppStdin {
+        param([string]$Name)
+        if ($appOverrides.ContainsKey($Name) -and $appOverrides[$Name]['stdin']) { return $appOverrides[$Name]['stdin'] }
+        return ""
+    }
+
+    function Get-IgnoreApp {
+        param([string]$Name)
+        return ($appOverrides.ContainsKey($Name) -and $appOverrides[$Name]['ignore'])
+    }
+
+    function Get-IgnoreHostApp {
+        param([string]$Name)
+        return ($appOverrides.ContainsKey($Name) -and $appOverrides[$Name]['host'])
+    }
+
+    $Placeholders = [ordered]@{
+        '{{DATE}}' = '[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}'
+        '{{TIME}}' = '\d{2}:\d{2}:\d{2}'
+        '{{SEP}}'  = '[/\\]'
+    }
+
+    $testFiles = if ($App) {
+        $candidate = Join-Path "tests" "$App.c"
+        if (-not (Test-Path $candidate -PathType Leaf)) { throw "Source file not found for app: $App" }
+        @($App)
+    }
+    else {
+        @(Get-ChildItem -Path (Join-Path "tests" "*.c") -File | ForEach-Object { $_.BaseName } | Sort-Object)
+    }
+    if ($testFiles.Count -eq 0) { throw "No test files found in tests" }
+
+    if (Test-Path $BaselineDir -PathType Container) {
+        $baselineCount = @(Get-ChildItem -Path "$BaselineDir/*.txt" -File -ErrorAction SilentlyContinue).Count
+        Write-Host "Using per-app baselines from $BaselineDir ($baselineCount files)" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "No baseline directory at $BaselineDir; every runnable app will fail verification" -ForegroundColor Yellow
+    }
+
+    $compiler = Get-HostCompiler
+    Write-Host "Host compiler: $($compiler.Version)" -ForegroundColor Cyan
+    Write-Host "Build artifacts: $buildRoot" -ForegroundColor Cyan
+
+    $fixtureList = @(Get-FixtureFiles)
+    $results = @()
+    $skippedByConfig = 0
+    $skippedByHostConfig = 0
+
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "STARTING HOST BASELINE VALIDATION" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+
+    $suiteStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    foreach ($appName in $testFiles) {
+        if (Get-IgnoreApp $appName) {
+            $skippedByConfig++
+            continue
+        }
+        if (Get-IgnoreHostApp $appName) {
+            $skippedByHostConfig++
+            continue
+        }
+        $result = Invoke-AppValidation -AppName $appName -Compiler $compiler -Fixtures $fixtureList -Placeholders $Placeholders
+        $results += $result
+        Show-AppResult $result
+    }
+    $suiteStopwatch.Stop()
+
+    $passed = @($results | Where-Object { $_.Status -eq "Passed" }).Count
+    $failedResults = @($results | Where-Object { $_.Status -eq "Failed" })
+    $skippedCpm = @($results | Where-Object { $_.Status -eq "Skipped" }).Count
+    $failed = $failedResults.Count
+    $suiteElapsed = $suiteStopwatch.Elapsed
+    $suiteElapsedStr = if ($suiteElapsed.TotalSeconds -ge 60) { "{0:m\m\ s\.f\s}" -f $suiteElapsed } else { "{0:0.00}s" -f $suiteElapsed.TotalSeconds }
+
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "HOST VALIDATION SUMMARY" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "  Compiler:         $($compiler.Version)"
+    Write-Host "  Total apps:       $($testFiles.Count)"
+    Write-Host "  Passed:           $passed" -ForegroundColor Green
+    Write-Host "  Failed:           $failed" -ForegroundColor $(if ($failed -eq 0) { "Green" } else { "Red" })
+    Write-Host "  Skipped config:   $skippedByConfig"
+    Write-Host "  Skipped host:     $skippedByHostConfig"
+    Write-Host "  Skipped CP/M:     $skippedCpm"
+    Write-Host "  Total time:       $suiteElapsedStr"
+
+    if ($failed -gt 0) {
+        Write-Host ""
+        Write-Host "Apps with host/baseline issues:" -ForegroundColor Red
+        foreach ($result in $failedResults) { Write-Host "  - $($result.App)" -ForegroundColor Red }
+        Write-Host ""
+        Write-Host ">>> FAILURE: $failed host validation issue(s) found <<<" -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host ""
+    Write-Host ">>> SUCCESS: All runnable host validations passed <<<" -ForegroundColor Green
+    exit 0
+}
+finally {
+    Pop-Location
+}

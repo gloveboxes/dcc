@@ -73,10 +73,23 @@ int try_emit_float_rvalue_dehl(void)
         tok = save_tok;
     }
 
-    if (parse_float_assignment_literal(&bits)) {
-        emit_load_float_bits(bits);
-        g_expr_type = TYPE_FLOAT;
-        return 1;
+    if (tok.kind == TOK_FLOATLIT) {
+        long sv_pos = posi;
+        long sv_tok_start = tok_start_pos;
+        int sv_line = line_no;
+        int sv_tok_line = tok_line;
+        struct Token sv_tok = tok;
+        parse_float_assignment_literal(&bits);
+        if (!tok_continues_expr()) {
+            emit_load_float_bits(bits);
+            g_expr_type = TYPE_FLOAT;
+            return 1;
+        }
+        posi = sv_pos;
+        tok_start_pos = sv_tok_start;
+        line_no = sv_line;
+        tok_line = sv_tok_line;
+        tok = sv_tok;
     }
 
     if (tok.kind == '*') {

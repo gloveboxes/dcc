@@ -10,12 +10,15 @@ commands below work from any folder that holds your `.c` sources.
 ## The build script
 
 The primary build command is the cross-platform `scripts/ma.ps1` script. It
-compiles, optimizes, strips the runtime, assembles, and links in one step. Run
-it from your project directory and point at the script in your dcc checkout:
+compiles, optimizes, strips the runtime, assembles, and links in one step. From
+your operating-system terminal or the VS Code terminal, change to the dcc
+checkout, start PowerShell, and run the script there:
 
 ```pwsh
-pwsh /path/to/dcc/scripts/ma.ps1 foo -Mode fast    # builds foo.c -> FOO.COM
-pwsh /path/to/dcc/scripts/ma.ps1 foo -Mode nopeep  # skip the dccpeep optimizer
+cd /path/to/dcc
+pwsh
+./scripts/ma.ps1 foo -Mode fast    # builds foo.c -> FOO.COM
+./scripts/ma.ps1 foo -Mode nopeep  # skip the dccpeep optimizer
 ```
 
 This runs the compiler, the optional `dccpeep` peephole optimizer,

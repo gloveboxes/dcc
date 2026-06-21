@@ -149,6 +149,10 @@ Build scripts live in the `scripts` directory:
 - `scripts/ma.ps1` — builds one app
 - `scripts/runall.ps1` — builds and verifies the test suite
 
+Run either script from your operating-system terminal or the VS Code terminal by
+changing to the dcc checkout, starting `pwsh`, and running `./scripts/ma.ps1` or
+`./scripts/runall.ps1`.
+
 They resolve each tool the same way: they use an environment variable if you set
 one, otherwise they look for the tool on your `PATH`. The relevant tools are:
 
@@ -265,11 +269,13 @@ are needed.
 ## Verify the setup
 
 With the tools on your `PATH`, build and run one of the dcc repo's sample tests
-to confirm everything is wired up. From the dcc repo root, build `tests/tstr.c`
-with the cross-platform build script in the `scripts` directory, then run the
-generated `.COM` file under ntvcm:
+to confirm everything is wired up. From your operating-system terminal or the VS
+Code terminal, change to the dcc checkout, start PowerShell, build
+`tests/tstr.c`, then run the generated `.COM` file under ntvcm:
 
-    pwsh ./scripts/ma.ps1 tstr -Mode fast  # compiles tests/tstr.c -> TSTR.COM
+    cd /path/to/dcc
+    pwsh
+    ./scripts/ma.ps1 tstr -Mode fast       # compiles tests/tstr.c -> TSTR.COM
     ntvcm TSTR.COM                         # runs it under the emulator
 
 The dcc repo's `tests/` programs are suitable samples for scratch projects, but

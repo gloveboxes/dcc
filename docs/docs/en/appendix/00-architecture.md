@@ -40,8 +40,9 @@ flowchart LR
 | Assemble | `M80` | `.MAC` | `.REL` | Object code (relocatable) |
 | Link | `L80` | `.REL` files | `.COM` | Resolve symbols into a CP/M executable |
 
-The `dccpeep` stage is optional (`pwsh ./scripts/ma.ps1 name -Mode nopeep`
-skips it). `dccrtlstrip` runs against the *final* application assembly so it
+The `dccpeep` stage is optional (`./scripts/ma.ps1 name -Mode nopeep` skips it
+when run from PowerShell in the dcc checkout). `dccrtlstrip` runs against the
+*final* application assembly so it
 sees the real set of runtime symbols the program calls.
 
 ## Compiler Shape

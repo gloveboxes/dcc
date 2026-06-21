@@ -2,6 +2,15 @@
 
 Developer scripts for building and testing dcc programs.
 
+Run these scripts from the dcc checkout. Open your operating-system terminal or
+the VS Code terminal, change to the dcc directory, start PowerShell, and then
+run the script commands shown below:
+
+```pwsh
+cd /path/to/dcc
+pwsh
+```
+
 ## Build Driver (`ma.ps1`)
 
 Cross-platform PowerShell 7+ build driver. It compiles one app, optionally runs
@@ -10,7 +19,7 @@ Cross-platform PowerShell 7+ build driver. It compiles one app, optionally runs
 ### Build Driver Usage
 
 ```pwsh
-pwsh ./scripts/ma.ps1 <name> [mode] [options]
+./scripts/ma.ps1 <name> [mode] [options]
 ```
 
 - `<name>` — Test app name (e.g., `triangle`, `sieve`, `ttt`)
@@ -20,9 +29,9 @@ pwsh ./scripts/ma.ps1 <name> [mode] [options]
 ### Build Driver Examples
 
 ```pwsh
-pwsh ./scripts/ma.ps1 triangle
-pwsh ./scripts/ma.ps1 sieve nopeep
-pwsh ./scripts/ma.ps1 cobint -Mode fast -BuildDir mybuild
+./scripts/ma.ps1 triangle
+./scripts/ma.ps1 sieve nopeep
+./scripts/ma.ps1 cobint -Mode fast -BuildDir mybuild
 ```
 
 ### Build Driver Parameters
@@ -61,7 +70,7 @@ Runs in parallel by default:
 ### Test Runner Usage
 
 ```pwsh
-pwsh ./scripts/runall.ps1 [options]
+./scripts/runall.ps1 [options]
 ```
 
 With no options, the suite runs in parallel, enables `-fstack-check`, and uses
@@ -70,15 +79,15 @@ With no options, the suite runs in parallel, enables `-fstack-check`, and uses
 ### Test Runner Examples
 
 ```pwsh
-pwsh ./scripts/runall.ps1                       # quick optimized-only default
-pwsh ./scripts/runall.ps1 -Help                 # show help and exit
-pwsh ./scripts/runall.ps1 -Serial               # sequential fallback
-pwsh ./scripts/runall.ps1 -NoStackCheck         # build without the stack guard
-pwsh ./scripts/runall.ps1 -ThrottleLimit 8      # cap concurrency
-pwsh ./scripts/runall.ps1 -Emulator altair
-pwsh ./scripts/runall.ps1 -Mode fast            # optimized build only
-pwsh ./scripts/runall.ps1 -Mode nopeep          # unoptimized build only
-pwsh ./scripts/runall.ps1 -Report               # also append perf_results.csv
+./scripts/runall.ps1                       # quick optimized-only default
+./scripts/runall.ps1 -Help                 # show help and exit
+./scripts/runall.ps1 -Serial               # sequential fallback
+./scripts/runall.ps1 -NoStackCheck         # build without the stack guard
+./scripts/runall.ps1 -ThrottleLimit 8      # cap concurrency
+./scripts/runall.ps1 -Emulator altair
+./scripts/runall.ps1 -Mode fast            # optimized build only
+./scripts/runall.ps1 -Mode nopeep          # unoptimized build only
+./scripts/runall.ps1 -Report               # also append perf_results.csv
 ```
 
 ### Build Modes
@@ -199,9 +208,9 @@ Report mode implies `-NoStackCheck` so timings reflect normal builds. When using
 `-ReportClockHz 0` for full-speed report runs.
 
 ```pwsh
-pwsh ./scripts/runall.ps1 -Report
-pwsh ./scripts/runall.ps1 -Report -ReportFile results.csv
-pwsh ./scripts/runall.ps1 -Report -ReportClockHz 0
+./scripts/runall.ps1 -Report
+./scripts/runall.ps1 -Report -ReportFile results.csv
+./scripts/runall.ps1 -Report -ReportClockHz 0
 ```
 
 Results are written to `perf_results.csv` by default. **Results append to the

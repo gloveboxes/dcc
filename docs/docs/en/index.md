@@ -1,8 +1,8 @@
 # Introduction
 
-**dcc** is a C89 compiler for **CP/M 2.2 on the Z80**. It translates a `.c` file
-to M80 assembly. M80 assembles the result, and L80 links it into a CP/M `.COM`
-program.
+**dcc** is an open source C89 compiler for **CP/M 2.2 on the Z80**. It
+translates a `.c` file to M80 assembly. M80 assembles the result, and L80 links
+it into a CP/M `.COM` program.
 
 dcc is a cross tool. It runs on Windows, macOS, and Linux; the programs it
 builds run under CP/M. The [ntvcm](https://github.com/davidly/ntvcm) emulator

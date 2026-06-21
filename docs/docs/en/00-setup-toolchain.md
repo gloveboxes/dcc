@@ -31,6 +31,15 @@ building dcc or ntvcm.
         winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait"
         ```
 
+        !!! tip "Windows ARM64"
+
+            On Windows ARM64, install the native ARM64 compiler tools explicitly
+            instead of the default C++ workload:
+
+            ```powershell
+            winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --add Microsoft.VisualStudio.Component.Windows11SDK.26100 --quiet --wait --norestart"
+            ```
+
         You can also use the Visual Studio Installer and select **Desktop
         development with C++**. The Windows build uses the Microsoft C/C++
         compiler tools from that installation.

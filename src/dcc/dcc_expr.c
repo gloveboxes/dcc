@@ -1199,8 +1199,18 @@ int try_gen_deref_postinc_lvalue_addr(int *ptype)
         next_token();
         gen_post_update_symbol_addr_value(s, op);
     } else {
-        emit_load_sym_addr(s);
-        emit_load_from_hl(s->type);
+        /* For a global word-size pointer or an IX-direct local pointer,
+         * load the pointer value directly rather than loading the symbol
+         * address first and then dereferencing it.  For a global float*,
+         * this replaces the 5-instruction sequence
+         *   ld hl,sym / ld e,(hl) / inc hl / ld d,(hl) / ex de,hl
+         * with a single  ld hl,(sym). */
+        if (sym_can_ix_direct(s) || is_global_word_sym(s))
+            emit_load_sym_value_direct(s);
+        else {
+            emit_load_sym_addr(s);
+            emit_load_from_hl(s->type);
+        }
     }
 
     if (ptype) {

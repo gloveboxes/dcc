@@ -1,8 +1,9 @@
 # Skills
 
 This folder holds **project-scoped** agent skills that ship with the dcc repo
-(`c89-cpm-z80/` for writing CP/M apps with dcc, and `dcc-project/` for
-developing the dcc toolchain itself). Any clone of this repo picks them up
+(`c89-cpm-z80/` for writing CP/M apps with dcc, `dcc-project/` for developing
+the dcc toolchain itself, and `mkdocs-stdlib-docs/` for maintaining generated
+standard-library reference pages). Any clone of this repo picks them up
 automatically when opened in an agent that supports skills (e.g. GitHub Copilot
 in VS Code).
 
@@ -17,14 +18,14 @@ a skill from every workspace on your machine, copy the skill folder into a
 **personal** skills root in your home directory. Any of these roots work; pick
 one and stay consistent (this machine uses `.agents`):
 
-| Scope | Location (`~` / `%USERPROFILE%` = your home directory)        |
-| ----- | ------------------------------------------------------------- |
-| Personal | `~/.agents/skills/<name>/`                                 |
-| Personal | `~/.copilot/skills/<name>/`                                |
-| Personal | `~/.claude/skills/<name>/`                                 |
-| Project  | `<repo>/.github/skills/<name>/` (this folder)              |
-| Project  | `<repo>/.agents/skills/<name>/`                            |
-| Project  | `<repo>/.claude/skills/<name>/`                            |
+| Scope    | Location (`~` / `%USERPROFILE%` = your home directory) |
+| -------- | ------------------------------------------------------ |
+| Personal | `~/.agents/skills/<name>/`                             |
+| Personal | `~/.copilot/skills/<name>/`                            |
+| Personal | `~/.claude/skills/<name>/`                             |
+| Project  | `<repo>/.github/skills/<name>/` (this folder)          |
+| Project  | `<repo>/.agents/skills/<name>/`                        |
+| Project  | `<repo>/.claude/skills/<name>/`                        |
 
 ### macOS
 

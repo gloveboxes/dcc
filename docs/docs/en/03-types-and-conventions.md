@@ -17,7 +17,7 @@ overflow and precision surprises.
 | pointer | 16 bits | flat CP/M address space |
 | `size_t` | 16 bits | unsigned `int` |
 | `ptrdiff_t` | 16 bits | signed `int`; result of subtracting two pointers |
-| `wchar_t` | 16 bits | unsigned `int`; shared by `stddef.h` and `stdint.h` |
+| `wchar_t` | 16 bits | unsigned `int`; shared by [stddef.h](standard-lib/12-stddef.md) and [stdint.h](standard-lib/13-stdint.md) |
 | `FILE` | 16 bits | `typedef int FILE`; streams are small handles |
 
 The practical consequences:
@@ -27,26 +27,26 @@ The practical consequences:
   logical right shift; signed right shift sign-extends.
 - `float` carries about 7 decimal digits (a 24-bit significand). Integers up to
   2<sup>24</sup> (16,777,216) are exact; beyond that, converting a large `long`
-  to `float` rounds to the nearest single. See [Floating point math](08-math.md)
+  to `float` rounds to the nearest single. See [Floating point math](standard-lib/08-math.md)
   for the full set of precision gotchas.
 
 ## Useful constants
 
-From [stdio](05-stdio.md):
+From [stdio](standard-lib/05-stdio.md):
 
 - `EOF` = -1, `BUFSIZ` = 256, `SEEK_SET` / `SEEK_CUR` / `SEEK_END` = 0 / 1 / 2.
 
-From [stdlib](06-stdlib.md):
+From [stdlib](standard-lib/06-stdlib.md):
 
 - `EXIT_SUCCESS` = 0, `EXIT_FAILURE` = 1, `RAND_MAX` = 32767, `NULL` = 0.
 
-From `errno.h`:
+From [errno.h](standard-lib/02-errno.md):
 
 - `EDOM` = 33, `ERANGE` = 34.
 
 ## Fixed-width integer names (`stdint.h`)
 
-`stdint.h` provides fixed-width typedefs that match the target model:
+[`stdint.h`](standard-lib/13-stdint.md) provides fixed-width typedefs that match the target model:
 
 | Name | Definition |
 | --- | --- |
@@ -59,6 +59,9 @@ From `errno.h`:
 | `wchar_t` | unsigned 16-bit `int` |
 
 ## Integer limits (`limits.h`)
+
+See [Integer limits](standard-lib/04-limits.md) for the generated `limits.h`
+reference.
 
 | Macro | Value |
 | --- | ---: |
@@ -76,7 +79,7 @@ From `errno.h`:
 
 ## Floating limits (`float.h`)
 
-`float.h` describes dcc's single-precision reality:
+[`float.h`](standard-lib/03-float.md) describes dcc's single-precision reality:
 
 | Macro | Value |
 | --- | ---: |

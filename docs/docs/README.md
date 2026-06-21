@@ -10,6 +10,11 @@ for the dcc documentation site.
 - `en/` — English documentation pages.
 - `hooks/copy_assets.py` — build hook that copies shared repo assets into the
   docs source tree before MkDocs validates links.
+- `hooks/runtime_sizes.py` — build hook that generates runtime size tables from
+  `DCCRTL.MAC`.
+- `hooks/stdlib_tables.py` — build hook that generates standard-library
+  function and symbol summaries from public header declarations and
+  Doxygen-style summary comments.
 
 The benchmark chart is maintained once at the repo root as `images/table.jpg`.
 During a docs build, `hooks/copy_assets.py` copies it to
@@ -59,3 +64,22 @@ runtime and rebuild the docs, and the tables update themselves. To preview:
 ```sh
 mkdocs build --strict
 ```
+
+## Updating generated standard-library tables
+
+The function tables on standard-library reference pages are generated at build
+time by `hooks/stdlib_tables.py`. Edit the prototype and its Doxygen-style
+summary comment in the public header (for example `../../stdio.h`,
+`../../stdlib.h`, `../../string.h`, `../../ctype.h`, `../../math.h`, or
+`../../stddef.h`), then run a strict docs build to preview the updated table. Use
+markers such as `<!-- STDIO-FUNCTION-TABLE: all -->` or
+`<!-- MATH-FUNCTION-TABLE: all -->` to include every documented prototype,
+sorted by function name.
+
+The same hook also generates types, macros, streams, and other non-function
+symbol tables from documented declarations. Use markers such as
+`<!-- STDIO-SYMBOL-TABLE: all -->` to include symbols in header order, or
+`<!-- MATH-SYMBOL-TABLE: all sorted -->` when an alphabetical symbol table reads
+better. Other standard-library pages use the same hook with prefixes such as
+`STDLIB`, `STRING`, `CTYPE`, `ASSERT`, `ERRNO`, `FLOAT`, `LIMITS`, `SETJMP`,
+`STDARG`, `STDBOOL`, `STDDEF`, and `STDINT`.

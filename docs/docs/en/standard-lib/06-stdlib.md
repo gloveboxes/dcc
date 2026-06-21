@@ -4,20 +4,28 @@ Include [`stdlib.h`](06-stdlib.md). This header covers dynamic memory, string-to
 -number conversion, integer arithmetic helpers, searching and sorting, process
 control, and pseudo-random numbers.
 
-## Dynamic memory
+## Types and Macros
 
-| Function | Summary |
-| --- | --- |
-| `void *malloc(size_t n)` | Allocate `n` bytes; returns `NULL` on failure. |
-| `void *calloc(size_t nmemb, size_t size)` | Allocate and zero `nmemb * size` bytes. |
-| `void *realloc(void *p, size_t n)` | Resize a block, preserving contents. |
-| `void free(void *p)` | Return a block to the heap. |
+<!-- STDLIB-SYMBOL-TABLE: all -->
+
+## Functions
+
+<!-- STDLIB-FUNCTION-TABLE: all -->
+
+## Runtime model
+
+The standard functions in this header are runtime-backed. dcc also declares a
+small set of CP/M and Z80 extensions here (`bdos`, `inp`, and `outp`); those are
+documented with the CP/M services rather than treated as portable C APIs.
+
+## Dynamic memory
 
 The allocator is a first-fit free list with a 3-byte block header. Freeing a
 block coalesces it with adjacent free neighbours (including blocks freed via
 `realloc(p, 0)` and the old block released by a growing `realloc`), which keeps
 fragmentation down. The heap grows on demand between the end of BSS and the
-stack.
+stack. On CP/M this space is bounded by the program's TPA: code, data, runtime
+support, heap, and stack all share the same transient program area.
 
 ```c
 char *p = malloc(256);
@@ -32,16 +40,9 @@ free(p);
 !!! note "Size cost"
     `malloc`/`calloc` pull in integer multiply/divide/modulo helpers for size
     arithmetic, and `strdup` inherits the whole `malloc` chain. See the
-    [appendix](appendix/01-dccrtlstrip.md).
+    [appendix](../appendix/01-dccrtlstrip.md).
 
 ## Conversion
-
-| Function | Summary |
-| --- | --- |
-| `int atoi(const char *s)` | Parse a leading signed decimal integer (16-bit). |
-| `long atol(const char *s)` | Parse a leading signed decimal integer (32-bit). |
-| `long strtol(const char *s, char **end, int base)` | Parse a `long` in `base` 2..36 (0 = auto). |
-| `unsigned long strtoul(const char *s, char **end, int base)` | Parse an `unsigned long` in `base` 2..36 (0 = auto). |
 
 `atoi`/`atol` skip leading spaces/tabs, accept an optional `+`/`-` sign, then
 consume decimal digits; conversion stops at the first non-digit. Overflow wraps
@@ -66,16 +67,9 @@ unsigned long u = strtoul("4294967295", NULL, 10); /* ULONG_MAX */
 ```
 
 There is **no `atof`** — C89 `atof` returns `double`, and dcc has no `double`.
-See [Limitations](11-limitations.md).
+See [Limitations](../11-limitations.md).
 
 ## Integer arithmetic helpers
-
-| Function | Summary |
-| --- | --- |
-| `int abs(int j)` | Absolute value of a 16-bit signed integer. |
-| `long labs(long j)` | Absolute value of a 32-bit signed long. |
-| `div_t div(int numer, int denom)` | Signed 16-bit quotient and remainder. |
-| `ldiv_t ldiv(long numer, long denom)` | Signed 32-bit quotient and remainder. |
 
 `div` returns a `div_t` with `quot` and `rem` members; `ldiv` returns an
 `ldiv_t` with 32-bit members. Signed division truncates toward zero; the
@@ -88,33 +82,19 @@ ldiv_t ld = ldiv(200000L, 7L);
 
 ## Searching and sorting
 
-| Function | Summary |
-| --- | --- |
-| `void qsort(void *base, size_t num, size_t size, int (*cmp)(const void*, const void*))` | Sort `num` elements of `size` bytes in place. |
-| `const void *bsearch(const void *key, const void *base, size_t num, size_t size, int (*cmp)(const void*, const void*))` | Binary-search a sorted array; returns the matching element or `NULL`. |
-
 Both take the standard comparator: `cmp(a, b)` returns negative if `a` sorts
 before `b`, zero if equal, positive if after. `qsort` uses an in-place,
 non-recursive Shell sort, so it is **not stable**; `bsearch` requires the array
-to be sorted by the same comparator. See [Worked examples](12-examples.md) for
+to be sorted by the same comparator. See [Worked examples](../12-examples.md) for
 complete programs.
 
 ## Process control
-
-| Function | Summary |
-| --- | --- |
-| `void exit(int code)` | Flush, terminate, and return `code` to the OS. |
 
 The exit code is surfaced through CP/M 3.0 BDOS call 108, which emulators such
 as ntvcm reflect in their own process exit code. Returning a value from `main`
 has the same effect.
 
 ## Pseudo-random numbers
-
-| Function | Summary |
-| --- | --- |
-| `int rand(void)` | Next pseudo-random number in `0 .. RAND_MAX`. |
-| `void srand(unsigned seed)` | Seed the generator. |
 
 `RAND_MAX` is 32767.
 

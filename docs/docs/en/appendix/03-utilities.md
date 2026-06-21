@@ -1,20 +1,13 @@
 # Utilities
 
-Developer utility scripts and tools for the dcc compiler and runtime.
+Developer scripts for building and testing dcc programs.
 
 ## Build Driver (`ma.ps1`)
 
-Cross-platform build driver for compiling a single test application. PowerShell 7+
-equivalent of `ma.sh`. Handles the complete pipeline: compile → optimize
-(optional) → assemble → strip runtime → link.
+Cross-platform PowerShell 7+ build driver. It compiles one app, optionally runs
+`dccpeep`, strips the runtime, assembles, and links a `.COM` executable.
 
-### Purpose
-
-Builds a single test app with optional dccpeep optimization, producing a final
-`.COM` executable. Automatically detects floatio requirements, handles stack-check
-markers, and manages CP/M tool integration through the ntvcm emulator.
-
-### Usage
+### Build Driver Usage
 
 ```pwsh
 pwsh ./scripts/ma.ps1 <name> [mode] [options]
@@ -24,7 +17,7 @@ pwsh ./scripts/ma.ps1 <name> [mode] [options]
 - `[mode]` — Build mode: `full` (both builds, default), `fast` (optimized), or
   `nopeep` (unoptimized)
 
-### Examples
+### Build Driver Examples
 
 ```pwsh
 pwsh ./scripts/ma.ps1 triangle
@@ -32,7 +25,7 @@ pwsh ./scripts/ma.ps1 sieve nopeep
 pwsh ./scripts/ma.ps1 cobint -Mode fast -BuildDir mybuild
 ```
 
-### Parameters
+### Build Driver Parameters
 
 | Parameter | Default | Purpose |
 | --------- | ------- | ------- |
@@ -49,13 +42,11 @@ pwsh ./scripts/ma.ps1 cobint -Mode fast -BuildDir mybuild
 
 ## Test Suite Runner (`runall.ps1`)
 
-Comprehensive test suite runner: builds and runs all test applications (all
-`*.c` files in tests/) with output verification against per-app baselines in
-`tests/baselines/`. Uses `ma.ps1` for building and `tests/_test_overrides.json` for
-test-specific arguments and stack sizes. Comparison is keyed by app name, so
-test discovery order does not matter.
+Builds and runs the test suite against per-app baselines in `tests/baselines/`.
+It uses `ma.ps1` for builds and `tests/_test_overrides.json` for test-specific
+arguments and stack sizes.
 
-**Runs in parallel by default.** Key behaviors:
+Runs in parallel by default:
 
 - Each app builds in its own `build/<app>/` subdirectory so concurrent builds
   don't clobber shared artifacts.
@@ -64,33 +55,19 @@ test discovery order does not matter.
   directory.
 - The lightweight stack-overflow guard (`-fstack-check`) is **on by default**;
   pass `-NoStackCheck` to build without it.
-- Pass `-Report` to append per-app run-time and `.COM` size measurements to a
-  CSV report while the suite runs. Report mode disables stack checking so the
-  measurements reflect normal builds. When using `ntvcm`, report mode also runs
-  measured apps at a fixed 1 GHz emulator clock by default; normal app runs use
-  `-s:0` for full speed.
+- Pass `-Report` to append per-app run time and `.COM` size measurements to a
+  CSV report. Report mode implies `-NoStackCheck`.
 
-### Purpose
-
-Validates the entire test suite by:
-
-- Building all tests in configured modes (fast, nopeep, or full)
-- Running each under the emulator with test-specific arguments
-- Comparing output against per-app baselines (placeholder-aware)
-- Reporting build/run status per app and overall results
-
-### Usage
+### Test Runner Usage
 
 ```pwsh
 pwsh ./scripts/runall.ps1 [options]
 ```
 
-Run with no options, the suite uses these defaults: **parallel** execution,
-the **stack-overflow guard on** (`-fstack-check`), and the **fast
-optimized-only** build mode. Use `-Mode full` when you want both fast and nopeep
-builds.
+With no options, the suite runs in parallel, enables `-fstack-check`, and uses
+`-Mode fast`. Use `-Mode full` to run both optimized and unoptimized builds.
 
-### Examples
+### Test Runner Examples
 
 ```pwsh
 pwsh ./scripts/runall.ps1                       # quick optimized-only default
@@ -117,7 +94,7 @@ The `-Mode` parameter selects which optimization pass(es) to build and verify.
   against the same baseline. This catches optimizer bugs that change a program's
   output.
 
-### Parameters
+### Test Runner Parameters
 
 | Parameter | Default | Purpose |
 | --------- | ------- | ------- |
@@ -136,6 +113,7 @@ The `-Mode` parameter selects which optimization pass(es) to build and verify.
 ### Output
 
 Reports:
+
 - Total apps discovered
 - Passed/failed/skipped counts
 - Per-app build and execution status (live in parallel mode)

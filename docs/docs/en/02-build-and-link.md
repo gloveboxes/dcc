@@ -9,14 +9,13 @@ commands below work from any folder that holds your `.c` sources.
 
 ## The one-step helper script
 
-The quickest way to build is the `ma.sh` (macOS/Linux) or `ma.bat` (Windows)
-helper script. It compiles, optimizes, strips the runtime, assembles, and links
-in one step. Copy `ma.sh` / `ma.bat` from the dcc repo into your own project (or
-point at it by path) and run it against your source:
+The quickest way to build is the cross-platform `scripts/ma.ps1` helper script.
+It compiles, optimizes, strips the runtime, assembles, and links in one step.
+Run it from your project directory and point at the script in your dcc checkout:
 
-```sh
-sh ./ma.sh foo            # builds foo.c -> FOO.COM (peephole optimized)
-sh ./ma.sh foo nopeep     # same, but skip the dccpeep optimizer
+```pwsh
+pwsh /path/to/dcc/scripts/ma.ps1 foo -Mode fast    # builds foo.c -> FOO.COM
+pwsh /path/to/dcc/scripts/ma.ps1 foo -Mode nopeep  # skip the dccpeep optimizer
 ```
 
 Under the hood this runs the compiler, the optional `dccpeep` peephole
@@ -33,10 +32,54 @@ environment variables), so it does not need to live next to the dcc binaries.
     `dccrtlstrip` are host tools; `m80.com` and `l80.com` are CP/M programs, so run
     them through `ntvcm` (or another CP/M emulator):
 
-    === "macOS / Linux"
+    === "Windows"
 
-        Define the same CRLF helper used by `ma.sh`: prefer `unix2dos` if it is
-        installed, otherwise use Perl (available on macOS and common Linux systems).
+        Define a CRLF helper using PowerShell/.NET APIs.
+
+        ```powershell
+        function Convert-ToCrlf($Path) {
+            $text = [IO.File]::ReadAllText($Path) -replace "`r?`n", "`r`n"
+            [IO.File]::WriteAllText($Path, $text)
+        }
+        ```
+
+        Compile the C source to M80 assembly, then optionally run the peephole
+        optimizer.
+
+        ```powershell
+        dcc -I C:\path\to\dcc -stack 512 foo.c -o FOO.MAC
+        dccpeep FOO.MAC _PEEPOUT.MAC
+        Move-Item -Force _PEEPOUT.MAC FOO.MAC
+        ```
+
+        Convert the app assembly to CP/M CRLF text and assemble it with M80 under
+        `ntvcm`.
+
+        ```powershell
+        Convert-ToCrlf FOO.MAC
+        ntvcm m80 "=FOO.MAC" /X /O /Z /L
+        ```
+
+        Copy and trim the runtime to only the blocks used by the app.
+
+        ```powershell
+        Copy-Item C:\path\to\dcc\DCCRTL.MAC DCCRTL.MAC
+        Convert-ToCrlf DCCRTL.MAC
+        dccrtlstrip -r DCCRTL.MAC -o RTLMIN.MAC FOO.MAC
+        ```
+
+        Convert, assemble, and link the trimmed runtime with the app.
+
+        ```powershell
+        Convert-ToCrlf RTLMIN.MAC
+        ntvcm m80 "=RTLMIN.MAC" /X /O /Z
+        ntvcm l80 "/P:100,RTLMIN,FOO,FOO/N/E"
+        ```
+
+    === "macOS"
+
+        Define a CRLF helper: prefer `unix2dos` if it is installed, otherwise
+        use Perl (available on macOS).
 
         ```sh
         to_crlf() {
@@ -81,51 +124,55 @@ environment variables), so it does not need to live next to the dcc binaries.
         ntvcm l80 "/P:100,RTLMIN,FOO,FOO/N/E"
         ```
 
-    === "Windows PowerShell"
+    === "Linux"
 
-        Define a CRLF helper using PowerShell/.NET APIs.
+        Define a CRLF helper: prefer `unix2dos` if it is installed, otherwise
+        use Perl (available on common Linux systems).
 
-        ```powershell
-        function Convert-ToCrlf($Path) {
-            $text = [IO.File]::ReadAllText($Path) -replace "`r?`n", "`r`n"
-            [IO.File]::WriteAllText($Path, $text)
+        ```sh
+        to_crlf() {
+            if command -v unix2dos >/dev/null 2>&1; then
+                unix2dos "$1" >/dev/null 2>&1 || true
+            else
+                perl -0pi -e 's/\r?\n/\r\n/g' "$1"
+            fi
         }
         ```
 
         Compile the C source to M80 assembly, then optionally run the peephole
         optimizer.
 
-        ```powershell
-        dcc -I C:\path\to\dcc -stack 512 foo.c -o FOO.MAC
+        ```sh
+        dcc -I /path/to/dcc -stack 512 foo.c -o FOO.MAC
         dccpeep FOO.MAC _PEEPOUT.MAC
-        Move-Item -Force _PEEPOUT.MAC FOO.MAC
+        mv _PEEPOUT.MAC FOO.MAC
         ```
 
         Convert the app assembly to CP/M CRLF text and assemble it with M80 under
         `ntvcm`.
 
-        ```powershell
-        Convert-ToCrlf FOO.MAC
+        ```sh
+        to_crlf FOO.MAC
         ntvcm m80 "=FOO.MAC" /X /O /Z /L
         ```
 
         Copy and trim the runtime to only the blocks used by the app.
 
-        ```powershell
-        Copy-Item C:\path\to\dcc\DCCRTL.MAC DCCRTL.MAC
-        Convert-ToCrlf DCCRTL.MAC
+        ```sh
+        cp /path/to/dcc/DCCRTL.MAC DCCRTL.MAC
+        to_crlf DCCRTL.MAC
         dccrtlstrip -r DCCRTL.MAC -o RTLMIN.MAC FOO.MAC
         ```
 
         Convert, assemble, and link the trimmed runtime with the app.
 
-        ```powershell
-        Convert-ToCrlf RTLMIN.MAC
+        ```sh
+        to_crlf RTLMIN.MAC
         ntvcm m80 "=RTLMIN.MAC" /X /O /Z
         ntvcm l80 "/P:100,RTLMIN,FOO,FOO/N/E"
         ```
 
-    The helper scripts stage `m80.com` and `l80.com` before invoking `ntvcm`. For a
+    The helper script stages `m80.com` and `l80.com` before invoking `ntvcm`. For a
     manual build, keep those `.COM` files and `DCCRTL.MAC` in the working directory
     where you run the pipeline, or adjust the paths to match your layout. Replace
     `/path/to/dcc` (or `C:\path\to\dcc`) with the dcc repo path that contains the
@@ -133,8 +180,8 @@ environment variables), so it does not need to live next to the dcc binaries.
     unnecessary.
 
     M80 expects CP/M-style CRLF text files; LF-only files can be misread. The Unix
-    helper above mirrors `ma.sh`; the Windows helper shown above uses PowerShell/.NET
-    APIs.
+    helper shown above uses Perl or `unix2dos`; the Windows helper uses
+    PowerShell/.NET APIs.
 
 ## The compiler invocation
 
@@ -148,8 +195,8 @@ Common options:
 | --- | --- |
 | `-o file` | Write M80 assembly to `file`; default is `out.mac`, `-` is stdout. |
 | `-c`, `-module` | Emit a linkable helper module, not a final program translation unit. |
-| `-f`, `-ffloatio` | Enable floating-point `printf` formatting support. |
-| `-fl`, `-flongio` | Enable 32-bit `long` `printf` format specifiers (`%ld`, `%lu`, `%lx`). |
+| `-f`, `-ffloatio` | Enable `%f` formatting for `printf`. |
+| `-fl`, `-flongio` | Enable 32-bit `long` `printf`-family format specifiers (`%ld`, `%lu`, `%lx`, `%lX`, `%ls`). |
 | `-fstack-check` | Emit a lightweight stack-overflow guard in each function prologue. |
 | `-s bytes`, `-stack bytes`, `--stack bytes` | Reserve stack bytes; default is 512. |
 | `-s=bytes`, `-stack=bytes`, `--stack=bytes` | Equivalent attached forms for the stack size. |
@@ -161,13 +208,15 @@ Common options:
 
 ## Options that affect the runtime
 
-- **`-f` / `-ffloatio`** — pull in floating-point support for the `printf`
-  family. You **must** pass this if your format strings use `%f`; otherwise
-  float formatting is not linked in. This is also the single biggest code-size
-  lever — see the [appendix](appendix/01-dccrtlstrip.md).
-- **`-fl` / `-flongio`** — enable 32-bit `long` integer `printf` format
-    specifiers (`%ld`, `%lu`, `%lx`). Use this when formatting `long` values;
-    without it, long integer formatting support is not linked.
+- **`-f` / `-ffloatio`** — pull in floating-point `%f` support for `printf`.
+    You **must** pass this if a `printf` format string uses `%f`; otherwise float
+    formatting is not linked in. This does not enable floating-point `scanf`
+    input, and it does not enable `%f` for `sprintf`, `fprintf`, or the `v...`
+    variants. This is also the single biggest code-size lever — see the
+    [appendix](appendix/01-dccrtlstrip.md).
+- **`-fl` / `-flongio`** — enable 32-bit `long` `printf`-family format
+    specifiers (`%ld`, `%lu`, `%lx`, `%lX`, `%ls`). Use this when formatting
+    `long` values; without it, long formatting support is not linked.
 - **`-s` / `-stack` / `--stack`** — reserve stack space (default 512; accepted
   range 0..32767). The heap used by `malloc` lives between the end of BSS and
   the bottom of the stack, so growing the stack shrinks the heap and vice versa.
@@ -190,18 +239,34 @@ forced on and sweeps the `-stack` reserve upward until it runs without tripping
 the guard, then prints the minimum and a recommended value with headroom. Run it
 against an app/test name (and pass any program arguments after `--`):
 
-=== "macOS / Linux"
-
-    ```sh
-    scripts/stacksize.sh triangle          # simple app
-    scripts/stacksize.sh cobint -- e.cob   # app that needs a data-file argument
-    ```
-
 === "Windows"
 
     ```bat
+    rem simple app
     scripts\stacksize.bat triangle
+
+    rem app that needs a data-file argument
     scripts\stacksize.bat cobint -- e.cob
+    ```
+
+=== "macOS"
+
+    ```sh
+    # simple app
+    scripts/stacksize.sh triangle
+
+    # app that needs a data-file argument
+    scripts/stacksize.sh cobint -- e.cob
+    ```
+
+=== "Linux"
+
+    ```sh
+    # simple app
+    scripts/stacksize.sh triangle
+
+    # app that needs a data-file argument
+    scripts/stacksize.sh cobint -- e.cob
     ```
 
 Both honour the same `START` / `STEP` / `MAX` / `MODE` / `EMU` environment

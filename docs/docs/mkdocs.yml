@@ -15,16 +15,26 @@ copyright: >-
 nav:
   - Introduction: en/index.md
   - Setting up the toolchain: en/00-setup-toolchain.md
-  - Agent skills: en/00-agent-skills.md
+  - Agentic skills: en/00-agent-skills.md
   - C89 conformance: en/01-c89-conformance.md
   - Building and linking: en/02-build-and-link.md
   - Types and conventions: en/03-types-and-conventions.md
   - Operators: en/04-operators.md
-  - Console and file I/O (stdio.h): en/05-stdio.md
-  - Memory and utilities (stdlib.h): en/06-stdlib.md
-  - Strings and characters: en/07-strings-and-ctype.md
-  - Floating point math (math.h): en/08-math.md
-  - Utility headers: en/09-utility-headers.md
+  - C standard libraries:
+      - "assert.h: Diagnostics": en/standard-lib/01-assert.md
+      - "ctype.h: Character handling": en/standard-lib/07-ctype.md
+      - "errno.h: Error reporting": en/standard-lib/02-errno.md
+      - "float.h: Floating-point limits": en/standard-lib/03-float.md
+      - "limits.h: Integer limits": en/standard-lib/04-limits.md
+      - "math.h: Floating point math": en/standard-lib/08-math.md
+      - "setjmp.h: Non-local jumps": en/standard-lib/09-setjmp.md
+      - "stdarg.h: Variadic arguments": en/standard-lib/10-stdarg.md
+      - "stdbool.h: Boolean type": en/standard-lib/11-stdbool.md
+      - "stddef.h: Common definitions": en/standard-lib/12-stddef.md
+      - "stdint.h: Fixed-width integers": en/standard-lib/13-stdint.md
+      - "stdio.h: Console and file I/O": en/standard-lib/05-stdio.md
+      - "stdlib.h: Memory and utilities": en/standard-lib/06-stdlib.md
+      - "string.h: String handling": en/standard-lib/14-string.md
   - System and CP/M services: en/10-system-and-cpm.md
   - Limitations: en/11-limitations.md
   - Worked examples: en/12-examples.md
@@ -49,6 +59,7 @@ plugins:
 hooks:
   - hooks/copy_assets.py
   - hooks/runtime_sizes.py
+  - hooks/stdlib_tables.py
 
 theme:
   name: material

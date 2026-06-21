@@ -10,7 +10,7 @@ and the single source-of-truth runtime.
   (16,777,216) are not all representable, so converting a large `long` to
   `float` — or comparing a `long` against a `float` — rounds to the nearest
   single. Keep values as integers when you need full 32-bit precision. See
-  [Floating point math](08-math.md).
+  [Floating point math](standard-lib/08-math.md).
 - **`%` is integer-only.** Use `fmodf` for a floating-point remainder;
   `float % float` is a compile error.
 - **`int` is 16-bit.** Use `long` (and `%ld`) when you need more than ±32767.

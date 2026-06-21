@@ -1,9 +1,9 @@
 # Worked examples
 
 Short, self-contained programs you can drop into your own project, build with
-the helper script (`sh ./ma.sh foo`, or `ma.bat foo` on Windows), and run under
-an emulator such as ntvcm. See [Building and linking](02-build-and-link.md) for
-the build options and the manual pipeline.
+the `scripts/ma.ps1` helper script, and run under an emulator such as ntvcm. See
+[Building and linking](02-build-and-link.md) for the build options and the
+manual pipeline.
 
 ## Sorting and searching an `int` array
 
@@ -74,7 +74,7 @@ big=123456
 console, so output accumulates instead of going to CP/M one character at a time.
 A larger buffer means fewer BDOS calls. Drain it with `fflush`, and detach it
 (`setvbuf(stdout, NULL, _IOLBF, 0)`) before the buffer's storage is reused — see
-[Console output buffering](05-stdio.md#console-output-buffering).
+[Console output buffering](standard-lib/05-stdio.md#console-output-buffering).
 
 ```c
 --8<-- "tests/tbufex.c:example"

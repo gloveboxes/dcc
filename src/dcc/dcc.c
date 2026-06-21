@@ -864,8 +864,8 @@ void print_help(void)
     printf("options:\n");
     printf("  -o <file>        write M80 assembly to <file> ('-' for stdout)\n");
     printf("  -c, -module      emit a linkable helper module (not a final program)\n");
-    printf("  -f, -ffloatio    enable floating-point printf/scanf support\n");
-    printf("  -fl, -flongio    enable 32-bit long printf format specifiers (%%ld/%%lu/%%lx)\n");
+    printf("  -f, -ffloatio    enable %%f formatting for printf\n");
+    printf("  -fl, -flongio    enable long printf formats (%%ld/%%lu/%%lx/%%lX/%%ls)\n");
     printf("  -s, -stack <bytes>   reserve <bytes> for the C stack (default 512)\n");
     printf("  -fstack-check    abort gracefully if the stack overflows its reserve\n");
     printf("  -I<dir>          add <dir> to the include search path\n");

@@ -1,55 +1,54 @@
 # Introduction
 
-**dcc** is a C89 compiler that targets **CP/M 2.2 on the Z80**. It reads a `.c`
-file and generates an M80-syntax `.MAC` assembly file that is assembled by M80
-and linked by L80 to produce a CP/M `.COM` program.
+**dcc** is a C89 compiler for **CP/M 2.2 on the Z80**. It translates a `.c` file
+to M80 assembly. M80 assembles the result, and L80 links it into a CP/M `.COM`
+program.
 
-dcc and the [ntvcm](https://github.com/davidly/ntvcm) emulator are
-general-purpose tools: although the dcc repo bundles a test suite and build
-scripts, you will normally use them to build your **own** CP/M / Z80 C apps in
-independent projects. Once the tools are on your `PATH`, you can compile and run
-from any directory — you don't need to work inside the dcc repo.
+dcc is a cross tool. It runs on Windows, macOS, and Linux; the programs it
+builds run under CP/M. The [ntvcm](https://github.com/davidly/ntvcm) emulator
+lets you build and test those programs on the host machine.
+
+The repository contains tests and helper scripts, but dcc is not tied to the
+repository. Once the tools are on your `PATH`, you can build CP/M programs from
+any project directory.
 
 ![dcc compiler banner](images/dcc-retro-banner.svg)
 
-This documentation is a practical guide to the language dcc accepts and the C
-runtime library it ships with. It is split into focused topics so you can jump
-straight to the area you need:
+This manual describes the language accepted by dcc, the runtime library, and the
+build path from C source to `.COM` file.
 
-- [Setting up the toolchain](00-setup-toolchain.md) — build dcc and ntvcm and
-  put the tools on your `PATH` for macOS, Linux, and Windows.
-- [Agent skills](00-agent-skills.md) — let an AI coding assistant write correct
-  dcc/CP/M/Z80 code by loading the bundled skill.
-- [C89 conformance and C99 extensions](01-c89-conformance.md) — which keywords
-  and features are supported, and the handful of post-C89 conveniences.
-- [Building and linking](02-build-and-link.md) — how a `.c` file becomes a
-  `.COM` file and the options that matter most.
-- [Types and conventions](03-types-and-conventions.md) — sizes of `int`,
-  `long`, `float`, pointers, and the constants you can rely on.
-- [Operators](04-operators.md) — the full operator set and the 16-bit gotchas.
-- Library reference: [stdio](05-stdio.md), [stdlib](06-stdlib.md),
-  [strings and ctype](07-strings-and-ctype.md), [math](08-math.md),
-  [utility headers](09-utility-headers.md), and
+- Start with [Setting up the toolchain](00-setup-toolchain.md).
+- See [Building and linking](02-build-and-link.md) for the normal build flow.
+- See [C89 conformance and C99 extensions](01-c89-conformance.md),
+  [Types and conventions](03-types-and-conventions.md), and
+  [Operators](04-operators.md) for the language rules.
+- Use the library reference for [assert.h](standard-lib/01-assert.md),
+  [ctype.h](standard-lib/07-ctype.md), [errno.h](standard-lib/02-errno.md),
+  [float.h](standard-lib/03-float.md), [limits.h](standard-lib/04-limits.md),
+  [math.h](standard-lib/08-math.md), [setjmp.h](standard-lib/09-setjmp.md),
+  [stdarg.h](standard-lib/10-stdarg.md), [stdbool.h](standard-lib/11-stdbool.md),
+  [stddef.h](standard-lib/12-stddef.md), [stdint.h](standard-lib/13-stdint.md),
+  [stdio.h](standard-lib/05-stdio.md), [stdlib.h](standard-lib/06-stdlib.md),
+  [string.h](standard-lib/14-string.md), and
   [system / CP/M services](10-system-and-cpm.md).
-- [Limitations](11-limitations.md) and [worked examples](12-examples.md).
-- An [appendix on `dccrtlstrip`](appendix/01-dccrtlstrip.md) explaining how the
-  runtime is trimmed and what each library call costs in code size.
+- Read [Limitations](11-limitations.md) before depending on hosted-C behavior.
+- Try the [worked examples](12-examples.md) when you want complete programs.
+- Use [Agentic skills](00-agent-skills.md) if you want an AI assistant to load the
+  dcc-specific rules while working in another project.
 
-## How the runtime fits together
+## Runtime
 
-`DCCRTL.MAC` is the single source of truth for the runtime. It is written in Z80
-assembly (M80/L80 syntax) for size and speed and provides:
+`DCCRTL.MAC` is the runtime. It is Z80 assembly in M80/L80 syntax. It supplies:
 
-- the `start` entrypoint that sets up the heap and parses the command line into
-  `argc` / `argv` before calling your `main`,
-- a near complete coverage of the C89 library (documented across these pages),
-- 16-/32-bit integer and 32-bit float arithmetic helpers that the compiler
-  calls implicitly.
+- the `start` entry point, which sets up the heap and calls `main`,
+- command-line parsing for `argc` and `argv`,
+- the supported C library routines,
+- integer and floating-point helpers used by generated code.
 
-For normal application builds, the runtime is trimmed before linking so unused
-library code does not inflate the final `.COM` file. The build workflow covers
-that step in [Building and linking](02-build-and-link.md), and the internals and
-size trade-offs are kept in the [appendix](appendix/01-dccrtlstrip.md).
+Normal builds trim the runtime before linking. Unused routines are left out of
+the final `.COM` file. The build steps are shown in
+[Building and linking](02-build-and-link.md); the trimming details are in the
+[`dccrtlstrip` appendix](appendix/01-dccrtlstrip.md).
 
 !!! note "Single source of truth"
     Functions that are declared in the standard headers but are **not** part of
@@ -57,57 +56,23 @@ size trade-offs are kept in the [appendix](appendix/01-dccrtlstrip.md).
     [Limitations](11-limitations.md) so a missing function never surprises you
     at link time.
 
-## Compiler performance snapshot
+## Performance Snapshot
 
-The chart below compares `.COM` programs produced by dcc with other CP/M-era
-and modern CP/M-targeting compilers. The timing column uses `ntvcm -p` cycle
-counts converted to the emulator's `approx ms at 4Mhz` value for Z80-mode runs.
-Sizes are CP/M file sizes rounded to the next 128-byte record. Lower numbers are
-better for both `ms` and `bytes`.
+The chart compares `.COM` programs produced by dcc with CP/M-era and modern
+CP/M-targeting compilers. Times come from `ntvcm -p` cycle counts converted to
+the emulator's `approx ms at 4Mhz` value for Z80-mode runs. Sizes are CP/M file
+sizes rounded to 128-byte records. Lower is better for `ms` and `bytes`.
 
 ![CP/M 2.2 benchmark comparison](images/table.jpg)
 
-The chart columns mean:
+The benchmark names are the test programs: strings and memory (`tstring`),
+sieve, digits of `e`, allocation (`tm`), tic-tac-toe (`ttt`), hexadecimal pi
+digits (`pihex`), and matrix multiply (`mm`). Rows labelled `xcomp` are dcc
+output before `dccpeep`; rows labelled `dccpeep optimized` are after the
+optimizer pass.
 
-| Label | Meaning |
-| --- | --- |
-| `compiler` | Compiler, interpreter, or hand-written assembly implementation being compared. |
-| `year` | Release year, or benchmark row year for dcc-built interpreters. |
-| `ms` | `ntvcm -p` cycle-count timing converted to `approx ms at 4Mhz` for Z80-mode runs. |
-| `bytes` | Final CP/M `.COM` file size, rounded by the filesystem to 128-byte records. |
-| `runtime, size / notes` | Required runtime/interpreter size or special notes such as missing float support, benchmark hacks, or failures. |
-| `cpu` | Instruction set targeted by the generated program: `8080` means 8080-compatible code; `Z80` means Z80-specific code. |
+## Engineering Notes
 
-The benchmark groups are:
-
-| Label | What it measures |
-| --- | --- |
-| `tstring` | String/memory runtime performance: `strlen`, `strchr`, `strrchr`, `strstr`, `memcmp`, `memcpy`, `memset`, `memchr`, plus `rand` and integer modulus. |
-| `sieve` | BYTE magazine Sieve of Eratosthenes benchmark; mostly loop and array performance. |
-| `e` | Computes digits of `e`; stresses integer division, modulus, loops, arrays, and formatted output. |
-| `tm` | Allocator benchmark using `malloc`, `calloc`, `free`, and `memset`. |
-| `ttt` | Tic-tac-toe search; stresses function calls, branching, loops, arrays, and small integer work. |
-| `pihex` | Computes hexadecimal digits of pi; stresses unsigned long modular arithmetic and single-precision float math. |
-| `mm` | 20x20 matrix multiply benchmark; stresses float initialization, addition, multiplication, and array indexing. |
-
-Rows labelled `dcc C89 v1.0 win/linux/mac xcomp` show dcc cross-compiled output
-without the peephole optimizer. Rows labelled `dcc C89 v1.0 dccpeep optimized`
-show the same compiler output after the `dccpeep` optimizer pass.
-
-## Agentic engineering
-
-dcc was built with AI assistance, but not by tossing prompts over the wall and
-hoping for the best. Agentic engineering is the deliberate version: AI can write
-code quickly, but the human still owns the architecture, constraints, review,
-and definition of "working." That matters for a CP/M compiler, where every
-change has to fit a tiny memory model, old toolchain limits, and `.COM` size
-pressure.
-
-The key habit is tight feedback: plan the change, keep it small, build it, run
-it under the emulator, and review the result. Automated regression tests are
-essential; dcc rebuilds and runs its test programs in optimized and unoptimized
-modes, then compares output against the baseline so compiler and runtime changes
-do not quietly break older programs. For more on the style, see Simon Willison's
-[Vibe Engineering](https://simonwillison.net/2025/Oct/7/vibe-engineering/) and
-Andrew Orobator's
-[Vibe Engineering: From Random Code to Deterministic Systems](https://medium.com/@andreworobator/vibe-engineering-from-random-code-to-deterministic-systems-06e2bf87c144).
+dcc changes are built often, run under the emulator, and compared against
+baselines. The main constraints are small memory, old tools, fixed file formats,
+and reproducible tests.

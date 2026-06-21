@@ -75,68 +75,13 @@ while ((e = readdir(d)) != NULL)
 closedir(d);
 ```
 
-## `errno.h` — error reporting
+## Standard diagnostics and errors
 
-Include `errno.h`. The runtime is single-threaded, so `errno` is a single global
-`int`.
-
-- `extern int errno;`
-- C89 requires `EDOM` and `ERANGE`; dcc also defines file-related values used by
-    the CP/M file runtime.
-
-| Macro | Value | Meaning |
-| --- | ---: | --- |
-| `EPERM` | 1 | operation not permitted |
-| `ENOENT` | 2 | no such file or directory |
-| `ESRCH` | 3 | no such process |
-| `EINTR` | 4 | interrupted call |
-| `EIO` | 5 | I/O error |
-| `ENXIO` | 6 | no such device or address |
-| `E2BIG` | 7 | argument list too long |
-| `ENOEXEC` | 8 | exec format error |
-| `EBADF` | 9 | bad file descriptor |
-| `ECHILD` | 10 | no child processes |
-| `EAGAIN` | 11 | try again |
-| `ENOMEM` | 12 | not enough memory |
-| `EACCES` | 13 | permission denied |
-| `EFAULT` | 14 | bad address |
-| `EBUSY` | 16 | resource busy |
-| `EEXIST` | 17 | file exists |
-| `EXDEV` | 18 | cross-device link |
-| `ENODEV` | 19 | no such device |
-| `ENOTDIR` | 20 | not a directory |
-| `EISDIR` | 21 | is a directory |
-| `EINVAL` | 22 | invalid argument |
-| `ENFILE` | 23 | system file table full |
-| `EMFILE` | 24 | too many open files |
-| `ENOTTY` | 25 | inappropriate device control |
-| `EFBIG` | 27 | file too large |
-| `ENOSPC` | 28 | no space left |
-| `ESPIPE` | 29 | illegal seek |
-| `EROFS` | 30 | read-only file system |
-| `EMLINK` | 31 | too many links |
-| `EPIPE` | 32 | broken pipe |
-| `EDOM` | 33 | domain error |
-| `ERANGE` | 34 | range error |
-| `ENOTEMPTY` | 39 | directory not empty |
-
-Pair it with `perror` or `strerror` to render a message:
-
-```c
-if (!fopen("MISSING.DAT", "r"))
-    perror("open");
-```
-
-## `assert.h` — assertions
-
-Include `assert.h`. `assert(expr)` prints a diagnostic to `stderr` and calls
-`exit(1)` when `expr` is false. Define `NDEBUG` before including the header to
-compile assertions out.
-
-```c
-#include <assert.h>
-assert(ptr != NULL);
-```
+The standard-library reference now has dedicated pages for
+[error reporting](standard-lib/02-errno.md) and
+[assertions](standard-lib/01-assert.md). The CP/M file runtime uses `errno` for
+file-related failures, and `assert` writes its diagnostic through `stderr` before
+terminating with `exit(1)`.
 
 ## CP/M extensions
 

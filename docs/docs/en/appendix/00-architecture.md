@@ -1,10 +1,8 @@
 # Appendix: compiler architecture
 
-This appendix describes how the dcc toolchain is built internally and relates
-its design to the classical compiler architecture taught in textbooks. It
-covers all three host tools — the compiler `dcc`, the peephole optimizer
-`dccpeep`, and the runtime size reducer `dccrtlstrip` — and the off-the-shelf
-Microsoft `M80` / `L80` assembler and linker that finish the job.
+This appendix describes the dcc toolchain: the compiler `dcc`, the peephole
+optimizer `dccpeep`, the runtime size reducer `dccrtlstrip`, and the Microsoft
+`M80` / `L80` assembler and linker.
 
 !!! note "These are *cross* tools"
     `dcc`, `dccpeep`, and `dccrtlstrip` are host programs: they are compiled
@@ -43,35 +41,15 @@ flowchart LR
 | Assemble | `M80` | `.MAC` | `.REL` | Object code (relocatable) |
 | Link | `L80` | `.REL` files | `.COM` | Resolve symbols into a CP/M executable |
 
-The `dccpeep` stage is optional (`./ma.sh name nopeep` skips it). `dccrtlstrip`
-runs against the *final* application assembly so it sees the real set of
-runtime symbols the program calls.
+The `dccpeep` stage is optional (`pwsh ./scripts/ma.ps1 name -Mode nopeep`
+skips it). `dccrtlstrip` runs against the *final* application assembly so it
+sees the real set of runtime symbols the program calls.
 
-## Where dcc sits in classic compiler theory
+## Compiler Shape
 
-A textbook compiler is a pipeline of well-separated phases, each consuming the
-data structure produced by the previous one — typically an abstract syntax tree
-(AST) and one or more intermediate representations (IR):
-
-```mermaid
-flowchart LR
-    A([source]) --> L[lexer]
-    L --> P[parser]
-    P --> AST([AST])
-    AST --> S[semantic<br/>analysis]
-    S --> IRG[IR generation]
-    IRG --> IR([IR])
-    IR --> OPT[optimizer]
-    OPT --> CG[code generator]
-    CG --> T([target asm])
-```
-
-dcc deliberately **collapses the middle of that pipeline**. It is a
-**single-pass, syntax-directed translator**: there is no AST and no IR. As the
-parser recognises a grammar construct it immediately emits the corresponding
-Z80 assembly. This is the same lineage as the earliest C compilers and is the
-classic technique described as *syntax-directed translation* — semantic actions
-attached directly to grammar rules.
+dcc is a single-pass, syntax-directed translator. It does not build an AST or an
+intermediate representation. As the parser recognizes a construct, it emits the
+corresponding Z80 assembly.
 
 ```mermaid
 flowchart LR
@@ -83,7 +61,7 @@ flowchart LR
     ORA -. type verdict .-> PARSE
 ```
 
-The trade-off table below maps dcc onto the textbook phases:
+The phases are:
 
 | Classic phase | Conventional design | dcc's approach |
 | --- | --- | --- |
@@ -95,23 +73,18 @@ The trade-off table below maps dcc onto the textbook phases:
 | Code generation | Lower IR to target | Emitted directly by the parser's semantic actions |
 | Machine-dependent optimization | Target peephole pass | Separate program `dccpeep` over the emitted text |
 
-### The cost of having no AST: type prediction
+### Type prediction
 
-The one place where "no AST" genuinely hurts is *type prediction*. When the
-parser reaches a binary operator, a `?:` arm, or a branch condition, it must
-already have chosen 16-bit, 32-bit, or float code for the operand it is about
-to generate — but with no tree there is nothing to consult.
+Without an AST, the parser must choose 16-bit, 32-bit, or float code before it
+emits each operand of an operator, conditional arm, or branch condition.
 
-dcc handles this in two layers:
+dcc uses two mechanisms:
 
-- A **shallow source-text peek** (`peek_simple_unary_type`,
-  `snippet_simple_type`) inspects just the first token or two of the upcoming
-  operand. It is cheap but blind to types hidden behind parentheses, casts,
-  struct members, or array decay.
-- A **type oracle** (`dcc_type_oracle.c`) provides the complete answer.
-  `typeof_conditional_arm()` walks the full expression grammar through its
-  `to_*` ladder and reports the C type the generator will ultimately produce —
-  applying the usual arithmetic conversions — but **emits no code**.
+- A shallow source-text peek (`peek_simple_unary_type`, `snippet_simple_type`)
+  checks the first token or two of the upcoming operand.
+- The type oracle (`dcc_type_oracle.c`) walks the full expression grammar and
+  returns the type the generator will produce, applying the usual arithmetic
+  conversions without emitting code.
 
 ```mermaid
 flowchart TB
@@ -122,11 +95,9 @@ flowchart TB
     RESTORE --> EMIT["re-parse + emit<br/>correctly-typed code"]
 ```
 
-Because the oracle snapshots and restores **all** lexer/token state, a bug in
-it can only produce a wrong *type verdict* — it can never desync the parser.
-This is a **"1.5-pass" technique**: it buys accurate whole-expression type
-information without the cost of a full AST or a second code-generating pass,
-keeping dcc's single-pass character intact.
+The oracle snapshots and restores lexer state before returning. It supplies
+whole-expression type information without a full AST or a second code-generating
+pass.
 
 ## Inside dcc: module architecture
 
@@ -323,7 +294,6 @@ sizing a program are:
 
 Those numbers are recomputed from `DCCRTL.MAC` on every docs build, so editing
 the runtime and rebuilding the docs is all that is needed to refresh them.
-
 
 - dcc is a **single-pass, syntax-directed** C89 compiler with **no AST and no
   IR** — code is emitted as the parser recognises each construct, in the

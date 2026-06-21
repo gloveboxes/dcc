@@ -1,0 +1,43 @@
+# String handling (`string.h`)
+
+Include [`string.h`](14-string.md) for byte-string and raw memory operations.
+
+## Functions
+
+<!-- STRING-FUNCTION-TABLE: all -->
+
+## Runtime model
+
+The string and memory functions operate on byte strings and raw byte buffers.
+`strcoll` is equivalent to `strcmp`; dcc has no locale model.
+
+## String and memory operations
+
+```c
+#include <string.h>
+
+char dst[16];
+strcpy(dst, "hello");
+if (strcmp(dst, "hello") == 0)
+    memset(dst, 0, sizeof dst);
+```
+
+Tokenizing a copy of a string with `strtok` writes NULs into the buffer, so do
+not pass a string literal:
+
+```c
+#include <stdio.h>
+#include <string.h>
+
+char line[] = "alpha,beta,,gamma";
+char *tok = strtok(line, ",");
+while (tok) {
+    puts(tok);                 /* alpha, beta, gamma */
+    tok = strtok(NULL, ",");
+}
+```
+
+!!! note "`strdup` is the exception"
+    Most string routines pull in nothing extra, but `strdup` allocates, so it
+    drags in the whole `malloc` chain. See the
+    [appendix](../appendix/01-dccrtlstrip.md).

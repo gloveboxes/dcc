@@ -47,7 +47,7 @@ always emitted normally. No other C99/C11 keywords (`restrict`, `_Bool`,
 
 The native `_Bool` keyword is **not** a compiler type — but `bool`, `true`, and
 `false` are available as an ordinary library typedef by including
-[`stdbool.h`](09-utility-headers.md#stdboolh-boolean-type), so portable C99
+[`stdbool.h`](standard-lib/11-stdbool.md), so portable C99
 source that uses them compiles unchanged.
 
 ### `for`-loop init declarations
@@ -88,7 +88,5 @@ character literals, so a literal such as `"a // b"` is left intact.
 
 ## Identifier significance
 
-Identifier significance is C89-conformant: internal identifiers are
-distinguished by at least their first 31 characters and external (global and
-function) names by at least their first 6, so you never need to abbreviate
-identifiers for the toolchain.
+dcc exceeds C89's identifier-significance minimum of 31 characters for internal
+identifiers.

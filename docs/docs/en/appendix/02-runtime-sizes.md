@@ -7,7 +7,7 @@
     these numbers over any quoted elsewhere.
 
 This page quantifies what each runtime library feature costs in code size once
-its transitive dependencies are pulled in. For *how* `dccrtlstrip` decides what
+its transitive dependencies are linked. For *how* `dccrtlstrip` decides what
 to keep — and the optimisation takeaways for keeping a program small — see
 [*Runtime optimization*](01-dccrtlstrip.md).
 

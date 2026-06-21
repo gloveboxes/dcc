@@ -1,8 +1,8 @@
 # C89 conformance and C99 extensions
 
 dcc implements most of C89, plus a few carefully chosen conveniences from later
-standards. This page covers which keywords are recognized, the qualifiers that
-are parsed but inert, and the post-C89 features you can rely on.
+standards. This page covers recognized keywords, qualifiers that are parsed but
+inert, and supported post-C89 features.
 
 ## Recognized keywords
 
@@ -37,7 +37,7 @@ generation:
 - `auto` — accepted; since it is already the default storage for locals, it is a
   no-op.
 
-## C99 extensions you can use
+## Available C99 extensions
 
 ### `inline`
 

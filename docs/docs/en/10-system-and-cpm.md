@@ -38,7 +38,7 @@ if (fd >= 0) {
 }
 ```
 
-!!! tip "One shared core"
+!!! tip "Single file I/O core"
     `open`/`read`/`write`/`close`/`lseek`/`unlink`/`fsync`/`fdatasync` share one
     FCB/DMA core. The first file call links that core; additional file calls are
     nearly free. See the [appendix](appendix/01-dccrtlstrip.md).
@@ -63,7 +63,7 @@ The public API uses POSIX-like names through macros:
 | `readdir` | `drd` |
 | `closedir` | `dcls` |
 
-You normally call the public names. The short runtime names exist to avoid
+Call the public names. The short runtime names exist to avoid
 external-symbol collisions on the M80/L80 toolchain.
 
 ```c
@@ -126,9 +126,9 @@ int main(void)
 ```
 
 Under the hood `kbhit()` is CP/M BDOS function 11 (console status) and `getch()`
-is BDOS function 6 (direct console input, `E = 0xff`). You can call those
-directly through `bdos()` if you need the raw behaviour, but the named functions
-are clearer and also flush pending buffered output before blocking:
+is BDOS function 6 (direct console input, `E = 0xff`). Raw calls can be made
+through `bdos()`, but the named functions are clearer and also flush pending
+buffered output before blocking:
 
 ```c
 #include <stdlib.h>
@@ -139,9 +139,9 @@ int raw_getch_nonblock(void) { return bdos(6, 0xff); }  /* 0 = no key ready */
 
 BDOS function 6 uses `0` as the "no character" sentinel, so it is best for
 keyboard-style console input rather than protocols where NUL is meaningful.
-Avoid mixing raw `bdos()` console I/O with the buffered console functions in the
-same code path, because direct BDOS calls bypass the console output buffer that
-`printf`/`puts` drain through.
+Do not mix raw `bdos()` console I/O with buffered console functions in the same
+code path; direct BDOS calls bypass the console output buffer used by
+`printf`/`puts`.
 
 ### Direct port I/O
 

@@ -6,8 +6,8 @@ and the single source-of-truth runtime.
 ## Language and type limits
 
 - **No `double`.** Only 32-bit `float` exists; all math is single precision.
-- **`float` precision is ~24 bits.** Integers past ±2<sup>24</sup>
-  (16,777,216) are not all representable, so converting a large `long` to
+- **`float` precision is ~24 bits.** Integers past about ±16,777,216 are not
+  all representable, so converting a large `long` to
   `float` — or comparing a `long` against a `float` — rounds to the nearest
   single. Keep values as integers when you need full 32-bit precision. See
   [Floating point math](standard-lib/08-math.md).
@@ -30,7 +30,7 @@ and the single source-of-truth runtime.
   the lightweight stack-overflow guard with **`-fstack-check`**, which makes an
   overflow exit cleanly with a `?stack overflow` message instead of silently
   corrupting the heap. See [Building and linking](02-build-and-link.md) for the
-  flag and the `stacksize` helper that measures the reserve an app needs.
+  flag and the `stacksize` utility that measures the reserve an app needs.
 - **CP/M 2.2 only.** The runtime uses BDOS functions only (no BIOS calls), plus
   CP/M 3.0 BDOS 108 for the process exit code.
 

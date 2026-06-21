@@ -4,11 +4,10 @@ This appendix describes the dcc toolchain: the compiler `dcc`, the peephole
 optimizer `dccpeep`, the runtime size reducer `dccrtlstrip`, and the Microsoft
 `M80` / `L80` assembler and linker.
 
-!!! note "These are *cross* tools"
-    `dcc`, `dccpeep`, and `dccrtlstrip` are host programs: they are compiled
-    with a modern C compiler and run on your desktop (Windows, macOS, Linux).
-    They never run on a Z80. What they *emit* is Z80 assembly text and CP/M
-    `.COM` files that run under CP/M-80 (for example via the `ntvcm` emulator).
+!!! note "Host-resident tools"
+  `dcc`, `dccpeep`, and `dccrtlstrip` run on Windows, macOS, and Linux. They
+  never run on a Z80. They emit Z80 assembly text and CP/M `.COM` files that
+  run under CP/M-80, for example via the `ntvcm` emulator.
 
 ## The toolchain at a glance
 
@@ -171,9 +170,8 @@ cheaper equivalent (for example folding a redundant store/reload, threading a
 jump-to-jump, turning an `ld`/`cp` against zero into `or a`, or replacing an
 absolute `jp` in range with a relative `jr`).
 
-Peephole optimization is itself a textbook technique; what makes dccpeep
-notable is that it runs its whole catalogue to a **fixpoint** so that one
-rewrite can expose the pattern another rewrite needs:
+dccpeep runs its rewrite catalogue to a **fixpoint** so one rewrite can expose
+the pattern another rewrite needs:
 
 ```mermaid
 flowchart TB
@@ -204,9 +202,8 @@ Key design points:
 
 !!! tip "Why a separate program instead of an in-compiler pass"
     Keeping the peephole optimizer as a standalone text-to-text filter keeps
-    the compiler itself simple and lets you inspect, diff, and skip
-    optimization (`nopeep`) trivially — the assembly is the contract between
-    the two tools.
+    the compiler simple and allows inspection, diffing, and skipping
+    optimization (`nopeep`). The assembly is the contract between the two tools.
 
 ## The runtime: a block-structured library sized for stripping
 
@@ -244,7 +241,7 @@ Because the runtime is block-structured, each public routine has two costs that
 the build-time size hook (`docs/docs/hooks/runtime_sizes.py`) measures directly:
 
 - **self** — the source lines in the routine's own block.
-- **marginal** — self *plus* every additional block it transitively pulls in
+- **marginal** — self *plus* every additional block it transitively links
   beyond the always-present baseline. This is the real incremental cost of
   using a routine in a program that otherwise wouldn't need it.
 
@@ -264,7 +261,7 @@ and `puts` call into code that is already present.
 
 The runtime's size is dominated by a few shared cores. Routines that sit on a
 core are cheap individually but expensive to introduce, because the first one
-drags the whole core in:
+links the whole core:
 
 | Feature group | Shared core it links | Marginal cost (lines) |
 | --- | --- | ---: |
@@ -283,7 +280,7 @@ dependencies behind each one — are tabulated on the auto-generated
 takeaways in [*Runtime optimization*](01-dccrtlstrip.md). The takeaways for
 sizing a program are:
 
-- **Console-only output and string/ctype routines are cheap** — they pull in
+- **Console-only output and string/ctype routines are cheap** — they link
   little or nothing beyond the baseline.
 - **The first file, `scanf`, or `float` operation is the expensive one**; it
   links a shared core. Additional routines in the same family are then nearly

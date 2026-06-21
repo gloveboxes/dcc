@@ -22,8 +22,8 @@ if (strcmp(dst, "hello") == 0)
     memset(dst, 0, sizeof dst);
 ```
 
-Tokenizing a copy of a string with `strtok` writes NULs into the buffer, so do
-not pass a string literal:
+Tokenizing a copy of a string with `strtok` writes NULs into the buffer. Pass
+only modifiable strings; do not pass string literals:
 
 ```c
 #include <stdio.h>
@@ -38,6 +38,6 @@ while (tok) {
 ```
 
 !!! note "`strdup` is the exception"
-    Most string routines pull in nothing extra, but `strdup` allocates, so it
-    drags in the whole `malloc` chain. See the
+    Most string routines link nothing extra, but `strdup` allocates, so it
+    inherits the whole `malloc` chain. See the
     [appendix](../appendix/01-dccrtlstrip.md).

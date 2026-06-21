@@ -4,11 +4,11 @@
 translates a `.c` file to M80 assembly. M80 assembles the result, and L80 links
 it into a CP/M `.COM` program.
 
-dcc is a cross tool. It runs on Windows, macOS, and Linux; the programs it
-builds run under CP/M. The [ntvcm](https://github.com/davidly/ntvcm) emulator
-lets you build and test those programs on the host machine.
+dcc runs on Windows, macOS, and Linux, but the programs it builds run under
+CP/M. The [ntvcm](https://github.com/davidly/ntvcm) emulator and other popular
+CP/M Z80 emulators run those programs.
 
-The repository contains tests and helper scripts, but dcc is not tied to the
+The repository contains tests and build scripts, but dcc is not tied to the
 repository. Once the tools are on your `PATH`, you can build CP/M programs from
 any project directory.
 

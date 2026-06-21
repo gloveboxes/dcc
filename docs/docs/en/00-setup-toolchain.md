@@ -24,8 +24,8 @@ building dcc or ntvcm.
 
 === "Windows"
 
-    1. Install Visual Studio Build Tools with the C++ workload. The simplest
-       route is `winget`:
+     1. Install Visual Studio Build Tools with the C++ workload. Install with
+         `winget`:
 
         ```powershell
         winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait"
@@ -144,7 +144,7 @@ ntvcm is a C++ project. Build it from its own directory.
 
 ## Set up your environment
 
-The helper scripts live in the `scripts` directory:
+Build scripts live in the `scripts` directory:
 
 - `scripts/ma.ps1` — builds one app
 - `scripts/runall.ps1` — builds and verifies the test suite
@@ -158,8 +158,8 @@ one, otherwise they look for the tool on your `PATH`. The relevant tools are:
 - `ntvcm` — CP/M emulator
 - `m80` / `l80` — assembler and linker
 
-The simplest setup — especially when building apps in a project *outside* the
-dcc repo — is to add the directories containing the built `dcc` and `ntvcm`
+Recommended setup, especially when building apps in a project *outside* the dcc
+repo, is to add the directories containing the built `dcc` and `ntvcm`
 binaries to your `PATH`. The dcc directory also provides `dccpeep`,
 `dccrtlstrip`, `m80.com`, `l80.com`, and `DCCRTL.MAC`, so no per-tool variables
 are needed.
@@ -266,14 +266,13 @@ are needed.
 
 With the tools on your `PATH`, build and run one of the dcc repo's sample tests
 to confirm everything is wired up. From the dcc repo root, build `tests/tstr.c`
-with the cross-platform helper in the `scripts` directory, then run the
+with the cross-platform build script in the `scripts` directory, then run the
 generated `.COM` file under ntvcm:
 
     pwsh ./scripts/ma.ps1 tstr -Mode fast  # compiles tests/tstr.c -> TSTR.COM
     ntvcm TSTR.COM                         # runs it under the emulator
 
-The dcc repo's own `tests/` programs are handy samples to copy into a scratch
-project, but you do not need to work inside the dcc repo for day-to-day work —
-the tools build CP/M apps from wherever your sources live. Once that works,
-move on to [Building and linking](02-build-and-link.md) for the day-to-day
-workflow.
+The dcc repo's `tests/` programs are suitable samples for scratch projects, but
+day-to-day work does not need to happen inside the dcc repo. The tools build
+CP/M apps from wherever your sources live. Once that works, move on to
+[Building and linking](02-build-and-link.md) for the day-to-day workflow.

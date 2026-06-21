@@ -38,7 +38,7 @@ free(p);
 `malloc(n)`, and `realloc(p, 0)` frees `p` and returns `NULL`.
 
 !!! note "Size cost"
-    `malloc`/`calloc` pull in integer multiply/divide/modulo helpers for size
+    `malloc`/`calloc` link integer multiply/divide/modulo helpers for size
     arithmetic, and `strdup` inherits the whole `malloc` chain. See the
     [appendix](../appendix/01-dccrtlstrip.md).
 

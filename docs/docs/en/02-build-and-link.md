@@ -7,30 +7,29 @@ CP/M / Z80 C apps anywhere, not just inside the dcc repo. As long as the tools
 are on your `PATH` (see [Setting up the toolchain](00-setup-toolchain.md)), the
 commands below work from any folder that holds your `.c` sources.
 
-## The one-step helper script
+## The build script
 
-The quickest way to build is the cross-platform `scripts/ma.ps1` helper script.
-It compiles, optimizes, strips the runtime, assembles, and links in one step.
-Run it from your project directory and point at the script in your dcc checkout:
+The primary build command is the cross-platform `scripts/ma.ps1` script. It
+compiles, optimizes, strips the runtime, assembles, and links in one step. Run
+it from your project directory and point at the script in your dcc checkout:
 
 ```pwsh
 pwsh /path/to/dcc/scripts/ma.ps1 foo -Mode fast    # builds foo.c -> FOO.COM
 pwsh /path/to/dcc/scripts/ma.ps1 foo -Mode nopeep  # skip the dccpeep optimizer
 ```
 
-Under the hood this runs the compiler, the optional `dccpeep` peephole
-optimizer, the `dccrtlstrip` runtime trimmer, then M80 and L80. Runtime
-trimming is part of the normal build path because it keeps the final `.COM`
-file from carrying unused library routines. The script
-resolves each tool from your `PATH` (or the `DCC` / `DCCPEEP` / `DCCRTLSTRIP`
-environment variables), so it does not need to live next to the dcc binaries.
+This runs the compiler, the optional `dccpeep` peephole optimizer,
+`dccrtlstrip`, then M80 and L80. Runtime trimming is part of the normal build
+path because it keeps unused library routines out of the final `.COM` file. The
+script resolves each tool from your `PATH` or from the `DCC`, `DCCPEEP`, and
+`DCCRTLSTRIP` environment variables.
 
 ??? note "The manual pipeline (click to expand)"
 
-    If you'd rather drive the steps yourself — or wire them into your own build
-    system — the full pipeline for `foo.c` is shown below. `dcc`, `dccpeep`, and
-    `dccrtlstrip` are host tools; `m80.com` and `l80.com` are CP/M programs, so run
-    them through `ntvcm` (or another CP/M emulator):
+    For manual builds or custom build systems, the full pipeline for `foo.c` is
+    shown below. `dcc`, `dccpeep`, and `dccrtlstrip` run on the host;
+    `m80.com` and `l80.com` are CP/M programs, so run them through `ntvcm` or
+    another CP/M emulator:
 
     === "Windows"
 
@@ -172,15 +171,15 @@ environment variables), so it does not need to live next to the dcc binaries.
         ntvcm l80 "/P:100,RTLMIN,FOO,FOO/N/E"
         ```
 
-    The helper script stages `m80.com` and `l80.com` before invoking `ntvcm`. For a
-    manual build, keep those `.COM` files and `DCCRTL.MAC` in the working directory
-    where you run the pipeline, or adjust the paths to match your layout. Replace
-    `/path/to/dcc` (or `C:\path\to\dcc`) with the dcc repo path that contains the
-    standard headers; if you run from the dcc repo root, the explicit `-I` is usually
-    unnecessary.
+    `scripts/ma.ps1` stages `m80.com` and `l80.com` before invoking `ntvcm`.
+    For a manual build, keep those `.COM` files and `DCCRTL.MAC` in the working
+    directory where you run the pipeline, or adjust the paths to match your
+    layout. Replace `/path/to/dcc` (or `C:\path\to\dcc`) with the dcc repo path
+    that contains the standard headers; if you run from the dcc repo root, the
+    explicit `-I` is usually unnecessary.
 
     M80 expects CP/M-style CRLF text files; LF-only files can be misread. The Unix
-    helper shown above uses Perl or `unix2dos`; the Windows helper uses
+    function shown above uses Perl or `unix2dos`; the Windows function uses
     PowerShell/.NET APIs.
 
 ## The compiler invocation
@@ -194,7 +193,7 @@ Common options:
 | Option | Meaning |
 | --- | --- |
 | `-o file` | Write M80 assembly to `file`; default is `out.mac`, `-` is stdout. |
-| `-c`, `-module` | Emit a linkable helper module, not a final program translation unit. |
+| `-c`, `-module` | Emit a separately compilable module, not a final program translation unit. |
 | `-f`, `-ffloatio` | Enable `%f` formatting for `printf`. |
 | `-fl`, `-flongio` | Enable 32-bit `long` `printf`-family format specifiers (`%ld`, `%lu`, `%lx`, `%lX`, `%ls`). |
 | `-fstack-check` | Emit a lightweight stack-overflow guard in each function prologue. |
@@ -208,7 +207,7 @@ Common options:
 
 ## Options that affect the runtime
 
-- **`-f` / `-ffloatio`** — pull in floating-point `%f` support for `printf`.
+- **`-f` / `-ffloatio`** — link floating-point `%f` support for `printf`.
     You **must** pass this if a `printf` format string uses `%f`; otherwise float
     formatting is not linked in. This does not enable floating-point `scanf`
     input, and it does not enable `%f` for `sprintf`, `fprintf`, or the `v...`
@@ -228,13 +227,13 @@ Common options:
   has grown into the heap, the program prints `?stack overflow` and exits with
   return code `0FFh` instead of silently corrupting memory. The guard costs a
   few bytes and one call per function, so it is **off by default**; turn it on
-  while developing or for deeply recursive code. The `stacksize` helper script
+    while developing or for deeply recursive code. The `stacksize` utility
   (below) uses this guard to measure the minimum `-stack` reserve an app needs.
 - **`-Dname[=value]`** — predefine a macro. `_DCC_=1` is always defined.
 
 ### Measuring the stack an app needs
 
-The repo ships a `stacksize` helper that builds your app with `-fstack-check`
+The repo ships a `stacksize` utility that builds your app with `-fstack-check`
 forced on and sweeps the `-stack` reserve upward until it runs without tripping
 the guard, then prints the minimum and a recommended value with headroom. Run it
 against an app/test name (and pass any program arguments after `--`):
@@ -285,7 +284,7 @@ Include the standard headers as usual:
 
 ## Memory layout
 
-CP/M loads `.COM` files in just one way. BSS begins immediately after the loaded
+CP/M loads `.COM` files in one way. BSS begins immediately after the loaded
 image, and the loader sets `SP` to the highest free byte. The heap grows on
 demand between the end of BSS and the bottom of the stack. Because there is no
 guard between them by default, size the stack deliberately with `-stack` for

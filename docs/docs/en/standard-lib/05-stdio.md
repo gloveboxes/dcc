@@ -24,7 +24,7 @@ pseudo-streams plus five concurrent real file streams.
     that is already part of every program. The stream-oriented functions
     (`fputc`/`fputs`/`fprintf`) have special `stdout`/`stderr` console paths at
     runtime, but their blocks also include real-file fallbacks; using them can
-    therefore pull in more file I/O support than console-only calls need. Prefer
+    therefore link more file I/O support than console-only calls need. Prefer
     the console functions for console-only work.
     See the [appendix](../appendix/01-dccrtlstrip.md) for the size figures.
 
@@ -56,8 +56,7 @@ fprintf(stderr, "error %d\n", errno);
 ```
 
 The `v…` variants take a `va_list` (from
-[`stdarg.h`](10-stdarg.md)) so you can write
-your own `printf`-style wrappers that forward a format string — see the worked
+[`stdarg.h`](10-stdarg.md)) for wrappers that forward a format string; see the worked
 [logging-wrapper example](../12-examples.md#a-printf-style-logging-wrapper).
 
 !!! note "Compiler options for wider formatting"

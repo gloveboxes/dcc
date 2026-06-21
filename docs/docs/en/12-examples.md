@@ -1,9 +1,9 @@
 # Worked examples
 
-Short, self-contained programs you can drop into your own project, build with
-the `scripts/ma.ps1` helper script, and run under an emulator such as ntvcm. See
-[Building and linking](02-build-and-link.md) for the build options and the
-manual pipeline.
+Short, self-contained programs suitable for adding to a project, building with
+`scripts/ma.ps1`, and running under an emulator such as ntvcm. See
+[Building and linking](02-build-and-link.md) for build options and the manual
+pipeline.
 
 ## Sorting and searching an `int` array
 
@@ -38,8 +38,8 @@ kiwis: 2 in stock
 
 ## A `printf`-style logging wrapper
 
-Forwarding a `va_list` to `vfprintf` lets you build your own diagnostic helpers
-without re-parsing the arguments.
+Forwarding a `va_list` to `vfprintf` supports custom diagnostic wrappers without
+re-parsing the arguments.
 
 ```c
 --8<-- "tests/texlog.c:example"
@@ -70,8 +70,8 @@ big=123456
 
 ## Buffered console output with a user-declared buffer
 
-`setvbuf` lets you hand the runtime your own buffer and fully buffer the
-console, so output accumulates instead of going to CP/M one character at a time.
+`setvbuf` allows supplying a user-allocated buffer for console output, so output
+accumulates instead of going to CP/M one character at a time.
 A larger buffer means fewer BDOS calls. Drain it with `fflush`, and detach it
 (`setvbuf(stdout, NULL, _IOLBF, 0)`) before the buffer's storage is reused — see
 [Console output buffering](standard-lib/05-stdio.md#console-output-buffering).

@@ -3,48 +3,48 @@ testing strchr and strrchr
 testing strstr
 testing memcpy and memcmp
 testing printf
-60 (60): lmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrs
-32 (32): xyzabcdefghijklmnopqrstuvwxyzabc
-52 (52): wxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv
-34 (34): defghijklmnopqrstuvwxyzabcdefghijk
-15 (15): hijklmnopqrstuv
-33 (33): tuvwxyzabcdefghijklmnopqrstuvwxyz
-48 (48): stuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmn
-45 (45): zabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqr
-48 (48): pqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk
-54 (54): ghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefgh
-28 (28): nopqrstuvwxyzabcdefghijklmno
-48 (48): fghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyza
- 6 ( 6): ghijkl
-47 (47): cdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvw
- 7 ( 7): rstuvwx
- 2 ( 2): lm
-66 (66): pqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabc
-52 (52): fghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcde
-50 (50): hijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcde
- 3 ( 3): lmn
+ 1 ( 1): a
+18 (18): lmnopqrstuvwxyzabc
+35 (35): wxyzabcdefghijklmnopqrstuvwxyzabcde
+52 (52): hijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefg
+69 (69): stuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghi
+16 (16): defghijklmnopqrs
+33 (33): opqrstuvwxyzabcdefghijklmnopqrstu
+50 (50): zabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvw
+67 (67): klmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxy
+14 (14): hijklmnopqrstu
+31 (31): stuvwxyzabcdefghijklmnopqrstuvw
+48 (48): defghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxy
+65 (65): opqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyza
+12 (12): zabcdefghijk
+29 (29): klmnopqrstuvwxyzabcdefghijklm
+46 (46): vwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmno
+63 (63): ghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq
+10 (10): defghijklm
+27 (27): opqrstuvwxyzabcdefghijklmno
+44 (44): zabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq
 testing wcslen
 testing wcschr and wcsrchr
 testing wcsstr
 testing printf with wide strings
-62 (62): ijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqr
-67 (67): ijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvw
-16 (16): tuvwxyzabcdefghi
-66 (66): ghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrst
-39 (39): rstuvwxyzabcdefghijklmnopqrstuvwxyzabcd
-50 (50): tuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq
-36 (36): bcdefghijklmnopqrstuvwxyzabcdefghijk
-70 (70): stuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij
-45 (45): xyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnop
- 7 ( 7): bcdefgh
-56 (56): defghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefg
-19 (19): lmnopqrstuvwxyzabcd
-43 (43): yzabcdefghijklmnopqrstuvwxyzabcdefghijklmno
-31 (31): klmnopqrstuvwxyzabcdefghijklmno
-49 (49): fghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab
- 9 ( 9): opqrstuvw
-66 (66): cdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnop
-16 (16): tuvwxyzabcdefghi
-37 (37): xyzabcdefghijklmnopqrstuvwxyzabcdefgh
-55 (55): bcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcd
+ 1 ( 1): a
+18 (18): lmnopqrstuvwxyzabc
+35 (35): wxyzabcdefghijklmnopqrstuvwxyzabcde
+52 (52): hijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefg
+69 (69): stuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghi
+16 (16): defghijklmnopqrs
+33 (33): opqrstuvwxyzabcdefghijklmnopqrstu
+50 (50): zabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvw
+67 (67): klmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxy
+14 (14): hijklmnopqrstu
+31 (31): stuvwxyzabcdefghijklmnopqrstuvw
+48 (48): defghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxy
+65 (65): opqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyza
+12 (12): zabcdefghijk
+29 (29): klmnopqrstuvwxyzabcdefghijklm
+46 (46): vwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmno
+63 (63): ghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq
+10 (10): defghijklm
+27 (27): opqrstuvwxyzabcdefghijklmno
+44 (44): zabcdefghijklmnopqrstuvwxyzabcdefghijklmnopq
 tstr completed with great success

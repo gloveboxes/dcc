@@ -2,12 +2,12 @@
 #include <stdio.h>
 #include <stddef.h>
 
-typedef unsigned int wchar_t;
+typedef unsigned int twchar_t;
 typedef unsigned long u32;
 
-static unsigned int my_wcslen(const wchar_t *str)
+static unsigned int my_wcslen(const twchar_t *str)
 {
-    const wchar_t *orig;
+    const twchar_t *orig;
     orig = str;
     while (*str != 0)
         str++;
@@ -21,7 +21,7 @@ static int long_dist(const u32 *a, const u32 *b)
 
 int main(void)
 {
-    wchar_t ws[4];
+    twchar_t ws[4];
     u32 xs[5];
     int fails;
 

@@ -3102,6 +3102,24 @@ pf_efflen:
         ld      a,e             ; prec is larger
         ret
 
+; pf_iprepad / pf_ipostpad: integer field padding helpers.
+; IN: A = emitted field length excluding space padding.  The value is saved so
+; left-justified integer conversions can emit trailing spaces after digits.
+pf_iprepad:
+        ld      (pf_field),a
+        ld      a,(pf_left)
+        or      a
+        ret     nz
+        ld      a,(pf_field)
+        jp      pf_pad_a
+
+pf_ipostpad:
+        ld      a,(pf_left)
+        or      a
+        ret     z
+        ld      a,(pf_field)
+        jp      pf_pad_a
+
 ; pf_zero_prec_blank: implement the C89 integer rule that an explicit
 ; precision of zero with a zero value emits no digits.  Call after building a
 ; minimal digit string.  If pf_haveprec && pf_prec==0 && digits are exactly "0",
@@ -3213,9 +3231,10 @@ pf_u:
         xor     a               ; unsigned: no sign
         call    pf_zsetup       ; honour the '0' zero-pad flag
         call    pf_efflen       ; A = max(digits, precision)
-        call    pf_pad_a        ; emit (width - field) leading spaces
+        call    pf_iprepad      ; emit leading spaces unless left-justified
         pop     hl
         call    pf_zfd          ; precision/zero-fill then emit the digits
+        call    pf_ipostpad     ; emit trailing spaces when left-justified
         pop     de
         pop     hl
         jp      pf_loop
@@ -3244,7 +3263,7 @@ pf_d:
         call    pf_zsetup       ; honour the '0' zero-pad flag
         call    pf_efflen       ; A = max(digits, precision)
         inc     a               ; width includes the '-'
-        call    pf_pad_a
+        call    pf_iprepad
         ld      a,'-'
         call    pf_emit_a
         jr      pf_d_tail
@@ -3256,10 +3275,11 @@ pf_d_pos:
         xor     a               ; sign length = 0
         call    pf_zsetup
         call    pf_efflen       ; A = max(digits, precision)
-        call    pf_pad_a
+        call    pf_iprepad
 pf_d_tail:
         pop     hl              ; HL -> first digit
         call    pf_zfd          ; precision/zero-fill then emit digits
+        call    pf_ipostpad
         pop     de
         pop     hl
         jp      pf_loop
@@ -3282,9 +3302,10 @@ pf_x:
         xor     a               ; unsigned: no sign
         call    pf_zsetup       ; honour the '0' zero-pad flag
         call    pf_efflen       ; A = max(digits, precision)
-        call    pf_pad_a        ; emit leading spaces when needed
+        call    pf_iprepad      ; emit leading spaces unless left-justified
         pop     hl
         call    pf_zfd          ; precision/zero-fill then emit digits
+        call    pf_ipostpad     ; emit trailing spaces when left-justified
         pop     de
         pop     hl
         jp      pf_loop
@@ -3519,6 +3540,8 @@ pfh1:
 pf_width:
         db      0
 pf_digit:
+        db      0
+pf_field:
         db      0
 pf_prec:
         db      0
@@ -3998,7 +4021,7 @@ pf_ld:
         call    pf_zsetup       ; honour the '0' zero-pad flag
         call    pf_efflen       ; A = max(digits, precision)
         inc     a               ; +1 for '-'
-        call    pf_pad_a
+        call    pf_iprepad
         ld      a,'-'
         call    pf_emit_a
         jr      pf_ld_tail
@@ -4010,10 +4033,11 @@ pf_ld_pos:
         xor     a               ; sign length = 0
         call    pf_zsetup
         call    pf_efflen       ; A = max(digits, precision)
-        call    pf_pad_a
+        call    pf_iprepad
 pf_ld_tail:
         pop     hl
         call    pf_zfd          ; precision/zero-fill then emit digits
+        call    pf_ipostpad
         pop     de
         pop     hl
         jp      pf_loop
@@ -4030,9 +4054,10 @@ pf_lu:
         xor     a               ; unsigned: no sign
         call    pf_zsetup
         call    pf_efflen       ; A = max(digits, precision)
-        call    pf_pad_a
+        call    pf_iprepad
         pop     hl
         call    pf_zfd
+        call    pf_ipostpad
         pop     de
         pop     hl
         jp      pf_loop
@@ -4057,9 +4082,10 @@ pf_lx:
         xor     a               ; unsigned: no sign
         call    pf_zsetup       ; honour the '0' zero-pad flag
         call    pf_efflen       ; A = max(digits, precision)
-        call    pf_pad_a        ; emit leading spaces when needed
+        call    pf_iprepad      ; emit leading spaces unless left-justified
         pop     hl
         call    pf_zfd          ; precision/zero-fill then emit digits
+        call    pf_ipostpad     ; emit trailing spaces when left-justified
         pop     de
         pop     hl
         jp      pf_loop

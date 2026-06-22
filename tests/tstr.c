@@ -13,54 +13,54 @@ char zeroes[ 4096 ]; // will be put in bss and guaranteed to be 0 by C89 and lat
 
 #ifdef TEST_WCHAR_T
 
-typedef unsigned int wchar_t;
+typedef unsigned int twchar_t;
 
-wchar_t wc[ 4096 ];
-wchar_t wc_other[ 4096 ];
-wchar_t wc_zeroes[ 4096 ];
+twchar_t wc[ 4096 ];
+twchar_t wc_other[ 4096 ];
+twchar_t wc_zeroes[ 4096 ];
 
-wchar_t *wcscpy(wchar_t * dest, const wchar_t * src)
+twchar_t *wcscpy(twchar_t * dest, const twchar_t * src)
 {
-    wchar_t * r = dest;
+    twchar_t * r = dest;
     while ( *src )
         *dest++ = *src++;
     *dest = 0;
     return r;
 }
 
-wchar_t * wcschr(const wchar_t *str, int c) 
+twchar_t * wcschr(const twchar_t *str, int c) 
 {
     while (*str != 0) 
     {
         if (*str == c)
-            return (wchar_t *)str; 
+            return (twchar_t *)str; 
         str++;
     }
 
     return NULL;
 }
 
-wchar_t * wcsrchr(const wchar_t *str, int c) 
+twchar_t * wcsrchr(const twchar_t *str, int c) 
 {
-    const wchar_t *last_occurrence = NULL;
+    const twchar_t *last_occurrence = NULL;
     while (*str != 0) 
     {
         if (*str == c)
             last_occurrence = str;
         str++;
     }
-    return (wchar_t *)last_occurrence;
+    return (twchar_t *)last_occurrence;
 }
 
-wchar_t * wcsstr(const wchar_t *haystack, const wchar_t *needle) 
+twchar_t * wcsstr(const twchar_t *haystack, const twchar_t *needle) 
 {
     if (!*needle)
-        return (wchar_t *)haystack;
+        return (twchar_t *)haystack;
 
     while (*haystack) 
     {
-        const wchar_t *h = haystack;
-        const wchar_t *n = needle;
+        const twchar_t *h = haystack;
+        const twchar_t *n = needle;
 
         while (*h && *n && *h == *n) 
         {
@@ -69,16 +69,16 @@ wchar_t * wcsstr(const wchar_t *haystack, const wchar_t *needle)
         }
 
         if (!*n)
-            return (wchar_t *)haystack;
+            return (twchar_t *)haystack;
 
         haystack++;
     }
     return NULL;
 }
 
-size_t wcslen(const wchar_t *str) 
+size_t wcslen(const twchar_t *str) 
 {
-    const wchar_t *orig = str;
+    const twchar_t *orig = str;
     while (*str != 0) 
         str++; 
     return ( str - orig );
@@ -95,7 +95,7 @@ void test_wide()
         int start = ( (unsigned int) rand() % 300 );
         int end = 1 + start + ( (unsigned int) rand() % 3000 );
         int len = end - start;
-        wchar_t orig = wc[ end ];
+        twchar_t orig = wc[ end ];
         wc[ end ] = 0;
         int slen = wcslen( wc + start );
         if ( len != slen )
@@ -112,9 +112,9 @@ void test_wide()
         int start = ( (unsigned int) rand() % 300 );
         int end = 1 + start + ( (unsigned int) rand() % 70 );
         int len = end - start;
-        wchar_t orig = wc[ end ];
+        twchar_t orig = wc[ end ];
         wc[ end ] = L'!';
-        wchar_t * pbang = wcschr( wc + start, L'!' );
+        twchar_t * pbang = wcschr( wc + start, L'!' );
         if ( !pbang )
         {
             printf( "wcschr failed to find char: iteration %d, len %d, start %d, end %d\n", i, len, start, end );
@@ -141,7 +141,7 @@ void test_wide()
     }
 
     printf( "testing wcsstr\n" );
-    wchar_t alpha[27];
+    twchar_t alpha[27];
     wcscpy( alpha, L"abcdefghijklmnopqrstuvwxyz" );
     for ( int i = 0; i < 1000; i++ )
     {
@@ -153,14 +153,14 @@ void test_wide()
             printf( "test bug offset %d, len %d\n", offset, len );
             exit( 1 );
         }
-        const wchar_t * pattern = alpha + offset;
-        const wchar_t * p = wcsstr( wc + start, pattern );
+        const twchar_t * pattern = alpha + offset;
+        const twchar_t * p = wcsstr( wc + start, pattern );
         if ( !p )
         {
             printf( "wcsstr pattern not found iteration %d, start %d, offset %d, len %d, pattern %ls\n", i, start, offset, len, pattern );
             exit( 1 );
         }
-        if ( memcmp( p, pattern, len * sizeof( wchar_t ) ) )
+        if ( memcmp( p, pattern, len * sizeof( twchar_t ) ) )
         {
             printf( "wcsstr found the wrong pattern iteration %d, start %d, offset %d, len %d, pattern %ls\n", i, start, offset, len, pattern );
             exit( 1 );
@@ -170,9 +170,11 @@ void test_wide()
     printf( "testing printf with wide strings\n" );
     for ( int i = 0; i < 20; i++ )
     {
-        int start = ( (unsigned int) rand() % 300 );
-        int end = 1 + start + ( ( (unsigned int) rand() ) % 70 );
-        int len = end - start;
+        /* Deterministic selection so host and CP/M produce identical output
+         * (rand() sequences differ between the two C runtimes). */
+        int start = ( i * 37 ) % 300;
+        int len = 1 + ( i * 17 ) % 70;
+        int end = start + len;
         char orig = wc[ end ];
         wc[ end ] = 0;
 
@@ -308,9 +310,11 @@ int main( int argc, char * argv[] )
         printf( "testing printf\n" );
         for ( i = 0; i < 20; i++ )
         {
-            int start = ( (unsigned int) rand() % 300 );
-            int end = 1 + start + ( ( (unsigned int) rand() ) % 70 );
-            int len = end - start;
+            /* Deterministic selection so host and CP/M produce identical output
+             * (rand() sequences differ between the two C runtimes). */
+            int start = ( i * 37 ) % 300;
+            int len = 1 + ( i * 17 ) % 70;
+            int end = start + len;
             char orig = ac[ end ];
             ac[ end ] = 0;
 

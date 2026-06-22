@@ -189,10 +189,12 @@ static void test_long_indirect_shift_reg(void)
     chk(val == 0x00123456L, "long *p >>= n var");
     chk(p == dummy,         "BC intact after long *p >>= n var");
 
-    /* constant left shift */
+    /* constant left shift — the high nibble shifts out of a 32-bit long.
+     * Mask to 32 bits so the check expresses the truncated result (identity on
+     * dcc's 32-bit long, and matches on a host with a wider long). */
     val = 0x12345678L;
     *lp <<= 4;
-    chk(val == 0x23456780L, "long *p <<= 4 const");
+    chk((val & 0xFFFFFFFFL) == 0x23456780L, "long *p <<= 4 const");
     chk(p == dummy,         "BC intact after long *p <<= 4 const");
 
     /* want_dead=0: result of compound shift expression is used */

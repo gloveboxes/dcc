@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #define __max( a, b ) (a) > (b) ? a : b
 #define __min( a, b ) (a) < (b) ? a : b

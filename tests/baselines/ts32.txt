@@ -1,0 +1,2 @@
+ts32 start
+ts32 completed with great success

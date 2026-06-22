@@ -130,6 +130,85 @@ Reports:
 - Optional CSV performance report when `-Report` is passed
 - Exit code 0 on success, 1 on failure
 
+## Host Unit Test Validator (`validate-unit-test.ps1`)
+
+Compiles each `tests/*.c` program with a native host C compiler, runs the host
+executable, and compares stdout with `tests/baselines/<app>.txt`. This is a
+read-only baseline check: it never rewrites baseline files. It is useful for
+checking that the unit-test sources and expected output still make sense on a
+normal C implementation before comparing them with dcc's CP/M/Z80 output.
+
+Host compiler selection follows `scripts/build-dcc.ps1`:
+
+- Windows uses MSVC `cl.exe` after locating the Visual Studio C++ build tools.
+- macOS uses `clang` by default.
+- Linux uses `gcc` by default.
+- Unix-like hosts can override the compiler with `-CC` or the `CC` environment
+  variable, for example `-CC clang` or `CC=clang`.
+
+Tests that need CP/M or Z80-only behavior, such as BDOS calls, direct port I/O,
+`getch`/`kbhit`, inline `#asm`, or CP/M vector reads, are skipped because a host
+compiler cannot run those semantics. The script also honors
+`tests/_test_overrides.json` for app arguments, stdin, ignored apps, and
+host-only skip settings.
+
+### Host Validator Usage
+
+```pwsh
+./scripts/validate-unit-test.ps1 [options]
+```
+
+### Host Validator Examples
+
+```pwsh
+./scripts/validate-unit-test.ps1              # validate every runnable test
+./scripts/validate-unit-test.ps1 -App tprintf # validate one test app
+./scripts/validate-unit-test.ps1 -CC clang    # use clang on Linux/macOS
+./scripts/validate-unit-test.ps1 -Help        # show help and exit
+```
+
+### Host Validator Parameters
+
+| Parameter | Default | Purpose |
+| --------- | ------- | ------- |
+| `-BuildDir` | `build/host-validate` | Directory for host compiler outputs |
+| `-BaselineDir` | `tests/baselines` | Directory of per-app `<app>.txt` baselines |
+| `-CC` | platform default | C compiler override on macOS/Linux; ignored on Windows |
+| `-App` | all tests | Validate one test app, without the `.c` extension |
+| `-RunTimeout` | `10` | Seconds to allow each host executable to run |
+| `-Help` | (off) | Show help text and exit without building or running tests |
+
+### Linux 32-bit Validation
+
+On Linux, the validator can extend coverage by using GCC's `-m32` mode when the
+compiler can build and link 32-bit executables. The script probes this
+automatically: if the probe succeeds, Linux GCC host validations run with
+`-m32`; if it fails, the script keeps using the normal compiler mode.
+
+This matters because dcc has 16-bit pointers and 32-bit `long`, so a 32-bit host
+build can run a few host-only tests that are skipped on a normal 64-bit Linux
+compiler. Install the normal C build tools plus the 32-bit development libraries
+for your distribution, then rerun the validator.
+
+Common Linux packages:
+
+| Distribution | Command |
+| ------------ | ------- |
+| Debian/Ubuntu | `sudo apt update && sudo apt install build-essential gcc-multilib libc6-dev-i386` |
+| Fedora | `sudo dnf groupinstall "Development Tools" && sudo dnf install glibc-devel.i686 libgcc.i686` |
+| RHEL/CentOS | `sudo dnf groupinstall "Development Tools" && sudo dnf install glibc-devel.i686 libgcc.i686` |
+| Arch | Enable the `multilib` repository, then `sudo pacman -S base-devel lib32-glibc` |
+| openSUSE | `sudo zypper install -t pattern devel_C_C++ && sudo zypper install gcc-32bit glibc-devel-32bit` |
+
+After installation, this should be enough to enable the extended path:
+
+```pwsh
+./scripts/validate-unit-test.ps1
+```
+
+The script prints the selected compiler line near the start of the run. When the
+32-bit probe succeeds on Linux GCC, that line includes `(-m32)`.
+
 ## Test Overrides (`tests/_test_overrides.json`)
 
 Per-test run configuration used by `runall.ps1`.

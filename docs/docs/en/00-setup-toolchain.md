@@ -28,7 +28,7 @@ building dcc or ntvcm.
          `winget`:
 
         ```powershell
-        winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait"
+        winget install --id Microsoft.VisualStudio.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait --norestart"
         ```
 
         !!! tip "Windows ARM64"

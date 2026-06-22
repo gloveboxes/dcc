@@ -1,4 +1,4 @@
-# Setting up the toolchain
+# The toolchain
 
 To build and run CP/M apps with dcc you need two things: the dcc compiler tools
 (`dcc`, `dccpeep`, `dccrtlstrip`, plus `DCCRTL.MAC`, `m80.com`, and `l80.com`)

@@ -11,7 +11,7 @@ behaviours that follow from the 16-bit `int` / 32-bit `long` model.
 - **Assignment:** `=` and the compound forms `+=` `-=` `*=` `/=` `%=` `&=` `|=`
   `^=` `<<=` `>>=`.
 - **Increment / decrement:** `++` `--` (prefix and postfix).
-- **Other:** `?:`, the comma operator, `sizeof`, casts `(type)`, address-of `&`,
+- **Other:** `?:`, `,` (comma), `sizeof`, casts `(type)`, address-of `&`,
   dereference `*`, member `.` and `->`, and subscript `[]`.
 
 ## 16-bit model notes

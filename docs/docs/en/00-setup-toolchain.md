@@ -1,4 +1,4 @@
-# Setting up the toolchain
+# The toolchain
 
 To build and run CP/M apps with dcc you need two things: the dcc compiler tools
 (`dcc`, `dccpeep`, `dccrtlstrip`, plus `DCCRTL.MAC`, `m80.com`, and `l80.com`)
@@ -91,6 +91,47 @@ building dcc or ntvcm.
         ```bash
         pwsh --version
         ```
+
+        !!! tip "Ubuntu ARM64"
+
+            On Ubuntu ARM64, install an ARM64 build of PowerShell. If the
+            distribution package flow is not available, use the official
+            `linux-arm64` tarball from the PowerShell release page. To find the
+            latest available version, check the
+            [PowerShell releases page](https://github.com/PowerShell/PowerShell/releases)
+            or query the GitHub release metadata:
+
+            ```bash
+            curl -fsSL https://api.github.com/repos/PowerShell/PowerShell/releases/latest \
+                | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p'
+            ```
+
+            For a user-local install, set `version` to that release:
+
+            ```bash
+            version=7.6.3
+            install_dir="$HOME/.local/share/powershell/$version"
+            archive="/tmp/powershell-${version}-linux-arm64.tar.gz"
+
+            mkdir -p "$install_dir" "$HOME/.local/bin"
+            curl -fL \
+                "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-arm64.tar.gz" \
+                -o "$archive"
+            tar -xzf "$archive" -C "$install_dir"
+            chmod +x "$install_dir/pwsh"
+            ln -sfn "$install_dir/pwsh" "$HOME/.local/bin/pwsh"
+            ```
+
+            Make sure `~/.local/bin` is on your `PATH`, then verify both the
+            version and architecture:
+
+            ```bash
+            export PATH="$HOME/.local/bin:$PATH"
+            pwsh --version
+            file "$(readlink -f "$HOME/.local/bin/pwsh")"
+            ```
+
+            The `file` output should report `ARM aarch64`.
 
 ## Clone the repositories
 

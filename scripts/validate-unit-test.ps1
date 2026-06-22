@@ -7,7 +7,8 @@ Validate test baselines by compiling test apps with the host C compiler.
 Builds each tests/*.c app with the platform-native host compiler and compares
 stdout against tests/baselines/<app>.txt. This is a read-only baseline check: it
 never rewrites baseline files. Host builds use C99 mode where the compiler
-supports it, matching the C99 conveniences accepted by dcc.
+supports it and force signed plain char where GCC/clang support it, matching
+the C99 conveniences and target char semantics accepted by dcc.
 
 Compiler selection follows scripts/build-dcc.ps1: MSVC on Windows, clang on
 macOS, and gcc on Linux by default. On Linux, GCC is used with -m32 when the
@@ -319,6 +320,7 @@ You can also pass a compiler explicitly:
         }
 
         $baseCflags = if ($env:CFLAGS) { @($env:CFLAGS -split "\s+" | Where-Object { $_ }) } else { @("-std=gnu99", "-w", "-O2") }
+        if ($baseCflags -notcontains "-fsigned-char") { $baseCflags += "-fsigned-char" }
         if ($IsMacOS -and ($baseCflags -notcontains "-fno-common")) { $baseCflags += "-fno-common" }
         $arguments = @($baseCflags) + @($Compiler.CFlags) + @($SourceFile, "-o", $ExePath, "-lm")
         $output = & $Compiler.Command @arguments 2>&1

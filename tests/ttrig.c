@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <float.h>  /* For FLT_EPSILON */
+#include <stdlib.h>  /* For exit */
 
 #define _countof( X ) ( sizeof( X ) / sizeof( X[0] ) )
 const size_t max_N_Iterations = 12; // 12 will fit in uint32_t

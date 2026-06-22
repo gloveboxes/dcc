@@ -30,3 +30,7 @@ __pycache__/
 /dccrtl-size-report.md
 /dccrtl-all-publics.md
 /dccrtl-all-publics.json
+
+# Host-run test data artifacts (created by the trw* file-I/O tests)
+/trw.dat
+/trw2.dat

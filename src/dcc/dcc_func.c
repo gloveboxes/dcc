@@ -674,7 +674,18 @@ void scan_local_decl_after_type(int base)
         bytes = type_size(type);
         if (total_elems > 0) bytes *= total_elems;
 
+        /* A name already present in the innermost open block is a redefinition.
+         * find_local_decl() only searches the current scope (and ignores
+         * for-init renames), so a match here is a genuine same-scope duplicate,
+         * which C89 6.1.2.2 makes a constraint violation.  dcc historically
+         * swallowed this and silently kept the first declaration's type; report
+         * it instead, then reuse the existing symbol for error recovery. */
         s = find_local_decl(name);
+        if (s) {
+            char redef_msg[96];
+            sprintf(redef_msg, "redefinition of '%s'", source_name);
+            error_here(redef_msg);
+        }
         if (!s)
             s = try_const_fold_local(name, source_name, type,
                                      arrlen != 0 || g_last_array_dim_count != 0);
@@ -1016,10 +1027,18 @@ void parse_typedef_decl(void)
                 typedef_array_len = parse_const_int_expr();
                 expect(']');
             }
+            /* Multidimensional array typedefs (typedef T A[2][3]) collapse to a
+             * flat element count: fold every inner dimension into the total so
+             * sizeof(A) is element_size * product-of-dims, not just the first
+             * dimension.  A typedef tracks only a single total length, so the
+             * product is the correct flattened size. */
             while (tok.kind == '[') {
                 next_token();
-                if (tok.kind != ']')
-                    (void)parse_const_int_expr();
+                if (tok.kind != ']') {
+                    int inner = parse_const_int_expr();
+                    if (typedef_array_len > 0 && inner > 0)
+                        typedef_array_len *= inner;
+                }
                 expect(']');
             }
         } else if (tok.kind == '(') {

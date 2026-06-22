@@ -142,7 +142,7 @@ int main(void)
 
     unsigned char uc = 255;
     unsigned int ui = 65535;
-    unsigned long ul;
+    /* 'ul' is already declared at the top of main(); reuse it here. */
 
     ul = uc;
     ck("uc->ul", ul, 255UL);

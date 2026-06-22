@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define _countof( X ) ( sizeof( X ) / sizeof( X[0] ) )
 
@@ -180,8 +181,8 @@ int main( int argc, char * argv[] )
 
     for ( int i = 0; i < _countof( au8 ); i++ )
     {
-        printf( "index %u, au8 %u, au16 %u, au32 %lu\n", i, au8[ i ], au16[ i ], au32[ i ] );
-        printf( "index %u, a8 %d, a16 %d, a32 %ld\n", i, a8[ i ], a16[ i ], a32[ i ] );
+        printf( "index %u, au8 %u, au16 %u, au32 %lu\n", i, au8[ i ], au16[ i ], (unsigned long) au32[ i ] );
+        printf( "index %u, a8 %d, a16 %d, a32 %ld\n", i, a8[ i ], a16[ i ], (long) a32[ i ] );
     }
 
     for ( int i = 0; i < 8; i++ )
@@ -197,8 +198,8 @@ int main( int argc, char * argv[] )
 
     for ( int i = 0; i < 8; i++ )
     {
-        printf( "index %u, au8 %u, au16 %u, au32 %lu\n", i, au8[ i ], au16[ i ], au32[ i ] );
-        printf( "index %u, a8 %d, a16 %d, a32 %ld\n", i, a8[ i ], a16[ i ], a32[ i ] );
+        printf( "index %u, au8 %u, au16 %u, au32 %lu\n", i, au8[ i ], au16[ i ], (unsigned long) au32[ i ] );
+        printf( "index %u, a8 %d, a16 %d, a32 %ld\n", i, a8[ i ], a16[ i ], (long) a32[ i ] );
     }
 
     printf( "ac: %c %c %c %c %c %c %c %c\n", ac[ 0 ], ac[ 1 ], ac[ 2 ], ac[ 3 ], ac[ 4 ], ac[ 5 ], ac[ 6 ], ac[ 7 ] );

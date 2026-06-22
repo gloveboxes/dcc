@@ -1,7 +1,5 @@
 #include <stdio.h>
-
-extern int printf();
-extern int memset();
+#include <string.h>
 
 struct Pair {
     char a;
@@ -57,7 +55,7 @@ void test2()
     printf("Stack[0]: %s, %s\n", stack[0].l, stack[0].r);
     printf("Stack[1]: %s, %s\n", stack[1].l, stack[1].r);
 
-    return 0;
+    return;
 }
 
 int main()

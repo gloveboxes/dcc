@@ -158,9 +158,13 @@ int main( int argc, char * argv[] )
         printf( "testing printf\n" );
         for ( i = 0; i < 20; i++ )
         {
-            int start = ( (unsigned int) rand() % 300 );
-            int end = 1 + start + ( ( (unsigned int) rand() ) % 70 );
-            int len = end - start;
+            /* Deterministic, platform-independent selection so the displayed
+             * lines are reproducible: rand() is implementation-defined and
+             * diverges between dcc and a host libc.  The string functions
+             * themselves are validated by the self-checking loops above. */
+            int start = ( i * 37 ) % 300;
+            int len = 1 + ( i * 17 ) % 70;
+            int end = start + len;
             char orig = ac[ end ];
             ac[ end ] = 0;
 

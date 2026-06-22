@@ -86,6 +86,7 @@ int main(void)
     char *end;
     char tbuf[40];
     char vb[64];
+    char bmax[40], bmin[40], bumax[40], bov[44];
     long lv;
     unsigned long uv;
     char *t;
@@ -102,25 +103,33 @@ int main(void)
     okl("strtol auto oct", strtol("010", NULL, 0), 8L);
     okl("strtol base16 noprefix", strtol("FF", NULL, 16), 255L);
     okl("strtol base36", strtol("z", NULL, 36), 35L);
-    okl("strtol LONG_MAX", strtol("2147483647", NULL, 10), LONG_MAX);
-    okl("strtol LONG_MIN", strtol("-2147483648", NULL, 10), LONG_MIN);
+    /* Boundary inputs are built from the platform's own limit macros so the
+     * test adapts to dcc's 32-bit long and a host's wider long alike. */
+    sprintf(bmax, "%ld", LONG_MAX);
+    okl("strtol LONG_MAX", strtol(bmax, NULL, 10), LONG_MAX);
+    sprintf(bmin, "%ld", LONG_MIN);
+    okl("strtol LONG_MIN", strtol(bmin, NULL, 10), LONG_MIN);
 
     lv = strtol("12ab", &end, 10);
     okl("strtol endptr val", lv, 12L);
     oki("strtol endptr pos", (int)*end, 'a');
 
+    /* one decimal digit more than LONG_MAX -> guaranteed overflow at any width */
+    sprintf(bov, "%ld0", LONG_MAX);
     errno = 0;
-    lv = strtol("9999999999", NULL, 10);
+    lv = strtol(bov, NULL, 10);
     okl("strtol ovf val", lv, LONG_MAX);
     oki("strtol ovf errno", errno, ERANGE);
 
     /* ---- strtoul ---- */
-    okul("strtoul max", strtoul("4294967295", NULL, 10), ULONG_MAX);
+    sprintf(bumax, "%lu", ULONG_MAX);
+    okul("strtoul max", strtoul(bumax, NULL, 10), ULONG_MAX);
     okul("strtoul hex", strtoul("0xFFFFFFFF", NULL, 16), 0xFFFFFFFFUL);
     okul("strtoul neg wraps", strtoul("-1", NULL, 10), ULONG_MAX);
 
+    sprintf(bov, "%lu0", ULONG_MAX);
     errno = 0;
-    uv = strtoul("99999999999", NULL, 10);
+    uv = strtoul(bov, NULL, 10);
     okul("strtoul ovf val", uv, ULONG_MAX);
     oki("strtoul ovf errno", errno, ERANGE);
 

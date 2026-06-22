@@ -6,7 +6,8 @@ Validate test baselines by compiling test apps with the host C compiler.
 .DESCRIPTION
 Builds each tests/*.c app with the platform-native host compiler and compares
 stdout against tests/baselines/<app>.txt. This is a read-only baseline check: it
-never rewrites baseline files.
+never rewrites baseline files. Host builds use C99 mode where the compiler
+supports it, matching the C99 conveniences accepted by dcc.
 
 Compiler selection follows scripts/build-dcc.ps1: MSVC on Windows, clang on
 macOS, and gcc on Linux by default. On Linux, GCC is used with -m32 when the
@@ -317,7 +318,7 @@ You can also pass a compiler explicitly:
             return [pscustomobject]@{ Success = ($LASTEXITCODE -eq 0 -and (Test-Path $ExePath -PathType Leaf)); Output = ($output -join "`n") }
         }
 
-        $baseCflags = if ($env:CFLAGS) { @($env:CFLAGS -split "\s+" | Where-Object { $_ }) } else { @("-std=gnu89", "-w", "-O2") }
+        $baseCflags = if ($env:CFLAGS) { @($env:CFLAGS -split "\s+" | Where-Object { $_ }) } else { @("-std=gnu99", "-w", "-O2") }
         if ($IsMacOS -and ($baseCflags -notcontains "-fno-common")) { $baseCflags += "-fno-common" }
         $arguments = @($baseCflags) + @($Compiler.CFlags) + @($SourceFile, "-o", $ExePath, "-lm")
         $output = & $Compiler.Command @arguments 2>&1
@@ -461,6 +462,7 @@ You can also pass a compiler explicitly:
             if ($item.stdin) { $appOverrides[$item.name]['stdin'] = $item.stdin }
             if ($item.ignore) { $appOverrides[$item.name]['ignore'] = $item.ignore }
             if ($item.host) { $appOverrides[$item.name]['host'] = $item.host }
+            if ($item.'requires-32bit-linux-host-compiler') { $appOverrides[$item.name]['requires32'] = $true }
         }
     }
 
@@ -484,6 +486,11 @@ You can also pass a compiler explicitly:
     function Get-IgnoreHostApp {
         param([string]$Name)
         return ($appOverrides.ContainsKey($Name) -and $appOverrides[$Name]['host'])
+    }
+
+    function Get-Requires32BitApp {
+        param([string]$Name)
+        return ($appOverrides.ContainsKey($Name) -and $appOverrides[$Name]['requires32'])
     }
 
     $Placeholders = [ordered]@{
@@ -513,6 +520,7 @@ You can also pass a compiler explicitly:
     $compiler = Get-HostCompiler
     Write-Host "Host compiler: $($compiler.Version)" -ForegroundColor Cyan
     Write-Host "Build artifacts: $buildRoot" -ForegroundColor Cyan
+    $m32Active = @($compiler.CFlags) -contains "-m32"
 
     $fixtureList = @(Get-FixtureFiles)
     $results = @()
@@ -531,8 +539,16 @@ You can also pass a compiler explicitly:
             continue
         }
         if (Get-IgnoreHostApp $appName) {
-            $skippedByHostConfig++
-            continue
+            # Tests flagged requires-32bit-linux-host-compiler are skipped on a
+            # normal 64-bit host, but a 32-bit Linux compiler (-m32 makes long
+            # 4 bytes) reproduces dcc's long width, so run them in that case.
+            if ($m32Active -and (Get-Requires32BitApp $appName)) {
+                # fall through and validate under -m32
+            }
+            else {
+                $skippedByHostConfig++
+                continue
+            }
         }
         $result = Invoke-AppValidation -AppName $appName -Compiler $compiler -Fixtures $fixtureList -Placeholders $Placeholders
         $results += $result

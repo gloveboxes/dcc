@@ -72,7 +72,7 @@
 #define MAX_LOCALS     1024
 #define MAX_STRINGS    2048
 #define MAX_DEFINES    512
-#define MAX_MACRO_TEXT 2048
+#define MAX_MACRO_TEXT 8192
 
 /* C99 for-init declaration scoping limits */
 #define MAX_FOR_SCOPES 256

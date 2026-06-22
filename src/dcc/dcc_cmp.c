@@ -694,12 +694,19 @@ int simple_direct_condition_until(int stop_kind)
                 bad = 1;
         }
 
-        if (depth == 0) {
-            if (is_relop_token(tok.kind)) {
+        if (is_relop_token(tok.kind)) {
+            if (depth == 0) {
                 if (found)
                     bad = 1;
                 found = 1;
-            } else if (tok.kind == TOK_ANDAND || tok.kind == TOK_OROR ||
+            } else if (!found) {
+                /* Relop inside [] or () before the outer relop: the naive
+                 * scan in gen_direct_rel_branch_until would find it first,
+                 * splitting the expression at the wrong point. */
+                bad = 1;
+            }
+        } else if (depth == 0) {
+            if (tok.kind == TOK_ANDAND || tok.kind == TOK_OROR ||
                        tok.kind == '?' || is_assignment_token(tok.kind)) {
                 bad = 1;
             }

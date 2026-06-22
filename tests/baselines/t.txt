@@ -1,0 +1,7 @@
+int8_t result: 24
+uint8_t result: 10
+int16_t result: 24
+uint16_t result: 10
+int32_t result: 24
+uint32_t result: 10
+end of the app

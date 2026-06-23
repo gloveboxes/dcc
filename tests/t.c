@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdlib.h>
 
 typedef unsigned char uint8_t;
 typedef signed char int8_t;

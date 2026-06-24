@@ -453,6 +453,7 @@ extern int g_proto_nargs;
 extern int g_proto_variadic;
 extern int g_proto_types[MAX_PROTO_PARAMS];
 extern int g_funcptr_decl_array_len;
+extern int g_funcptr_is_funcret_decl;
 extern int g_ptr_array_dim_count;
 extern int g_ptr_array_dims[8];
 extern int g_ptr_array_elem_size;

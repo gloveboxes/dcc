@@ -95,9 +95,11 @@ const char *asm_name_for_runtime(const char *cname)
     if (!strcmp(cname, "strncpy")) return "__ncpy";
     if (!strcmp(cname, "strncmp")) return "__ncmp";
     if (!strcmp(cname, "strncat")) return "__ncat";
-    if (!strcmp(cname, "strtok"))  return "__stok";
-    if (!strcmp(cname, "strtol"))  return "__stol";
-    if (!strcmp(cname, "strtoul")) return "__stou";
+    if (!strcmp(cname, "strtok"))     return "__stok";
+    if (!strcmp(cname, "strtol"))     return "__stol";
+    if (!strcmp(cname, "strtoul"))    return "__stou";
+    if (!strcmp(cname, "localtime"))  return "__ltim";
+    if (!strcmp(cname, "localeconv")) return "__lcnv";
 
     if (!strcmp(cname, "putchar")) return "__pchr";
     if (!strcmp(cname, "putc"))    return "__putc";

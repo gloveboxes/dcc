@@ -183,6 +183,7 @@ int parse_funcptr_declarator(int *ptype, char *name, int namesz)
     struct Token save_tok;
 
     g_funcptr_decl_array_len = 0;
+    g_funcptr_is_funcret_decl = 0;
     g_ptr_array_dim_count = 0;
     g_ptr_array_elem_size = 0;
     memset(g_ptr_array_dims, 0, sizeof(g_ptr_array_dims));
@@ -221,6 +222,47 @@ int parse_funcptr_declarator(int *ptype, char *name, int namesz)
     }
 
     if (!accept(')')) {
+        /* C89: return_type (*func_name(param_list))(pointed_fn_params)
+         * A function declaration whose return type is a pointer to function.
+         * The (*name has already been consumed; tok is now '(' (the param list). */
+        if (tok.kind == '(') {
+            int depth;
+            next_token(); /* consume opening '(' of param list */
+            depth = 1;
+            while (tok.kind != TOK_EOF && depth > 0) {
+                if (tok.kind == '(') depth++;
+                else if (tok.kind == ')') depth--;
+                next_token();
+            }
+            /* tok is now ')' closing (*name(...)) — consume it */
+            if (tok.kind != ')') {
+                posi = save_pos;
+                tok_start_pos = save_tok_start;
+                line_no = save_line;
+                tok_line = save_tok_line;
+                tok = save_tok;
+                g_funcptr_decl_array_len = 0;
+                g_ptr_array_dim_count = 0;
+                g_ptr_array_elem_size = 0;
+                memset(g_ptr_array_dims, 0, sizeof(g_ptr_array_dims));
+                return 0;
+            }
+            next_token(); /* consume ')' of (*name(...)) */
+            /* Skip the trailing (...) describing the pointed-to function's params */
+            if (accept('(')) {
+                depth = 1;
+                while (tok.kind != TOK_EOF && depth > 0) {
+                    if (tok.kind == '(') depth++;
+                    else if (tok.kind == ')') depth--;
+                    next_token();
+                }
+            }
+            type = type_add_ptr(ptype[0]);
+            ptype[0] = type;
+            g_funcptr_is_funcret_decl = 1;
+            return 1;
+        }
+
         posi = save_pos;
         tok_start_pos = save_tok_start;
         line_no = save_line;

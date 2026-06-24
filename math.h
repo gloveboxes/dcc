@@ -3,6 +3,9 @@
 #ifndef _MATH_H
 #define _MATH_H
 
+/** Value returned on overflow; equals FLT_MAX (dcc has no double). */
+#define HUGE_VAL 3.40282347e+38F
+
 /** Absolute value. */
 float fabsf(float x);
 /** Round toward negative infinity. */

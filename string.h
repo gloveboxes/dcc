@@ -39,6 +39,8 @@ char *   strcat( char *, const char * );
 char *   strncpy( char *, const char *, size_t );
 /** Locale-independent string comparison, equivalent to strcmp in dcc. */
 int      strcoll( const char *, const char * );
+/** Transform s2 for strcoll comparison into s1, writing at most n chars; returns strlen(s2). */
+size_t   strxfrm( char *, const char *, size_t );
 /** Length of the leading segment containing none of the reject characters. */
 size_t   strcspn( const char *, const char * );
 /** Find the first character from a set in a string. */

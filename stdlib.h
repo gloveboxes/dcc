@@ -52,6 +52,9 @@ float atof(const char *nptr);
 long strtol(const char *nptr, char **endptr, int base);
 /** Convert text in nptr to unsigned long using base 2 through 36, or base 0 for auto-detection. */
 unsigned long strtoul(const char *nptr, char **endptr, int base);
+/** Convert leading floating-point text in nptr to float; sets *endptr past consumed input.
+ *  Note: C89 strtod returns double; dcc returns float (no double type). */
+float strtod(const char *nptr, char **endptr);
 /** Absolute value of a signed int. */
 int abs(int j);
 /** Absolute value of a signed long. */
@@ -73,6 +76,26 @@ void *calloc( size_t num, size_t size );
 void *realloc( void *ptr, size_t size );
 /** Release a heap allocation. */
 void free( void *ptr );
+
+/** Search the environment for name; always returns NULL on CP/M 2.2. */
+char *getenv(const char *name);
+/** Execute a shell command; always returns -1 on CP/M 2.2 (no command processor). */
+int system(const char *string);
+
+/* Multibyte / wide-character conversion (C89 7.10.7 / 7.10.8).
+ * C/ASCII locale: MB_CUR_MAX=1; every char is its own single-byte sequence. */
+/** Maximum bytes in a multibyte character in the current locale. */
+#define MB_CUR_MAX 1
+/** Length of the multibyte character at s, examining at most n bytes. */
+int mblen(const char *s, size_t n);
+/** Convert the multibyte character at s into *pwc; examine at most n bytes. */
+int mbtowc(wchar_t *pwc, const char *s, size_t n);
+/** Convert wide character wc into the multibyte sequence at s. */
+int wctomb(char *s, wchar_t wc);
+/** Convert at most n multibyte characters from s into the wchar_t array pwcs. */
+size_t mbstowcs(wchar_t *pwcs, const char *s, size_t n);
+/** Convert at most n wide characters from pwcs into the char array s. */
+size_t wcstombs(char *s, const wchar_t *pwcs, size_t n);
 
 /* dcc extensions (not C89) for talking to CP/M and hardware directly:
  *   bdos()      calls the CP/M BDOS entry point (fn -> C, dearg -> DE); the

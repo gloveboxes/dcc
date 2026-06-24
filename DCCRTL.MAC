@@ -1277,6 +1277,54 @@ __scol:
         ; Current C locale: collation is bytewise strcmp.
         jp      __scmp
 
+        public  _strxfrm
+_strxfrm:
+        ; size_t strxfrm(char *s1, const char *s2, size_t n)
+        ; C89 7.11.4.5: transform s2 for strcoll comparison into s1.
+        ; For C locale the transform is identity: copies like strncpy.
+        ; Returns strlen(s2) regardless of n.
+        ; s1 @ IX+4/5, s2 @ IX+6/7, n @ IX+8/9
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      c,(ix+6)
+        ld      b,(ix+7)                ; BC = s2 (source)
+        ld      hl,0                    ; HL = strlen(s2) (return value)
+sxf_len:
+        ld      a,(bc)
+        or      a
+        jr      z,sxf_copy
+        inc     bc
+        inc     hl
+        jr      sxf_len
+sxf_copy:
+        ld      c,(ix+6)
+        ld      b,(ix+7)                ; BC = s2 (reload)
+        ld      e,(ix+8)
+        ld      d,(ix+9)                ; DE = n
+        push    hl                      ; save return value
+        ld      a,d
+        or      e
+        jr      z,sxf_done              ; n==0: nothing to write
+        ld      l,(ix+4)
+        ld      h,(ix+5)                ; HL = s1 (dest)
+sxf_lp:
+        ld      a,(bc)
+        ld      (hl),a
+        or      a
+        jr      z,sxf_done              ; wrote null terminator
+        inc     hl
+        inc     bc
+        dec     de
+        ld      a,d
+        or      e
+        jr      nz,sxf_lp
+        ; wrote n chars without reaching null (src longer than n)
+sxf_done:
+        pop     hl                      ; HL = strlen(s2)
+        pop     ix
+        ret
+
         public  __scsp
 __scsp:
         ; size_t strcspn(const char *s, const char *reject)
@@ -4991,6 +5039,38 @@ __atf_neg:      db      0
 __atf_dp:       db      0
 __atf_eneg:     db      0
 __atf_d:        db      0
+
+        public  _strtod
+_strtod:
+; float strtod(const char *nptr, char **endptr)
+; Note: C89 strtod returns double; dcc returns float (no double type).
+; Delegates to _atof for the conversion; __atf_p is left pointing at the
+; first character not consumed, which is stored through endptr if non-null.
+; nptr @ IX+4/5, endptr @ IX+6/7
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        push    hl                      ; nptr arg for _atof
+        call    _atof                   ; result: DE=high word, HL=low word
+        pop     bc                      ; discard nptr; preserves DE:HL
+        push    de
+        push    hl                      ; save float result
+        ld      l,(ix+6)
+        ld      h,(ix+7)                ; HL = endptr
+        ld      a,h
+        or      l
+        jr      z,std_noep
+        ld      de,(__atf_p)            ; first char not consumed by _atof
+        ld      (hl),e
+        inc     hl
+        ld      (hl),d
+std_noep:
+        pop     hl
+        pop     de                      ; restore float result
+        pop     ix
+        ret
 
         public  _fflush
 _fflush:
@@ -18148,6 +18228,225 @@ SCZ0007:
 ; Stack during trampoline: SP = __xbase - XTSGP (clear gap below block)
 ; ============================================================
 
+; ============================================================
+; _getenv  (C89 7.10.4.4) -- CP/M 2.2 has no environment
+; ============================================================
+        public  _getenv
+_getenv:
+        ld      hl,0            ; always NULL: no environment on CP/M
+        ret
+
+; ============================================================
+; _system  (C89 7.10.4.5)
+; system(NULL) -> 0 (no command processor available on CP/M 2.2)
+; system(cmd)  -> -1 (cannot execute)
+; ============================================================
+        public  _system
+_system:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      a,h
+        or      l
+        jr      nz,sys_fail
+        ld      hl,0            ; NULL: no command processor
+        pop     ix
+        ret
+sys_fail:
+        ld      hl,0ffffh       ; -1: not supported
+        pop     ix
+        ret
+
+; ============================================================
+; Multibyte / wide-character functions  (C89 7.10.7 / 7.10.8)
+; C/ASCII locale: MB_CUR_MAX=1, wchar_t = unsigned int (16-bit).
+; ============================================================
+        public  _mblen
+        public  _mbtowc
+        public  _wctomb
+        public  _mbstowcs
+        public  _wcstombs
+__mbs_n:        dw      0               ; scratch: remaining n for mbstowcs
+__wcs_n:        dw      0               ; scratch: remaining n for wcstombs
+
+_mblen:
+; int mblen(const char *s, size_t n) -- s@IX+4, n@IX+6
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      a,h
+        or      l
+        jr      z,mbl_zero      ; NULL: no state-dependent encodings -> 0
+        ld      e,(ix+6)
+        ld      d,(ix+7)
+        ld      a,d
+        or      e
+        jr      z,mbl_err       ; n==0: cannot examine -> -1
+        ld      a,(hl)
+        or      a
+        jr      z,mbl_zero      ; NUL byte -> 0
+        ld      hl,1
+        pop     ix
+        ret
+mbl_err:
+        ld      hl,0ffffh
+        pop     ix
+        ret
+mbl_zero:
+        ld      hl,0
+        pop     ix
+        ret
+
+_mbtowc:
+; int mbtowc(wchar_t *pwc, const char *s, size_t n) -- pwc@IX+4, s@IX+6, n@IX+8
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; HL = s
+        ld      a,h
+        or      l
+        jr      z,mbw_zero      ; s==NULL -> 0
+        ld      e,(ix+8)
+        ld      d,(ix+9)
+        ld      a,d
+        or      e
+        jr      z,mbw_err       ; n==0 -> -1
+        ld      a,(hl)          ; A = *s
+        ld      c,a
+        ld      l,(ix+4)
+        ld      h,(ix+5)        ; HL = pwc
+        ld      a,h
+        or      l
+        jr      z,mbw_nopwc
+        ld      (hl),c          ; *pwc low byte = char value
+        inc     hl
+        ld      (hl),0          ; *pwc high byte = 0
+mbw_nopwc:
+        ld      a,c
+        or      a
+        jr      z,mbw_zero
+        ld      hl,1
+        pop     ix
+        ret
+mbw_err:
+        ld      hl,0ffffh
+        pop     ix
+        ret
+mbw_zero:
+        ld      hl,0
+        pop     ix
+        ret
+
+_wctomb:
+; int wctomb(char *s, wchar_t wc) -- s@IX+4, wc@IX+6
+; Returns 0 if s==NULL (no state-dep encoding), else stores (char)wc and returns 1.
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      a,h
+        or      l
+        jr      z,wcm_null
+        ld      a,(ix+6)
+        ld      (hl),a
+        ld      hl,1
+        pop     ix
+        ret
+wcm_null:
+        ld      hl,0
+        pop     ix
+        ret
+
+_mbstowcs:
+; size_t mbstowcs(wchar_t *pwcs, const char *s, size_t n) -- pwcs@IX+4, s@IX+6, n@IX+8
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      (__mbs_n),hl            ; save n
+        ld      c,(ix+6)
+        ld      b,(ix+7)                ; BC = src
+        ld      e,(ix+4)
+        ld      d,(ix+5)                ; DE = dst
+        ld      hl,0                    ; HL = count
+mbs_lp:
+        push    hl
+        ld      hl,(__mbs_n)
+        ld      a,h
+        or      l
+        jr      z,mbs_nexhausted
+        dec     hl
+        ld      (__mbs_n),hl
+        pop     hl
+        ld      a,(bc)
+        or      a
+        jr      z,mbs_null
+        ld      (de),a                  ; wchar_t low byte
+        inc     de
+        xor     a
+        ld      (de),a                  ; wchar_t high byte = 0
+        inc     de
+        inc     bc
+        inc     hl
+        jr      mbs_lp
+mbs_null:
+        ld      (de),a                  ; null wchar_t
+        inc     de
+        ld      (de),a
+        jr      mbs_ret
+mbs_nexhausted:
+        pop     hl
+mbs_ret:
+        pop     ix
+        ret
+
+_wcstombs:
+; size_t wcstombs(char *s, const wchar_t *pwcs, size_t n) -- s@IX+4, pwcs@IX+6, n@IX+8
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        ld      (__wcs_n),hl            ; save n
+        ld      c,(ix+6)
+        ld      b,(ix+7)                ; BC = src (wchar_t *)
+        ld      e,(ix+4)
+        ld      d,(ix+5)                ; DE = dst
+        ld      hl,0                    ; HL = count
+wcs_lp:
+        push    hl
+        ld      hl,(__wcs_n)
+        ld      a,h
+        or      l
+        jr      z,wcs_nexhausted
+        dec     hl
+        ld      (__wcs_n),hl
+        pop     hl
+        ld      a,(bc)                  ; low byte of wchar_t
+        or      a
+        jr      z,wcs_null
+        ld      (de),a
+        inc     de
+        inc     bc
+        inc     bc                      ; advance wchar_t* by 2
+        inc     hl
+        jr      wcs_lp
+wcs_null:
+        ld      (de),a
+        jr      wcs_ret
+wcs_nexhausted:
+        pop     hl
+wcs_ret:
+        pop     ix
+        ret
+
         public  _exec
         public  _execv
 ; XTCOD=31 (trampoline code bytes), XTSGP=16 (stack gap below trampoline)
@@ -18482,5 +18781,179 @@ __xtemp:
         db      011h,080h,000h  ; ld de,0080h           offsets 25-27
         db      019h            ; add hl,de             offset  28
         db      018h,0e4h       ; jr tloop  (-28)       offsets 29-30
+
+; ============================================================
+; signal / raise  (C89 7.7)
+; CP/M 2.2 has no async signal delivery.  signal() always returns
+; SIG_ERR.  raise() calls abort() for SIGABRT; all others are no-ops.
+; ============================================================
+        public  _signal
+        public  _raise
+
+_signal:
+; void (*signal(int sig, void (*func)(int)))(int) -- always returns SIG_ERR
+        ld      hl,0ffffh               ; SIG_ERR = (void(*)(int))-1
+        ret
+
+_raise:
+; int raise(int sig) -- sig @ IX+4/5
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      a,(ix+4)                ; sig (fits in a byte for all defined SIG values)
+        cp      6                       ; SIGABRT
+        jr      nz,rai_ok
+        call    _abort                  ; does not return
+rai_ok:
+        ld      hl,0
+        pop     ix
+        ret
+
+; ============================================================
+; setlocale / localeconv  (C89 7.4)
+; Always the "C" locale.  setlocale accepts NULL, "", or "C".
+; ============================================================
+        public  _setlocale
+        public  __lcnv
+__lc_dot:       db      '.', 0
+__lc_emp:       db      0
+__lc_cstr:      db      'C', 0
+; Static C-locale lconv (28 bytes: 10 char* @ 2 bytes + 8 char @ 1 byte).
+__lconv:
+        dw      __lc_dot        ; decimal_point
+        dw      __lc_emp        ; thousands_sep
+        dw      __lc_emp        ; grouping
+        dw      __lc_emp        ; int_curr_symbol
+        dw      __lc_emp        ; currency_symbol
+        dw      __lc_emp        ; mon_decimal_point
+        dw      __lc_emp        ; mon_thousands_sep
+        dw      __lc_emp        ; mon_grouping
+        dw      __lc_emp        ; positive_sign
+        dw      __lc_emp        ; negative_sign
+        db      07fh            ; int_frac_digits  (CHAR_MAX = not applicable)
+        db      07fh            ; frac_digits
+        db      07fh            ; p_cs_precedes
+        db      07fh            ; p_sep_by_space
+        db      07fh            ; n_cs_precedes
+        db      07fh            ; n_sep_by_space
+        db      07fh            ; p_sign_posn
+        db      07fh            ; n_sign_posn
+
+_setlocale:
+; char *setlocale(int category, const char *locale) -- category@IX+4, locale@IX+6
+; Returns "C" for NULL/""/"C"; NULL for any other locale name.
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; HL = locale
+        ld      a,h
+        or      l
+        jr      z,slc_ok        ; NULL: query current locale
+        ld      a,(hl)
+        or      a
+        jr      z,slc_ok        ; "": set to implementation default
+        cp      'C'
+        jr      nz,slc_fail
+        inc     hl
+        ld      a,(hl)
+        or      a
+        jr      nz,slc_fail     ; not exactly "C"
+slc_ok:
+        ld      hl,__lc_cstr
+        pop     ix
+        ret
+slc_fail:
+        ld      hl,0
+        pop     ix
+        ret
+
+__lcnv:
+; struct lconv *localeconv(void)
+        ld      hl,__lconv
+        ret
+
+; ============================================================
+; Time functions  (C89 7.12)
+; CP/M 2.2 has no real-time clock.  clock() and time() return -1.
+; Struct-based functions (localtime etc.) return NULL.
+; difftime converts the low 16 bits of (t1-t0) to float via __fif.
+; ============================================================
+        public  _clock
+        public  _time
+        public  _difftime
+        public  _mktime
+        public  _asctime
+        public  _ctime
+        public  _gmtime
+        public  __ltim
+        public  _strftime
+
+_clock:
+; clock_t clock(void) -- returns (clock_t)-1 (unavailable)
+        ld      hl,0ffffh
+        ld      de,0ffffh
+        ret
+
+_time:
+; time_t time(time_t *tp) -- tp @ IX+4/5
+; Stores (time_t)-1 through tp if non-null; returns (time_t)-1.
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      a,h
+        or      l
+        jr      z,tim_ret
+        ld      (hl),0ffh
+        inc     hl
+        ld      (hl),0ffh
+        inc     hl
+        ld      (hl),0ffh
+        inc     hl
+        ld      (hl),0ffh
+tim_ret:
+        ld      hl,0ffffh
+        ld      de,0ffffh
+        pop     ix
+        ret
+
+_difftime:
+; float difftime(time_t t1, time_t t0)
+; Note: C89 returns double; dcc returns float (no double type).
+; Converts the signed 16-bit difference of the low words to float via __fif.
+; t0 @ IX+4..7, t1 @ IX+8..11
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+8)
+        ld      h,(ix+9)        ; HL = t1 low word
+        ld      e,(ix+4)
+        ld      d,(ix+5)        ; DE = t0 low word
+        or      a
+        sbc     hl,de           ; HL = t1_lo - t0_lo
+        call    __fif           ; convert signed 16-bit to float in DE:HL
+        pop     ix
+        ret
+
+_mktime:
+; time_t mktime(struct tm *tp) -- returns (time_t)-1 (unavailable)
+        ld      hl,0ffffh
+        ld      de,0ffffh
+        ret
+
+_asctime:
+_ctime:
+_gmtime:
+__ltim:
+; All return NULL (no clock on CP/M 2.2)
+        ld      hl,0
+        ret
+
+_strftime:
+; size_t strftime(...) -- returns 0 (no clock on CP/M 2.2)
+        ld      hl,0
+        ret
 
         end     start

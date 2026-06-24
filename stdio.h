@@ -101,6 +101,8 @@ int    remove(const char *filename);
 int    rename(const char *oldname, const char *newname);
 /** Close a stream. */
 int    fclose(FILE *stream);
+/** Close stream and reopen path/mode on the same FILE slot. */
+FILE  *freopen(const char *path, const char *mode, FILE *stream);
 /** Flush buffered console output. */
 int    fflush(FILE *stream);
 /** Read a line from a stream. */

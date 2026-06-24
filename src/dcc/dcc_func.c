@@ -1779,6 +1779,25 @@ void parse_function_or_global(int base_type)
             next_token();
         }
 
+        /* C89: return_type (*func_name(params))(fp_params) — a function that
+         * returns a pointer to function.  parse_funcptr_declarator sets
+         * g_funcptr_is_funcret_decl and consumes both param lists; the return
+         * type is already recorded as a pointer in `type`. */
+        if (g_funcptr_is_funcret_decl) {
+            g_funcptr_is_funcret_decl = 0;
+            s = add_global(name, type, SC_FUNC);
+            parse_function_return_type = type;
+            if (decl_is_static) {
+                s->is_static = 1;
+                s->needs_extrn = 0;
+            } else if (!s->is_defined)
+                s->needs_extrn = 1;
+            if (accept(','))
+                continue;
+            expect(';');
+            return;
+        }
+
         /* A typedef-name that denotes a function type can declare a function
          * without repeating the parameter list:
          *     typedef int fn_t(int);

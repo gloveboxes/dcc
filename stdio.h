@@ -97,6 +97,8 @@ int fputc(int c, FILE *stream);
 FILE  *fopen(const char *filename, const char *mode);
 /** Delete a file. */
 int    remove(const char *filename);
+/** Rename a file. */
+int    rename(const char *oldname, const char *newname);
 /** Close a stream. */
 int    fclose(FILE *stream);
 /** Flush buffered console output. */

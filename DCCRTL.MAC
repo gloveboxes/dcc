@@ -4436,6 +4436,17 @@ __ae_jmp:
 __ae_cnt:       dw      0
 __ae_tbl:       ds      ATEXIT_MAX * 2
 
+; ============================================================
+; _abort  (C89 7.10.4.1) -- abnormal program termination
+; Does NOT call atexit handlers, close temp files, or set a
+; return code.  Flushes console output so any prior prints
+; are visible, then does a CP/M warm boot (jp 0000h).
+; ============================================================
+        public  _abort
+_abort:
+        call    __cflush
+        jp      0000h
+
 ; ------------------------------------------------------------
 ; CP/M 3 program return code support.
 ;
@@ -5958,6 +5969,64 @@ __mffcb:
         dw      0
 __ulfcb:
         ds      12              ; scratch FCB for _unlink
+
+; ============================================================
+; _rename  (C89 7.9.4.2) -- rename a file
+; int rename(const char *oldname, const char *newname)
+; Returns 0 on success, -1 on failure (errno = ENOENT).
+; Uses CP/M BDOS fn 23: DE points at a 32-byte FCB where
+;   FCB[0..11]  = old name (drive + 8-char + 3-ext)
+;   FCB[16..27] = new name (drive + 8-char + 3-ext)
+; ============================================================
+        public  _rename
+_rename:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ; Zero the 32-byte rename FCB.
+        ld      hl,__rnfcb
+        ld      b,32
+        xor     a
+rnclr:
+        ld      (hl),a
+        inc     hl
+        djnz    rnclr
+
+        ; Old name -> FCB[0..11].
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      de,__rnfcb
+        call    __mkfcb
+
+        ; New name -> FCB[16..27].
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        push    hl              ; save newname ptr
+        ld      hl,__rnfcb
+        ld      de,16
+        add     hl,de
+        ex      de,hl           ; DE = __rnfcb + 16
+        pop     hl              ; HL = newname ptr
+        call    __mkfcb
+
+        ; BDOS fn 23: rename file.
+        ld      de,__rnfcb
+        ld      c,23
+        call    5
+
+        cp      0ffh
+        jr      z,rnfail
+        ld      hl,0
+        pop     ix
+        ret
+rnfail:
+        call    __enoent
+        ld      hl,0ffffh
+        pop     ix
+        ret
+
+__rnfcb:        ds      32
 
 ; Read sector cache: records which 128-byte file record currently resides in
 ; the shared __dma buffer, so consecutive small reads of the same record

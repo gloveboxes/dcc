@@ -14,6 +14,8 @@
 #define EXIT_FAILURE 1
 /** Maximum value returned by rand. */
 #define RAND_MAX 32767
+/** Maximum number of functions that can be registered with atexit(). */
+#define ATEXIT_MAX 32
 
 /** Quotient and remainder pair returned by div. */
 typedef struct {
@@ -29,6 +31,9 @@ typedef struct {
 
 /** Terminate the program after flushing runtime output. */
 void exit( int code );
+/** Register func to be called at normal program termination (LIFO order).
+ *  Returns 0 on success, nonzero if the ATEXIT_MAX table is full. */
+int  atexit( void (*func)(void) );
 /** Return the next pseudo-random integer in the range 0 through RAND_MAX. */
 int rand(void);
 /** Seed the pseudo-random number generator. */

@@ -43,7 +43,7 @@ APPLIST="sieve e ttt tstruct trw tstr tbug tprintf ts tcmp tunary tlong \
          pint cobint forint bint fint cint adaint tstretst tportio tlongidx tforsco \
          tforblk tcmt99 tc99scpe tctxflt tmathf tstrconv tfarrsub t2darr too tzpad tesc \
          tkbd tstackov tasm tcodegen a1 \
-         ttmp tungetc tfpos"
+         ttmp tungetc tfpos tatexit"
 
 run_args() {
     case "$1" in

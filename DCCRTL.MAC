@@ -4333,7 +4333,12 @@ _exit:
         ld      l,(ix+4)
         ld      h,(ix+5)
         pop     ix
-        push    hl                      ; save exit code across hook + flush
+        push    hl                      ; save exit code across hooks + flush
+        ; Call atexit handlers (LIFO) if any were registered.
+        ld      hl,(__ae_hook)
+        ld      a,h
+        or      l
+        call    nz,__ae_hook_call
         ; Call tmpfile cleanup hook if tmpfile() was used this session.
         ; __tmpf_hook is 0 unless _tmpfile set it; the check adds ~8 bytes
         ; to _exit and zero bytes to programs that never call tmpfile.
@@ -4345,11 +4350,91 @@ _exit:
         pop     hl                      ; restore exit code
         call    __cpm_set_retcode
         jp      0000h
+__ae_hook:
+        dw      0
+__ae_hook_call:
+        ld      hl,(__ae_hook)
+        jp      (hl)
 __tmpf_hook:
         dw      0
 __tmpf_dispatch:
         ld      hl,(__tmpf_hook)
         jp      (hl)
+
+; ============================================================
+; atexit -- register a function to call at program exit (C89 7.10.4.2)
+; ============================================================
+ATEXIT_MAX      equ     32
+
+        public  _atexit
+; int atexit(void (*func)(void))
+; Returns 0 on success, 1 if the table is full (ATEXIT_MAX registrations).
+_atexit:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ; Point the _exit hook at our dispatcher (idempotent on repeat calls).
+        ld      hl,__ae_dispatch
+        ld      (__ae_hook),hl
+
+        ; Reject if table full.
+        ld      hl,(__ae_cnt)
+        ld      a,l
+        cp      ATEXIT_MAX
+        jr      nc,ae_reg_fail
+
+        ; Store func ptr at __ae_tbl[cnt * 2].
+        ld      l,a
+        ld      h,0
+        add     hl,hl           ; hl = cnt * 2
+        ld      de,__ae_tbl
+        add     hl,de
+        ld      e,(ix+4)
+        ld      d,(ix+5)
+        ld      (hl),e
+        inc     hl
+        ld      (hl),d
+
+        ; Increment count.
+        ld      hl,(__ae_cnt)
+        inc     hl
+        ld      (__ae_cnt),hl
+
+        ld      hl,0
+        pop     ix
+        ret
+
+ae_reg_fail:
+        ld      hl,1
+        pop     ix
+        ret
+
+; Called from _exit via __ae_hook_call trampoline.
+; Iterates __ae_tbl in LIFO order, calling each registered function.
+__ae_dispatch:
+ae_disp_lp:
+        ld      hl,(__ae_cnt)
+        ld      a,h
+        or      l
+        ret     z               ; all handlers called
+        dec     hl
+        ld      (__ae_cnt),hl   ; consume this slot
+        add     hl,hl           ; hl = cnt * 2
+        ld      de,__ae_tbl
+        add     hl,de           ; hl = &__ae_tbl[cnt]
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)          ; DE = func ptr
+        ex      de,hl
+        call    __ae_jmp        ; call func; func's ret returns to ae_disp_lp
+        jr      ae_disp_lp
+
+__ae_jmp:
+        jp      (hl)            ; func's ret pops the call __ae_jmp return addr
+
+__ae_cnt:       dw      0
+__ae_tbl:       ds      ATEXIT_MAX * 2
 
 ; ------------------------------------------------------------
 ; CP/M 3 program return code support.

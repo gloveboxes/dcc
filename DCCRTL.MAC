@@ -4503,6 +4503,7 @@ __asfl_pfx:
 ; CP/M 2.2 safely ignores unsupported BDOS functions, and emulators can
 ; intercept this call directly, so no version check is needed.
 ; ------------------------------------------------------------
+        public  __cpm_set_retcode
 __cpm_set_retcode:
         ; input: HL = C int status / main return value
 

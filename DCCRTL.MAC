@@ -68,9 +68,9 @@ start:
 bss_done:
 
         call    __mrun
-        call    __cflush                ; flush any buffered console output
-        call    __cpm_set_retcode
-        jp      0000h
+        push    hl                      ; pass main() return value to exit
+        call    _exit                   ; -> __cflush, __cpm_set_retcode, jp 0000h
+        ; unreachable
 
 
 ; ------------------------------------------------------------
@@ -4240,9 +4240,23 @@ _exit:
         ld      l,(ix+4)
         ld      h,(ix+5)
         pop     ix
+        push    hl                      ; save exit code across hook + flush
+        ; Call tmpfile cleanup hook if tmpfile() was used this session.
+        ; __tmpf_hook is 0 unless _tmpfile set it; the check adds ~8 bytes
+        ; to _exit and zero bytes to programs that never call tmpfile.
+        ld      hl,(__tmpf_hook)
+        ld      a,h
+        or      l
+        call    nz,__tmpf_dispatch      ; tail-calls __tmpf_cleanup via HL
         call    __cflush                ; flush any buffered console output
+        pop     hl                      ; restore exit code
         call    __cpm_set_retcode
         jp      0000h
+__tmpf_hook:
+        dw      0
+__tmpf_dispatch:
+        ld      hl,(__tmpf_hook)
+        jp      (hl)
 
 ; ------------------------------------------------------------
 ; CP/M 3 program return code support.
@@ -8222,6 +8236,220 @@ _fclose:
         pop     de                      ; clean 2 bytes
         pop     ix
         ret                             ; HL = 0 (ok) or -1 (error)
+
+; ============================================================
+; tmpnam / tmpfile  (C89 7.9.4.3 / 7.9.4.4)
+; ============================================================
+;
+; tmpnam generates names of the form "T%03d.TMP" (T000.TMP..T999.TMP).
+; tmpfile creates a file and registers it for removal in _exit via the
+; __tmpf_hook set in the _exit block.  The file is removed at program
+; termination; fclose alone does not remove it.
+;
+; Constants (kept in sync with stdio.h):
+;   L_tmpnam = 13  -- minimum buffer size for tmpnam (room for "T999.TMP\0")
+;   TMP_MAX  = 1000 -- distinct names available per session
+;   NTMP     = 4   -- simultaneous tmpfile handles
+;   TN_NSZ   = 16  -- bytes per name slot (power-of-2; >= 9 for "T000.TMP\0")
+NTMP     equ    4
+TN_NSZ   equ    16
+
+        public  _tmpnam
+; char *tmpnam(char *s)
+; Returns a pointer to a generated filename not currently matching any
+; open temp file from this session.  If s is NULL the name is written
+; into an internal static buffer (not re-entrant); otherwise it is
+; written into s and s is returned.
+_tmpnam:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      a,h
+        or      l
+        jr      nz,tn_use
+        ld      hl,__tn_buf             ; NULL arg: use internal buffer
+tn_use:
+        ld      (__tn_ptr),hl
+        ; Increment 3-digit decimal counter stored as individual digit chars.
+        ; __tn_d0 = units, __tn_d1 = tens, __tn_d2 = hundreds.
+        ; Starts at '0'-1 so first call produces '0'.
+        ld      hl,__tn_d0
+        inc     (hl)
+        ld      a,(hl)
+        cp      '9'+1
+        jr      c,tn_build
+        ld      (hl),'0'
+        ld      hl,__tn_d1
+        inc     (hl)
+        ld      a,(hl)
+        cp      '9'+1
+        jr      c,tn_build
+        ld      (hl),'0'
+        ld      hl,__tn_d2
+        inc     (hl)
+        ld      a,(hl)
+        cp      '9'+1
+        jr      c,tn_build
+        ld      (hl),'0'                ; wrap: 999 -> 000
+tn_build:
+        ; Build "T" + d2 + d1 + d0 + ".TMP" + NUL into __tn_ptr
+        ld      hl,(__tn_ptr)
+        ld      (hl),'T'
+        inc     hl
+        ld      a,(__tn_d2)
+        ld      (hl),a
+        inc     hl
+        ld      a,(__tn_d1)
+        ld      (hl),a
+        inc     hl
+        ld      a,(__tn_d0)
+        ld      (hl),a
+        inc     hl
+        ld      (hl),'.'
+        inc     hl
+        ld      (hl),'T'
+        inc     hl
+        ld      (hl),'M'
+        inc     hl
+        ld      (hl),'P'
+        inc     hl
+        ld      (hl),0
+        ld      hl,(__tn_ptr)
+        pop     ix
+        ret
+
+        public  _tmpfile
+; FILE *tmpfile(void)
+; Creates a temporary binary file (w+ mode) and returns its FILE*.
+; The file is removed at program termination via the __tmpf_hook
+; registered in _exit.  Returns NULL if no slot is free or open fails.
+_tmpfile:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ; Register exit-cleanup hook (sets __tmpf_hook in _exit block).
+        ld      hl,__tmpf_cleanup
+        ld      (__tmpf_hook),hl
+        ; Find an empty slot in __tmpf_fd (0 = free).
+        ld      hl,__tmpf_fd
+        ld      b,NTMP
+        ld      c,0                     ; C = slot index
+tf_slotlp:
+        ld      a,(hl)
+        or      a
+        jr      z,tf_found
+        inc     hl
+        inc     c
+        djnz    tf_slotlp
+        ld      hl,0                    ; no free slot
+        pop     ix
+        ret
+tf_found:
+        ; Compute name address: __tmpf_nm + slot * TN_NSZ (slot << 4)
+        ld      h,0
+        ld      l,c
+        add     hl,hl
+        add     hl,hl
+        add     hl,hl
+        add     hl,hl                   ; HL = slot * 16
+        ld      de,__tmpf_nm
+        add     hl,de                   ; HL = &__tmpf_nm[slot]
+        ld      (__tf_nmptr),hl
+        ld      a,c
+        ld      (__tf_slot),a
+        ; tmpnam(name_ptr) fills the slot's name buffer
+        push    hl
+        call    _tmpnam
+        pop     de
+        ; _open(name, O_CREAT|O_TRUNC) = _open(name, 0240h)
+        ld      hl,0240h                ; O_CREAT | O_TRUNC
+        push    hl
+        ld      hl,(__tf_nmptr)
+        push    hl
+        call    _open
+        pop     de
+        pop     de
+        ; HL = fd or 0FFFFh on failure
+        ld      a,h
+        cp      0ffh
+        jr      z,tf_fail
+        ; Store fd in slot
+        push    hl
+        ld      a,(__tf_slot)
+        ld      l,a
+        ld      h,0
+        ld      de,__tmpf_fd
+        add     hl,de
+        pop     de
+        ld      (hl),e                  ; __tmpf_fd[slot] = fd (low byte)
+        ld      l,e
+        ld      h,0                     ; return fd as FILE*
+        pop     ix
+        ret
+tf_fail:
+        ld      hl,0
+        pop     ix
+        ret
+
+__tmpf_cleanup:
+        ; Close and unlink all registered temp files.
+        ; Called from _exit via the __tmpf_dispatch trampoline.
+        ld      b,NTMP
+        ld      c,0                     ; C = slot index
+        ld      hl,__tmpf_fd
+tf_cl_lp:
+        ld      a,(hl)
+        or      a
+        jr      z,tf_cl_nx
+        push    bc
+        push    hl                      ; save __tmpf_fd[slot] ptr
+        ; _close(fd) — ignoring errors; must close before unlink
+        ld      e,a
+        ld      d,0
+        push    de
+        call    _close
+        pop     de
+        ; clear fd slot and compute name pointer.
+        ; NOTE: do NOT use C here — BDOS fn 16 (inside _close) corrupts C.
+        ; Derive slot from pointer arithmetic: slot = (&__tmpf_fd[slot]) - __tmpf_fd
+        pop     hl                      ; HL = &__tmpf_fd[slot]
+        xor     a
+        ld      (hl),a                  ; clear fd slot
+        push    hl                      ; save &__tmpf_fd[slot] for later restore
+        ; slot = HL - __tmpf_fd
+        ld      de,__tmpf_fd
+        or      a
+        sbc     hl,de                   ; HL = slot (0..NTMP-1)
+        ; &__tmpf_nm[slot] = __tmpf_nm + slot * TN_NSZ (slot << 4)
+        add     hl,hl
+        add     hl,hl
+        add     hl,hl
+        add     hl,hl                   ; HL = slot * 16
+        ld      de,__tmpf_nm
+        add     hl,de                   ; HL = &__tmpf_nm[slot]
+        push    hl
+        call    _unlink
+        pop     de
+        pop     hl                      ; restore &__tmpf_fd[slot] ptr
+        pop     bc
+tf_cl_nx:
+        inc     hl
+        inc     c
+        djnz    tf_cl_lp
+        ret
+
+; tmpnam/tmpfile storage
+__tn_d0:        db      '0'-1           ; units digit; '0'-1 so first call -> '0'
+__tn_d1:        db      '0'
+__tn_d2:        db      '0'
+__tn_ptr:       dw      0
+__tn_buf:       ds      9               ; internal buffer for tmpnam(NULL)
+__tf_slot:      db      0
+__tf_nmptr:     dw      0
+__tmpf_fd:      ds      NTMP            ; fd per slot (0 = free)
+__tmpf_nm:      ds      NTMP*TN_NSZ     ; name per slot (16 bytes each)
 
 ; ============================================================
 ; __fps(str, fp)

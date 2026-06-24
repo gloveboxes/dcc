@@ -22,6 +22,10 @@
 
 /** Default buffer size, 256. */
 #define BUFSIZ 256 /* C89 (7.9.2) minimum */
+/** Minimum buffer size for tmpnam(), 13. */
+#define L_tmpnam 13
+/** Distinct filenames available from tmpnam() per session, 1000. */
+#define TMP_MAX 1000
 
 /* setvbuf() buffering modes (C89 7.9.1). */
 /** Fully buffered setvbuf mode. */
@@ -123,6 +127,11 @@ void   clearerr(FILE *stream);
 void   setbuf(FILE *stream, char *buf);
 /** Configure console buffering mode and buffer storage. */
 int    setvbuf(FILE *stream, char *buf, int mode, size_t size);
+/** Generate a filename not used by any current tmpfile() handle; if s is
+ *  non-NULL write it there, else use an internal static buffer. */
+char  *tmpnam(char *s);
+/** Create a temporary file opened for update; removed at program exit. */
+FILE  *tmpfile(void);
 
 /* Formatted-string helpers */
 /** Formatted output into a caller-supplied string buffer. */

@@ -127,6 +127,9 @@ void   clearerr(FILE *stream);
 void   setbuf(FILE *stream, char *buf);
 /** Configure console buffering mode and buffer storage. */
 int    setvbuf(FILE *stream, char *buf, int mode, size_t size);
+/** Push c back onto stream; the next read returns c.  Only one character of
+ *  pushback per stream is guaranteed.  Returns c on success, EOF on failure. */
+int    ungetc(int c, FILE *stream);
 /** Generate a filename not used by any current tmpfile() handle; if s is
  *  non-NULL write it there, else use an internal static buffer. */
 char  *tmpnam(char *s);

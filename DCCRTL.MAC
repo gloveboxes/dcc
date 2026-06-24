@@ -14,6 +14,9 @@
         public  start
 
 HDRSIZE          equ     3
+; Maximum fd value + 1: fds 0..10 (stdin/stdout/stderr + NFILES real files).
+; Keep in sync with MAXFD = FIRSTFD+NFILES at the _open block.
+UGC_MAX  equ     11
 
 ; errno values used by the CP/M file layer.  Keep these in sync with errno.h.
 ENOENT   equ     2
@@ -628,6 +631,29 @@ __fgetc:
         ld      ix,0
         add     ix,sp
 
+        ; Check the per-fd pushback buffer set by ungetc().
+        ld      a,(ix+4)        ; fd (low byte)
+        cp      UGC_MAX
+        jr      nc,fgc_no_pb    ; fd out of range
+        ld      l,a
+        ld      h,0
+        ld      de,__ugv
+        add     hl,de
+        ld      a,(hl)          ; pushback-valid flag
+        or      a
+        jr      z,fgc_no_pb
+        xor     a
+        ld      (hl),a          ; consume: clear valid flag
+        ld      l,(ix+4)
+        ld      h,0
+        ld      de,__ugc
+        add     hl,de
+        ld      l,(hl)          ; return pushed-back char as int (0..255)
+        ld      h,0
+        pop     ix
+        ret
+
+fgc_no_pb:
         ld      hl,1
         push    hl              ; count
         ld      hl,___getc_ch
@@ -663,10 +689,65 @@ getc_bad:
 
 ___getc_ch:
         db      0
+; Per-fd pushback buffer for ungetc().  __ugv[fd]=1 means __ugc[fd] is valid.
+; Indexed 0..UGC_MAX-1 directly by fd (0=stdin, 3..10=real files).
+__ugv:  ds      UGC_MAX         ; valid flags
+__ugc:  ds      UGC_MAX         ; pushed-back characters
 
         public  __getc
 __getc:
         jp      __fgetc
+
+        public  _ungetc
+; int ungetc(int c, FILE *stream)
+; Pushes c back onto stream so the next fgetc/getc/fgets/fscanf returns it.
+; Only one character of pushback per stream is guaranteed (C89 7.9.7.11).
+; Returns c on success, EOF on failure (c == EOF or fd out of range).
+_ungetc:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+
+        ; c (ix+4/5) — fail if c == EOF (0xFFFF)
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      a,h
+        and     l
+        inc     a
+        jr      z,ugc_fail      ; h=ff and l=ff: c == -1
+
+        ; check fd in range
+        ld      a,(ix+6)        ; stream/fd (low byte)
+        cp      UGC_MAX
+        jr      nc,ugc_fail
+
+        ; __ugc[fd] = c & 0xff
+        ld      c,a             ; C = fd
+        ld      h,0
+        ld      l,c
+        ld      de,__ugc
+        add     hl,de
+        ld      a,(ix+4)        ; c low byte
+        ld      (hl),a
+
+        ; __ugv[fd] = 1
+        ld      l,c
+        ld      h,0
+        ld      de,__ugv
+        add     hl,de
+        ld      (hl),1
+
+        ; return c & 0xff
+        ld      h,0
+        ld      a,(ix+4)
+        ld      l,a
+        pop     ix
+        ret
+
+ugc_fail:
+        ld      hl,0ffffh       ; EOF
+        pop     ix
+        ret
 
         public  _remove
 _remove:
@@ -675,6 +756,18 @@ _remove:
 
         public  __gchr
 __gchr:
+        ; Check pushback for stdin (fd=0) before blocking on BDOS fn 1.
+        ld      hl,__ugv        ; __ugv[0]
+        ld      a,(hl)
+        or      a
+        jr      z,gchr_no_pb
+        xor     a
+        ld      (hl),a          ; consume valid flag
+        ld      hl,__ugc        ; __ugc[0]
+        ld      l,(hl)
+        ld      h,0
+        ret
+gchr_no_pb:
         call    __cflush        ; show any pending prompt before blocking
         ld      c,1
         call    5
@@ -7723,6 +7816,28 @@ fgf_loop:
         or      l
         jp      z,fgets_term            ; buffer full
 
+        ; Check pushback buffer before calling _read.
+        ld      a,(ix+8)                ; fd (low byte)
+        cp      UGC_MAX
+        jr      nc,fgf_no_pb
+        ld      l,a
+        ld      h,0
+        ld      de,__ugv
+        add     hl,de
+        ld      a,(hl)
+        or      a
+        jr      z,fgf_no_pb
+        xor     a
+        ld      (hl),a                  ; consume: clear valid flag
+        ld      l,(ix+8)
+        ld      h,0
+        ld      de,__ugc
+        add     hl,de
+        ld      a,(hl)
+        ld      (__fgets_ch),a          ; treat as if _read returned it
+        jr      fgf_have_ch
+
+fgf_no_pb:
         ; _read(fp, &__fgets_ch, 1)
         ld      hl,1
         push    hl                      ; count=1
@@ -7742,6 +7857,7 @@ fgf_loop:
         or      l
         jr      z,fgf_eof               ; read 0 bytes  EOF
 
+fgf_have_ch:
         ld      a,(__fgets_ch)
         cp      1ah                     ; Ctrl-Z = CP/M EOF marker
         jr      z,fgf_eof

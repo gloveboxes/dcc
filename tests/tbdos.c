@@ -16,6 +16,16 @@ int main(void)
 
     printf("tbdos start\n");
 
+    /* first try to read the command tail if there is one */
+    /* if there is one, the first character may or may not be a space */
+    int len = * (char *) 0x80;
+    char *pcmdtail = (char *) 0x81;
+    char ct[ 0x80 ];
+    memcpy( ct, pcmdtail, len );
+    ct[ len ] = 0;
+    printf( "command tail len: %d\n", len );
+    printf( "command tail: '%s'\n", ct );
+
     /* BDOS 2: console output */
     bdos(2, 'H');
     bdos(2, 'i');

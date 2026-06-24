@@ -17185,4 +17185,361 @@ SCZ0007:
 
 ; ================= END generated string-conversion functions =================
 
+; ============================================================
+; exec / execv -- load and run a .COM program over this one
+; ============================================================
+; C interface (declared in <stdlib.h>):
+;   int exec(const char *path, const char *cmdtail);
+;   int execv(const char *path, char **argv);
+;
+; Does not return on success (new program replaces this one).
+; Returns -1 if the .COM file cannot be opened.
+;
+; CP/M SDA set up before the new program starts:
+;   0080h : command-tail length byte
+;   0081h : command-tail text (CR-terminated)
+;   005Ch : FCB1 -- first argument, parsed
+;   006Ch : FCB2 -- second argument, parsed
+;
+; Trampoline layout (placed just below BDOS):
+;   [FCB: FCBSIZE bytes]    <- __xbase  (opened by exec before jumping)
+;   [Code: XTCOD bytes]     <- __xtrep  (reads sectors, then jp 0100h)
+; Stack during trampoline: SP = __xbase - XTSGP (clear gap below block)
+; ============================================================
+
+        public  _exec
+        public  _execv
+; XTCOD=31 (trampoline code bytes), XTSGP=16 (stack gap below trampoline)
+
+; int exec(const char *path, const char *cmdtail)
+_exec:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)        ; HL = path
+        ld      e,(ix+6)
+        ld      d,(ix+7)        ; DE = cmdtail
+        call    __xmain
+        pop     ix
+        ret
+
+; int execv(const char *path, char **argv)
+_execv:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+6)
+        ld      h,(ix+7)        ; HL = argv
+        ld      a,h
+        or      l
+        jr      z,ev_noav       ; NULL argv
+        call    __xmkct         ; build cmdtail in __xctbf from argv[1..]
+        jr      ev_have
+ev_noav:
+        xor     a
+        ld      (__xctbf),a     ; empty cmdtail
+ev_have:
+        ld      l,(ix+4)
+        ld      h,(ix+5)        ; HL = path
+        ld      de,__xctbf
+        call    __xmain
+        pop     ix
+        ret
+
+; __xmain(HL=path, DE=cmdtail): shared exec implementation
+__xmain:
+        ld      (__xpath),hl
+        ld      (__xctls),de
+
+        ; Compute trampoline base: BDOS entry - (36 FCB bytes + 31 code bytes)
+        ld      hl,(0006h)      ; HL = BDOS entry point (word at 0006h)
+        ld      bc,67           ; 36 (FCB) + 31 (code) = trampoline block size
+        or      a
+        sbc     hl,bc           ; HL = tramp_base = BDOS - 67
+        ld      (__xbase),hl
+
+        ; Zero FCB area (36 bytes) at tramp_base
+        ex      de,hl           ; DE = tramp_base
+        ld      b,36
+xm_clr:
+        xor     a
+        ld      (de),a
+        inc     de
+        djnz    xm_clr
+
+        ; Copy path to __xpbuf, appending ".COM" if no '.' in name
+        ld      hl,(__xpath)
+        ld      de,__xpbuf
+        call    __xacom
+
+        ; Build FCB at tramp_base from the path in __xpbuf
+        ld      de,(__xbase)
+        ld      hl,__xpbuf
+        call    __mkfcb
+
+        ; Pre-check: open the file (BDOS fn 15); return -1 if not found
+        ld      de,(__xbase)
+        ld      c,15
+        call    5
+        cp      0ffh
+        jr      nz,xm_ok
+        ld      hl,0ffffh       ; open failed
+        ret
+
+xm_ok:
+        ; Patch trampoline template: write FCB address into the ld de,0 immediate
+        ld      hl,(__xbase)    ; HL = FCB address = tramp_base
+        ld      a,l
+        ld      (__xtemp+13),a  ; lo byte of FCB address
+        ld      a,h
+        ld      (__xtemp+14),a  ; hi byte of FCB address
+
+        ; Set up command tail (0080h) and default FCBs (005Ch, 006Ch)
+        ld      hl,(__xctls)
+        call    __xsctl
+
+        ; __xsctl's call __mkfcb pushes a return address onto the stack that
+        ; lands exactly on FCB[32] (cr).  Zero cr now, after __xsctl returns,
+        ; so the first fn 20 reads from the start of the file.
+        ld      hl,(__xbase)
+        ld      de,32
+        add     hl,de
+        xor     a
+        ld      (hl),a          ; FCB[32] = CR = 0
+
+        ; Compute and save trampoline entry = tramp_base + 36 (FCB size)
+        ld      hl,(__xbase)
+        ld      bc,36
+        add     hl,bc
+        ld      (__xtrep),hl
+
+        ; Copy patched template (31 bytes) to trampoline entry address
+        ex      de,hl           ; DE = trampoline entry (destination)
+        ld      hl,__xtemp
+        ld      bc,31
+        ldir
+
+        ; Switch to safe stack below trampoline, then jump (no return)
+        ld      hl,(__xbase)
+        ld      bc,16           ; 16-byte stack gap below trampoline
+        or      a
+        sbc     hl,bc           ; HL = tramp_base - 16
+        ld      sp,hl           ; new stack
+        ld      hl,(__xtrep)
+        jp      (hl)
+
+; __xmkct(HL=argv): build cmdtail in __xctbf from argv[1..] (" arg1 arg2 ...")
+__xmkct:
+        ld      de,__xctbf
+        inc     hl
+        inc     hl              ; skip argv[0] pointer (2 bytes)
+xmk_lp:
+        ld      c,(hl)
+        inc     hl
+        ld      b,(hl)
+        inc     hl              ; BC = argv[i]; HL -> next argv slot
+        ld      a,b
+        or      c
+        jr      z,xmk_dn        ; NULL pointer = end of argv
+        push    hl              ; save argv index
+        push    de              ; save output pointer
+        ld      h,b
+        ld      l,c             ; HL = argv[i] string
+        pop     de
+        ld      a,' '
+        ld      (de),a          ; space separator before each argument
+        inc     de
+xmk_cs:
+        ld      a,(hl)
+        or      a
+        jr      z,xmk_ce
+        ld      (de),a
+        inc     hl
+        inc     de
+        jr      xmk_cs
+xmk_ce:
+        pop     hl              ; restore argv index
+        jr      xmk_lp
+xmk_dn:
+        xor     a
+        ld      (de),a          ; null-terminate __xctbf
+        ret
+
+; __xacom(HL=src, DE=dest): copy path to dest, appending ".COM" if no '.' present
+__xacom:
+        ld      b,0             ; B = dot-seen flag
+xac_cp:
+        ld      a,(hl)
+        or      a
+        jr      z,xac_dn
+        cp      '.'
+        jr      nz,xac_nd
+        ld      b,1             ; found a dot
+xac_nd:
+        ld      (de),a
+        inc     hl
+        inc     de
+        jr      xac_cp
+xac_dn:
+        ld      a,b
+        or      a
+        jr      nz,xac_hd       ; had dot: just null-terminate
+        ld      a,'.'
+        ld      (de),a
+        inc     de
+        ld      a,'C'
+        ld      (de),a
+        inc     de
+        ld      a,'O'
+        ld      (de),a
+        inc     de
+        ld      a,'M'
+        ld      (de),a
+        inc     de
+xac_hd:
+        xor     a
+        ld      (de),a          ; null-terminate
+        ret
+
+; __xsctl(HL=cmdtail): set 0080h length byte, 0081h text, FCB1, FCB2
+__xsctl:
+        ; Clear FCB1 (16 bytes at 005Ch) then FCB2 (16 bytes at 006Ch)
+        ld      de,005ch
+        call    __xclfb         ; clears 005Ch-006Bh; DE = 006Ch on return
+        call    __xclfb         ; clears 006Ch-007Bh
+
+        ; Null or empty cmdtail -> write empty tail and return
+        ld      a,h
+        or      l
+        jr      z,xsc_em
+        ld      a,(hl)
+        or      a
+        jr      z,xsc_em
+
+        ; Copy cmdtail to 0081h; count bytes in B; append CR
+        ld      de,0081h
+        ld      b,0
+xsc_cp:
+        ld      a,(hl)
+        or      a
+        jr      z,xsc_es
+        cp      0dh
+        jr      z,xsc_es
+        ld      (de),a
+        inc     hl
+        inc     de
+        inc     b
+        jr      xsc_cp
+xsc_es:
+        ld      a,0dh
+        ld      (de),a          ; CR terminator
+        ld      a,b
+        ld      (0080h),a       ; length byte
+
+        ; FCB1 from first whitespace-delimited word in tail
+        ld      hl,0081h
+        call    __xsksp         ; skip leading spaces; HL -> first non-space
+        ld      a,(hl)
+        or      a
+        ret     z
+        cp      0dh
+        ret     z
+        ld      de,__xpbuf
+        call    __xwcp          ; copy word to __xpbuf; HL -> delimiter
+        push    hl              ; save position after first word
+        ld      de,005ch
+        ld      hl,__xpbuf
+        call    __mkfcb
+        pop     hl              ; restore position after first word
+
+        ; FCB2 from second word
+        call    __xsksp
+        ld      a,(hl)
+        or      a
+        ret     z
+        cp      0dh
+        ret     z
+        ld      de,__xpbuf
+        call    __xwcp
+        ld      de,006ch
+        ld      hl,__xpbuf
+        call    __mkfcb
+        ret
+
+xsc_em:
+        xor     a
+        ld      (0080h),a       ; length = 0
+        ld      a,0dh
+        ld      (0081h),a       ; CR at 0081h
+        ret
+
+; __xclfb(DE=buf): zero 16 bytes at DE (for clearing default FCB slots)
+__xclfb:
+        ld      b,16
+xclf_l:
+        xor     a
+        ld      (de),a
+        inc     de
+        djnz    xclf_l
+        ret
+
+; __xsksp(HL=ptr): advance HL past space characters
+__xsksp:
+        ld      a,(hl)
+        cp      ' '
+        ret     nz
+        inc     hl
+        jr      __xsksp
+
+; __xwcp(HL=src, DE=dest): copy space/NUL/CR-delimited word from HL to DE
+; Null-terminates dest. Returns HL = position of delimiter.
+__xwcp:
+xwc_lp:
+        ld      a,(hl)
+        or      a
+        jr      z,xwc_dn
+        cp      0dh
+        jr      z,xwc_dn
+        cp      ' '
+        jr      z,xwc_dn
+        ld      (de),a
+        inc     hl
+        inc     de
+        jr      xwc_lp
+xwc_dn:
+        xor     a
+        ld      (de),a
+        ret
+
+; ---- exec/execv scratch data ----
+__xbase:        dw      0       ; trampoline base address (= FCB address)
+__xtrep:        dw      0       ; trampoline entry = __xbase + FCBSIZE
+__xpath:        dw      0       ; saved path argument
+__xctls:        dw      0       ; saved cmdtail argument
+__xpbuf:        ds      16      ; path scratch buffer (8+1+3+NUL = 13 max)
+__xctbf:        ds      128     ; execv: cmdtail build buffer
+
+; Trampoline code template (XTCOD = 31 bytes).
+; The FCB at __xbase is already open (BDOS fn 15 called before copy).
+; Reads the .COM image sequentially from 0100h using fn 26 + fn 20,
+; then jumps to 0100h.  Bytes 13-14 are patched with __xbase (lo, hi).
+__xtemp:
+        db      021h,000h,001h  ; ld hl,0100h          offsets  0- 2
+        db      0e5h            ; push hl               offset   3  <- tloop
+        db      0ebh            ; ex de,hl              offset   4
+        db      00eh,01ah       ; ld c,26h              offsets  5- 6
+        db      0cdh,005h,000h  ; call 5                offsets  7- 9
+        db      0e1h            ; pop hl                offset  10
+        db      0e5h            ; push hl               offset  11
+        db      011h,000h,000h  ; ld de,0  PATCH 13,14  offsets 12-14
+        db      00eh,014h       ; ld c,20h              offsets 15-16
+        db      0cdh,005h,000h  ; call 5                offsets 17-19
+        db      0e1h            ; pop hl                offset  20
+        db      0b7h            ; or a                  offset  21
+        db      0c2h,000h,001h  ; jp nz,0100h           offsets 22-24
+        db      011h,080h,000h  ; ld de,0080h           offsets 25-27
+        db      019h            ; add hl,de             offset  28
+        db      018h,0e4h       ; jr tloop  (-28)       offsets 29-30
+
         end     start

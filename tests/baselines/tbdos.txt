@@ -1,4 +1,6 @@
 tbdos start
+command tail len: 0
+command tail: ''
 Hi!
 BDOS 9 string output works
 BDOS version raw: 34

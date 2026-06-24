@@ -43,6 +43,13 @@ if not errorlevel 1 (
     set "STRIP_FLAGS=%STRIP_FLAGS% -k _pffio"
 )
 
+rem lzpack's format strings are loaded at runtime via lz_mload from encoded
+rem byte arrays in csmsg.h -- %ld/%lu specifiers for file sizes are not visible
+rem as literals in the source, so findstr detection cannot work here.
+rem Always enable long printf support.
+set "DCC_FLAGS=%DCC_FLAGS% -flongio"
+set "STRIP_FLAGS=%STRIP_FLAGS% -k _pflng"
+
 rem Compile on host first, producing %name%.mac. lzpack works with -stack 480 and stack probes with a 32 byte buffer
 dcc.exe -DLZPACK_COMPRESS_ONLY -DHSZ=512 -DMZXFILE=65535L -D__Z80 -DLZPACK_STREAM=1 -DCPM80 %DCC_FLAGS% -stack 480 "%SOURCE_FILE%" -o "%name%.mac"
 if errorlevel 1 exit /b 1

@@ -1,2 +1,2 @@
 tassert ok
-Assertion failed: 0 at tests/tassert.c:13
+Assertion failed: 0 at tests{{SEP}}tassert.c:13

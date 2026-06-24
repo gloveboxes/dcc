@@ -1778,6 +1778,20 @@ dms_rs_done:
         pop     bc
         ret
 
+; Divide-result cache shared by __divu, __modu, __divs, __mods.
+; Lives in the DRSU prelude so dccrtlstrip keeps it whenever any of
+; those entry points is referenced, without forcing __mods: to be kept.
+__dmval:
+        db      0
+__dmc_lhs:
+        dw      0
+__dmc_rhs:
+        dw      0
+__dmquot:
+        dw      0
+__dmrem:
+        dw      0
+
 __divu:
         ; Faster cache-aware unsigned divide.
         ; Input:  HL = dividend, DE = divisor
@@ -1972,17 +1986,6 @@ __ms_rpos:
 __ms_done:
         pop     bc
         ret
-
-__dmval:
-        db      0
-__dmc_lhs:
-        dw      0
-__dmc_rhs:
-        dw      0
-__dmquot:
-        dw      0
-__dmrem:
-        dw      0
 
         public  _abs
 _abs:
@@ -3557,6 +3560,36 @@ pf_hexup:
 pf_decbuf:
         ds      7
 
+pf_float_stub:
+        pop     hl                      ; restore fmt ptr pushed by dispatch
+        ld      a,'f'
+        call    pf_emit_a
+        jp      pf_loop
+pf_float_hook:
+        dw      pf_float_stub
+pf_long_stub:
+        pop     hl                      ; restore fmt ptr pushed by dispatch
+        ld      a,'l'
+        call    pf_emit_a
+        jp      pf_loop
+pf_long_hook:
+        dw      pf_long_stub
+
+; printf/sprintf/fprintf shared sink and buffer (here so they stay in the
+; _printf block; placing them elsewhere forces dccrtlstrip to keep that block)
+pf_sink:        dw      0       ; 0=console, 0FFFFh=buffer
+pf_bufptr:      dw      0       ; write pointer for sprintf/fprintf
+__pf_cnt:       dw      0       ; char count saved by fprintf
+__pf_fbuf:      ds      256     ; static buffer for fprintf
+
+
+; ---- 32-bit printf helpers (_pffio and _pflng only) -------------------------
+; dccrtlstrip keeps this block only when _pffio (-ffloatio) or _pflng
+; (-flongio) is linked; stripped for programs using plain printf with no
+; %f or %ld/%lu/%lx.
+        public  __pf32h
+__pf32h:
+
 pf_decbuf32:
         ds      11
 
@@ -3668,28 +3701,6 @@ pf_print_u32:
 __pf32_l:       dw      0
 __pf32_h:       dw      0
 
-pf_float_stub:
-        pop     hl                      ; restore fmt ptr pushed by dispatch
-        ld      a,'f'
-        call    pf_emit_a
-        jp      pf_loop
-pf_float_hook:
-        dw      pf_float_stub
-pf_long_stub:
-        pop     hl                      ; restore fmt ptr pushed by dispatch
-        ld      a,'l'
-        call    pf_emit_a
-        jp      pf_loop
-pf_long_hook:
-        dw      pf_long_stub
-
-; printf/sprintf/fprintf shared sink and buffer (here so they stay in the
-; _printf block; placing them elsewhere forces dccrtlstrip to keep that block)
-pf_sink:        dw      0       ; 0=console, 0FFFFh=buffer
-pf_bufptr:      dw      0       ; write pointer for sprintf/fprintf
-__pf_cnt:       dw      0       ; char count saved by fprintf
-__pf_fbuf:      ds      256     ; static buffer for fprintf
-
 
 ; ---- float-enabled printf (-ffloatio) ------------------------------
         public  _pffio
@@ -3719,8 +3730,8 @@ _pffio:
 
 ; pf_f is the %f handler installed via pf_float_hook when _pffio is active.
 ; It lives in the _pffio block so dccrtlstrip omits it for non-float builds.
-; Uses __pf32_l/__pf32_h (shared with pf_ld/pf_lu/pf_lx) and pf_prec/pf_emit_a
-; from the _printf block.
+; Uses pf_arg_dehl, pf_print_u32, __pf32_l/__pf32_h from the __pf32h block,
+; and pf_prec/pf_emit_a from the _printf block.
 pf_f:
         ; HL (fmt ptr) already pushed by the %f dispatch in pf_pct_done_width
         call    pf_arg_dehl     ; loads __pf32_l/__pf32_h with raw float bits, advances DE by 4
@@ -3941,7 +3952,7 @@ _pflng:
 
 ; pf_lng: the %l handler installed via pf_long_hook when _pflng (or _pflio) is
 ; active.  Lives in the _pflng block so dccrtlstrip omits it for non-long builds.
-; Uses __pf32_l/__pf32_h, pf_arg_dehl, pf_build_u32, pf_divu32_10 from _printf.
+; Uses __pf32_l/__pf32_h, pf_arg_dehl, pf_build_u32, pf_divu32_10 from __pf32h.
 pf_lng:
         pop     hl                      ; restore fmt ptr pushed by dispatch
         ld      a,(hl)

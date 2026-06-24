@@ -4493,6 +4493,258 @@ __atl_x2:       ds      4
 __atl_neg:      db      0
 __atl_d:        db      0
 
+        public  _atof
+; float atof(const char *nptr)
+; Parses a decimal floating-point string and returns an IEEE 754
+; single-precision float in DE:HL (DE=high word, HL=low word).
+; Accepts optional leading whitespace, optional +/- sign, decimal
+; digits, optional decimal point, and optional e/E signed exponent.
+; Note: standard C89 atof returns double; this returns float because
+; dcc has no double type.
+_atof:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        ld      (__atf_p),hl
+        ld      hl,0
+        ld      (__atf_mant),hl
+        ld      (__atf_mant+2),hl       ; mant = 0.0f
+        ld      (__atf_frac),hl         ; fractional digit count = 0
+        ld      (__atf_expo),hl         ; explicit exponent = 0
+        xor     a
+        ld      (__atf_neg),a
+        ld      (__atf_dp),a            ; seen decimal point = 0
+        ld      (__atf_eneg),a
+        ld      hl,(__atf_p)
+atf_ws:
+        ld      a,(hl)
+        cp      ' '
+        jr      z,atf_wsi
+        cp      9                       ; horizontal tab
+        jr      nz,atf_sign
+atf_wsi:
+        inc     hl
+        jr      atf_ws
+atf_sign:
+        cp      '-'
+        jr      nz,atf_spl
+        ld      a,1
+        ld      (__atf_neg),a
+        inc     hl
+        jr      atf_psv
+atf_spl:
+        cp      '+'
+        jr      nz,atf_psv
+        inc     hl
+atf_psv:
+        ld      (__atf_p),hl
+        ; main digit loop: accumulates integer and fractional digits
+atf_dlp:
+        ld      hl,(__atf_p)
+        ld      a,(hl)
+        cp      '.'
+        jr      nz,atf_nodp
+        ld      a,(__atf_dp)
+        or      a
+        jr      nz,atf_mant_done        ; second '.' ends parse
+        ld      a,1
+        ld      (__atf_dp),a
+        inc     hl
+        ld      (__atf_p),hl
+        jr      atf_dlp
+atf_nodp:
+        cp      '0'
+        jr      c,atf_mant_done
+        cp      '9'+1
+        jr      nc,atf_mant_done
+        sub     '0'
+        ld      (__atf_d),a
+        inc     hl
+        ld      (__atf_p),hl
+        ld      a,(__atf_dp)
+        or      a
+        jr      z,atf_nfc
+        ld      hl,(__atf_frac)
+        inc     hl
+        ld      (__atf_frac),hl
+atf_nfc:
+        ; mant = mant * 10.0f: push left=10.0f, right=mant
+        ; (fmul is commutative; 10.0f: DE=0x4120, HL=0x0000)
+        ld      de,04120h
+        ld      hl,0
+        push    de
+        push    hl
+        ld      hl,(__atf_mant)
+        ld      de,(__atf_mant+2)
+        push    de
+        push    hl
+        call    __fmul
+        pop     bc
+        pop     bc
+        pop     bc
+        pop     bc
+        ld      (__atf_mant),hl
+        ld      (__atf_mant+2),de
+        ; mant += (float)digit  via __fif(HL=digit) -> DE:HL
+        ld      a,(__atf_d)
+        ld      l,a
+        ld      h,0
+        call    __fif
+        ; fadd is commutative: push digit then mant (order doesn't matter)
+        push    de
+        push    hl
+        ld      hl,(__atf_mant)
+        ld      de,(__atf_mant+2)
+        push    de
+        push    hl
+        call    __fadd
+        pop     bc
+        pop     bc
+        pop     bc
+        pop     bc
+        ld      (__atf_mant),hl
+        ld      (__atf_mant+2),de
+        jr      atf_dlp
+atf_mant_done:
+        ; a = current char; check for e/E exponent
+        cp      'e'
+        jr      z,atf_expd
+        cp      'E'
+        jr      nz,atf_net
+atf_expd:
+        ld      hl,(__atf_p)
+        inc     hl                      ; skip 'e'/'E'
+        ld      a,(hl)
+        cp      '-'
+        jr      nz,atf_epl
+        ld      a,1
+        ld      (__atf_eneg),a
+        inc     hl
+        jr      atf_epv
+atf_epl:
+        cp      '+'
+        jr      nz,atf_epv
+        inc     hl
+atf_epv:
+        ld      (__atf_p),hl
+atf_elp:
+        ld      hl,(__atf_p)
+        ld      a,(hl)
+        cp      '0'
+        jr      c,atf_net
+        cp      '9'+1
+        jr      nc,atf_net
+        sub     '0'
+        ld      c,a
+        ld      hl,(__atf_expo)
+        add     hl,hl
+        ld      d,h
+        ld      e,l                     ; DE = expo*2
+        add     hl,hl
+        add     hl,hl                   ; HL = expo*8
+        add     hl,de                   ; HL = expo*10
+        ld      e,c
+        ld      d,0
+        add     hl,de                   ; HL = expo*10 + digit
+        ld      (__atf_expo),hl
+        ld      hl,(__atf_p)
+        inc     hl
+        ld      (__atf_p),hl
+        jr      atf_elp
+atf_net:
+        ; net_exp = (eneg ? -(expo+frac) : expo-frac)
+        ld      hl,(__atf_expo)
+        ld      de,(__atf_frac)
+        ld      a,(__atf_eneg)
+        or      a                       ; clears carry
+        jr      z,atf_net_pos
+        ; negative exponent: net = -(expo + frac)
+        add     hl,de
+        ex      de,hl
+        ld      hl,0
+        or      a                       ; clear carry before sbc
+        sbc     hl,de
+        jr      atf_net_sv
+atf_net_pos:
+        sbc     hl,de                   ; HL = expo - frac (carry=0)
+atf_net_sv:
+        ld      (__atf_net),hl
+        ld      a,h
+        or      l
+        jr      z,atf_sign_bit          ; net == 0: no scaling needed
+        bit     7,h
+        jr      nz,atf_neg_net          ; net < 0: divide by 10
+atf_pos_net:
+        ; mant *= 10.0f, net times
+        ld      de,04120h
+        ld      hl,0
+        push    de
+        push    hl
+        ld      hl,(__atf_mant)
+        ld      de,(__atf_mant+2)
+        push    de
+        push    hl
+        call    __fmul
+        pop     bc
+        pop     bc
+        pop     bc
+        pop     bc
+        ld      (__atf_mant),hl
+        ld      (__atf_mant+2),de
+        ld      hl,(__atf_net)
+        dec     hl
+        ld      (__atf_net),hl
+        ld      a,h
+        or      l
+        jr      nz,atf_pos_net
+        jr      atf_sign_bit
+atf_neg_net:
+        ; mant /= 10.0f, |net| times (net is negative, counting toward 0)
+        ld      hl,(__atf_mant)
+        ld      de,(__atf_mant+2)
+        push    de
+        push    hl                      ; left = mant (numerator)
+        ld      de,04120h
+        ld      hl,0
+        push    de
+        push    hl                      ; right = 10.0f (denominator)
+        call    __fdiv
+        pop     bc
+        pop     bc
+        pop     bc
+        pop     bc
+        ld      (__atf_mant),hl
+        ld      (__atf_mant+2),de
+        ld      hl,(__atf_net)
+        inc     hl                      ; towards 0
+        ld      (__atf_net),hl
+        ld      a,h
+        or      l
+        jr      nz,atf_neg_net
+atf_sign_bit:
+        ld      hl,(__atf_mant)
+        ld      de,(__atf_mant+2)
+        ld      a,(__atf_neg)
+        or      a
+        jr      z,atf_ret
+        ld      a,d
+        or      80h
+        ld      d,a                     ; set IEEE 754 sign bit
+atf_ret:
+        pop     ix
+        ret
+__atf_p:        dw      0
+__atf_mant:     ds      4
+__atf_frac:     dw      0
+__atf_expo:     dw      0
+__atf_net:      dw      0
+__atf_neg:      db      0
+__atf_dp:       db      0
+__atf_eneg:     db      0
+__atf_d:        db      0
+
         public  _fflush
 _fflush:
         ; int fflush(FILE *stream)

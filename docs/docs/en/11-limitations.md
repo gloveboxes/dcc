@@ -42,7 +42,7 @@ definition, the link step fails with an unresolved external.
 
 | Function | Notes |
 | --- | --- |
-| `atof` | Neither declared nor implemented. C89 `atof` returns `double`, which dcc does not have; use a project-local `float` parser if you need decimal-to-float input. |
+| `atof` | Implemented and declared as `float atof(const char *)`. C89 `atof` returns `double`, which dcc does not have; this extension returns `float` (IEEE 754 single precision). |
 
 If you need to supply your own implementation of an unimplemented function,
 either `#include` its `.c` from your main file, or compile it separately with

@@ -4,25 +4,11 @@ SKILL.md lists the deviations from standard C; this file adds symptom→fix
 detail and code for the ones that need it. (Anything not covered behaves as
 standard C89.)
 
-## Parsing a decimal string to `float` (no `atof`/`strtod`)
+## Parsing a decimal string to `float`
 
-`atof`/`strtod` are absent (both return `double`). `strtol`/`strtoul` parse
-integers; for decimal-string→`float`, parse it yourself:
-
-```c
-/* minimal signed decimal -> float */
-static float parse_f(const char *s)
-{
-    float v = 0.0f, frac = 0.0f, scale = 1.0f;
-    int neg = 0;
-    if (*s == '-') { neg = 1; s++; }
-    while (*s >= '0' && *s <= '9') { v = v * 10.0f + (*s - '0'); s++; }
-    if (*s == '.') { s++; while (*s >= '0' && *s <= '9') {
-        scale *= 10.0f; frac = frac * 10.0f + (*s - '0'); s++; } }
-    v += frac / scale;
-    return neg ? -v : v;
-}
-```
+`atof` is available in dcc as an extension (`#include <stdlib.h>`). It returns
+`float` (IEEE 754 single precision) rather than `double` — C89 `atof` normally
+returns `double`, but dcc has no `double` type. `strtod` is absent entirely.
 
 ## `%f` needs the `-ffloatio` build flag
 

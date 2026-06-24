@@ -66,8 +66,9 @@ long  v = strtol("  -0x1Ag", &end, 0);            /* v = -26, *end = 'g'  */
 unsigned long u = strtoul("4294967295", NULL, 10); /* ULONG_MAX */
 ```
 
-There is **no `atof`** — C89 `atof` returns `double`, and dcc has no `double`.
-See [Limitations](../11-limitations.md).
+`atof` is available as a dcc extension: it is declared as `float atof(const char *nptr)`
+and returns IEEE 754 single precision. C89 `atof` normally returns `double`, which dcc
+does not have.
 
 ## Integer arithmetic helpers
 

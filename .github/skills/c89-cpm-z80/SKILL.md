@@ -45,13 +45,12 @@ Multi-byte values are little-endian (Z80-native).
 - `<math.h>` provides the full single-precision set (`sinf`/`expf`/`powf`/… each
   with an unsuffixed alias that stays single-precision), but the transcendentals
   are ~5–6-digit polynomial approximations.
-- No `atof`/`strtod` (both return `double`) — parse decimals yourself
-  (`strtol`/`strtoul` handle integers). Worked parser in pitfalls.md.
+- `atof` is a dcc extension returning `float` (not `double`); `strtod` is absent.
 
 **The library is a subset.** A missing function is a **link** error
 (`unresolved external`), not a compile error, so check
 [references/library.md](./references/library.md) before assuming one exists.
-Notably absent: `atof`/`strtod`, `<locale.h>`/`<signal.h>`/`<time.h>`, and
+Notably absent: `strtod`, `<locale.h>`/`<signal.h>`/`<time.h>`, and
 some stdio entries (`fgetc`, `ungetc`, `rename`, …).
 
 **printf/scanf are a subset.** No `+`/space/`#` flags and no `*`

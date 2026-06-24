@@ -37,6 +37,10 @@ void srand(unsigned int seed);
 int atoi(const char *nptr);
 /** Convert the leading decimal text in nptr to long. */
 long atol(const char *nptr);
+/** Convert the leading decimal text in nptr to float.
+ *  Note: C89 atof normally returns double; dcc has no double type,
+ *  so this returns float (IEEE 754 single precision). */
+float atof(const char *nptr);
 /** Convert text in nptr to long using base 2 through 36, or base 0 for auto-detection. */
 long strtol(const char *nptr, char **endptr, int base);
 /** Convert text in nptr to unsigned long using base 2 through 36, or base 0 for auto-detection. */
@@ -77,5 +81,14 @@ int  bdos( int fn, int dearg );
 int  inp( unsigned port );
 /** Write an 8-bit Z80 I/O port. */
 void outp( unsigned port, unsigned val );
+/** Load and run path, replacing this process.  cmdtail is copied to 0x81
+ *  (e.g. " ARG1 ARG2"); the first two whitespace-delimited args also seed
+ *  the default FCBs at 0x5C and 0x6C.  Returns -1 if the file is not found;
+ *  does not return on success. */
+int  exec( const char *path, const char *cmdtail );
+/** Like exec() but builds the command tail from argv[1..] (argv[0] is the
+ *  conventional program name and is ignored for CP/M purposes).
+ *  argv must be a NULL-terminated array of string pointers. */
+int  execv( const char *path, char **argv );
 
 #endif

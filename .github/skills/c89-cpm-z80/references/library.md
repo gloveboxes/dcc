@@ -119,9 +119,10 @@ formatting engine and conversion subset as `printf`, so you can write your own
 
 **Not present** (neither declared in `<stdlib.h>` nor in the runtime):
 `abort`, `atexit`, `getenv`, `system`, the multibyte
-functions (`mblen`/`mbtowc`/`wctomb`/…), and `MB_CUR_MAX`. `atof` and `strtod`
-are also absent and can't be provided in standard form at all — both return
-`double`, which dcc doesn't have.
+functions (`mblen`/`mbtowc`/`wctomb`/…), and `MB_CUR_MAX`. `strtod` is absent
+(returns `double`, which dcc doesn't have). `atof` is available as a dcc
+extension declared as `float atof(const char *)` — it returns IEEE 754 single
+precision rather than `double`.
 
 ## Heap and stack sizing
 
@@ -199,8 +200,8 @@ range-reduction in `sinf`/`cosf`/`tanf` uses `fmodf`, so accuracy degrades for
 very large arguments. There is **no** `double`, no `long double`, and no
 `HUGE_VAL`. Printing a float (`%f`) still requires the `-ffloatio` build flag.
 
-`atof`/`strtod` are absent (both return `double`); use `strtol`/`strtoul` for
-integers, or a small hand-written `float` parser for decimals.
+`strtod` is absent (returns `double`); use `strtol`/`strtoul` for integers.
+`atof` is available as a dcc extension returning `float` (single precision).
 
 
 ## setjmp.h / stdarg.h / stddef.h

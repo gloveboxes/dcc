@@ -963,11 +963,9 @@ your own):
 
 | Function(s)                          | Where to get an implementation                           |
 | ------------------------------------ | -------------------------------------------------------- |
-| `atof`                               | not declared or implemented; see the note below          |
-
-`atof` is neither declared in [stdlib.h](stdlib.h) nor implemented in the
-runtime. C89 `atof` returns `double`, and dcc does not have an 8-byte `double`
-type; use a project-local `float` parser if you need decimal-to-float input.
+`atof` is declared in [stdlib.h](stdlib.h) and implemented as a dcc extension.
+C89 `atof` returns `double`, but dcc has no `double` type; this implementation
+returns `float` (IEEE 754 single precision) instead.
 
 If you do need to supply your own implementation of an unimplemented function,
 either `#include` its `.c` from your main file, or compile it separately with

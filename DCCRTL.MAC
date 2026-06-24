@@ -4447,6 +4447,49 @@ _abort:
         call    __cflush
         jp      0000h
 
+; ============================================================
+; __asfl -- assertion failure helper called by the assert() macro.
+; void __asfl(const char *msg)
+; Prints "Assertion failed: <msg>\n" to the console and aborts.
+; Separate block so it is only linked when assert.h is used with
+; assertions enabled (NDEBUG not defined).
+; ============================================================
+        public  __asfl
+__asfl:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ; Print "Assertion failed: " prefix.
+        ld      hl,__asfl_pfx
+afpfx:
+        ld      a,(hl)
+        or      a
+        jr      z,afmsg
+        ld      e,a
+        call    __conout
+        inc     hl
+        jr      afpfx
+afmsg:
+        ; Print the caller-supplied message string.
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+afstr:
+        ld      a,(hl)
+        or      a
+        jr      z,afnl
+        ld      e,a
+        call    __conout
+        inc     hl
+        jr      afstr
+afnl:
+        ld      e,0ah           ; newline (__conout adds CR before LF)
+        call    __conout
+        call    __cflush
+        jp      0000h           ; abort: warm boot, no atexit handlers
+
+__asfl_pfx:
+        db      'Assertion failed: ',0
+
 ; ------------------------------------------------------------
 ; CP/M 3 program return code support.
 ;

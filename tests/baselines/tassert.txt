@@ -1,0 +1,2 @@
+tassert ok
+Assertion failed: 0 at tests/tassert.c:13

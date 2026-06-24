@@ -5,21 +5,21 @@
 /** Check expression unless assertions are disabled by NDEBUG. */
 #define assert(expression) ((void)0)
 #else
-#include <stdio.h>
-#include <stdlib.h>
 
-static void _assfail(const char *diagnostic_msg)
-{
-    fprintf(stderr, "Assertion Failed: %s\n", diagnostic_msg);
-    fflush(stderr);
-    exit(1);
-}
+/* Failure handler in DCCRTL.MAC: prints the diagnostic and aborts.
+ * C name _asfl -> assembly label __asfl (dcc prepends one '_').
+ * Only linked when assert() is used with NDEBUG not defined. */
+extern void _asfl(const char *msg);
 
 /* Internal helpers for turning __LINE__ into a string literal. */
 #define STR_HELPER(x) #x
 #define STR_CONVERT(x) STR_HELPER(x)
-/** Check expression unless assertions are disabled by NDEBUG. */
-#define assert(expression) ((expression) ? (void)0 : _assfail(#expression " at " __FILE__ ":" STR_CONVERT(__LINE__)))
-#endif
 
-#endif
+/** Verify expression; on failure print a diagnostic and abort(). */
+#define assert(expression) \
+    ((expression) ? (void)0 \
+                  : _asfl(#expression " at " __FILE__ ":" STR_CONVERT(__LINE__)))
+
+#endif /* NDEBUG */
+
+#endif /* _ASSERT_H */

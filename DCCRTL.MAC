@@ -8552,6 +8552,36 @@ _fclose:
         ret                             ; HL = 0 (ok) or -1 (error)
 
 ; ============================================================
+; _freopen(path, mode, stream)  (C89 7.9.5.4)
+; Closes stream, then opens path/mode on the same fd slot.
+; Because _open always takes the lowest free slot and the slot
+; freed by fclose is the lowest available, the returned FILE*
+; equals stream on success.  Returns HL = FILE* or 0 on error.
+; path @ IX+4/5, mode @ IX+6/7, stream @ IX+8/9
+; ============================================================
+        public  _freopen
+_freopen:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ld      l,(ix+8)
+        ld      h,(ix+9)
+        push    hl                      ; stream arg to fclose
+        call    _fclose
+        pop     de                      ; clean 2 bytes (ignore close result)
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        push    hl                      ; mode arg to fopen
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        push    hl                      ; path arg to fopen
+        call    _fopen
+        pop     de
+        pop     de                      ; clean 4 bytes
+        pop     ix
+        ret                             ; HL = FILE* or 0
+
+; ============================================================
 ; tmpnam / tmpfile  (C89 7.9.4.3 / 7.9.4.4)
 ; ============================================================
 ;

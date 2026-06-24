@@ -1811,6 +1811,10 @@ void parse_function_or_global(int base_type)
             copy_parsed_prototype_to_sym(s);
             expect(')');
 
+            /* Snapshot nlocals after prototype params are registered but before
+             * K&R declarations: used to detect main() with no parameters. */
+            int pre_params_nlocals = nlocals;
+
             if (!g_proto_has && tok.kind != '{' && tok.kind != ';' && tok.kind != ',')
                 parse_old_style_param_declarations();
 
@@ -1891,7 +1895,8 @@ void parse_function_or_global(int base_type)
                  * no args the shim omits any reference to __build_argv/__argc/argv
                  * so dccrtlstrip drops those runtime blocks (~350 bytes). */
                 if (strcmp(name, "main") == 0) {
-                    int has_args = !(s->has_proto && s->proto_nargs == 0);
+                    int has_args = !((s->has_proto  && s->proto_nargs == 0) ||
+                                     (!s->has_proto && pre_params_nlocals == 0));
                     fprintf(outf, "\n\tpublic __mrun\n");
                     if (has_args) {
                         fprintf(outf, "\textrn __build_argv\n");

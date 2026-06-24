@@ -8845,6 +8845,112 @@ ftell_bad:
         ret
 
 ; ============================================================
+; fgetpos / fsetpos  (C89 7.9.9.1 / 7.9.9.3)
+; fpos_t is a 32-bit byte offset (typedef long fpos_t in stdio.h).
+; Stored in memory as two consecutive 16-bit words, low word first.
+; ============================================================
+        public  _fgetpos
+; int fgetpos(FILE *stream, fpos_t *pos)
+; Returns 0 on success, nonzero on error (e.g. console stream or seekerror).
+_fgetpos:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ; ix+4/5 = stream, ix+6/7 = pos
+
+        ; call _ftell(stream) -> DE:HL (high:low) or 0xFFFF:0xFFFF on error
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        push    hl
+        call    _ftell
+        ; Check for -1L: all four bytes 0xFF
+        ld      a,h
+        and     l
+        and     d
+        and     e
+        inc     a
+        jr      z,fgpos_bad
+
+        ; Save DE:HL before adjusting SP to discard the stream arg.
+        ld      (__fgpos_lo),hl
+        ld      (__fgpos_hi),de
+        ld      hl,2
+        add     hl,sp
+        ld      sp,hl           ; discard stream arg
+
+        ; Write 4 bytes to *pos (low word then high word, LE)
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      de,(__fgpos_lo)
+        ld      a,e
+        ld      (hl),a
+        inc     hl
+        ld      a,d
+        ld      (hl),a
+        inc     hl
+        ld      de,(__fgpos_hi)
+        ld      a,e
+        ld      (hl),a
+        inc     hl
+        ld      a,d
+        ld      (hl),a
+
+        ld      hl,0
+        pop     ix
+        ret
+
+fgpos_bad:
+        ld      hl,2
+        add     hl,sp
+        ld      sp,hl
+        ld      hl,0ffffh
+        pop     ix
+        ret
+
+__fgpos_lo:     dw      0
+__fgpos_hi:     dw      0
+
+        public  _fsetpos
+; int fsetpos(FILE *stream, const fpos_t *pos)
+; Returns 0 on success (same as fseek), nonzero on error.
+_fsetpos:
+        push    ix
+        ld      ix,0
+        add     ix,sp
+        ; ix+4/5 = stream, ix+6/7 = pos
+
+        ; Read 4 bytes from *pos -> BC (low word), DE (high word)
+        ld      l,(ix+6)
+        ld      h,(ix+7)
+        ld      c,(hl)
+        inc     hl
+        ld      b,(hl)          ; BC = low 16 bits
+        inc     hl
+        ld      e,(hl)
+        inc     hl
+        ld      d,(hl)          ; DE = high 16 bits
+
+        ; call _fseek(stream, offset_lo=BC, offset_hi=DE, SEEK_SET=0)
+        ld      hl,0
+        push    hl              ; whence = SEEK_SET
+        push    de              ; offset high word
+        push    bc              ; offset low word
+        ld      l,(ix+4)
+        ld      h,(ix+5)
+        push    hl              ; stream
+        call    _fseek
+
+        ; clean 8 bytes of args (stream + 3 × 2-byte words) preserving HL
+        ex      de,hl
+        ld      hl,8
+        add     hl,sp
+        ld      sp,hl
+        ex      de,hl
+
+        pop     ix
+        ret                     ; HL = 0 (ok) or 0FFFFh (fseek failed)
+
+; ============================================================
 ; _rewind(fp)    seek to 0, clear EOF.
 ; ============================================================
         public  _rewind

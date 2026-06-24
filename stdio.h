@@ -44,6 +44,8 @@
 
 /** Stream handle type. */
 typedef int FILE;
+/** File position type for fgetpos/fsetpos; holds a 32-bit byte offset. */
+typedef long fpos_t;
 
 /* Standard streams (defined in dccrtl.mac as word variables) */
 /** Predefined console input stream. */
@@ -117,6 +119,10 @@ int    fseek(FILE *stream, long offset, int whence);
 long   ftell(FILE *stream);
 /** Reposition a stream to the beginning. */
 void   rewind(FILE *stream);
+/** Store the current position of stream into *pos; returns 0 on success. */
+int    fgetpos(FILE *stream, fpos_t *pos);
+/** Set stream position from *pos (previously returned by fgetpos); returns 0 on success. */
+int    fsetpos(FILE *stream, const fpos_t *pos);
 /** Test whether a stream has reached end-of-file. */
 int    feof(FILE *stream);
 /** Test whether a stream has an error flag set. */

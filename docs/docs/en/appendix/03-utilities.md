@@ -141,6 +141,7 @@ normal C implementation before comparing them with dcc's CP/M/Z80 output.
 Host compiler selection follows `scripts/build-dcc.ps1`:
 
 - Windows uses MSVC `cl.exe` after locating the Visual Studio C++ build tools.
+  On Windows ARM64, it uses the native ARM64 MSVC tools.
 - macOS uses `clang` by default.
 - Linux uses `gcc` by default.
 - Unix-like hosts can override the compiler with `-CC` or the `CC` environment

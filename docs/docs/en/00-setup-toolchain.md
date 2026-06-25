@@ -31,15 +31,6 @@ building dcc or ntvcm.
         winget install --id Microsoft.VisualStudio.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait --norestart"
         ```
 
-        !!! tip "Windows ARM64"
-
-            On Windows ARM64, install the native ARM64 compiler tools explicitly
-            instead of the default C++ workload:
-
-            ```powershell
-            winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --add Microsoft.VisualStudio.Component.Windows11SDK.26100 --quiet --wait --norestart"
-            ```
-
         You can also use the Visual Studio Installer and select **Desktop
         development with C++**. The Windows build uses the Microsoft C/C++
         compiler tools from that installation.
@@ -72,19 +63,16 @@ building dcc or ntvcm.
         pwsh --version
         ```
 
-=== "Linux"
+=== "Ubuntu"
 
-    1. Install gcc, g++, make, and the usual build tools. On Debian or Ubuntu:
+    1. Install gcc, g++, make, and the usual build tools:
 
         ```bash
         sudo apt install build-essential
         ```
 
-        Use your distribution's equivalent package group if you are not on a
-        Debian-family system.
-
     2. Install PowerShell 7 (`pwsh`) using the package instructions for your
-       distribution in the
+       Ubuntu release in the
        [Microsoft PowerShell install guide](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux),
        then verify it is available:
 
@@ -92,55 +80,92 @@ building dcc or ntvcm.
         pwsh --version
         ```
 
-        !!! tip "Ubuntu ARM64"
+=== "Ubuntu ARM64"
 
-            On Ubuntu ARM64, install an ARM64 build of PowerShell. If the
-            distribution package flow is not available, use the official
-            `linux-arm64` tarball from the PowerShell release page. To find the
-            latest available version, check the
-            [PowerShell releases page](https://github.com/PowerShell/PowerShell/releases)
-            or query the GitHub release metadata:
+    1. Install gcc, g++, make, and the usual build tools:
 
-            ```bash
-            curl -fsSL https://api.github.com/repos/PowerShell/PowerShell/releases/latest \
-                | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p'
-            ```
+        ```bash
+        sudo apt install build-essential
+        ```
 
-            For a user-local install, set `version` to that release:
+    2. Install an ARM64 build of PowerShell 7 (`pwsh`). If the package flow for
+       your Ubuntu release is available, use the
+       [Microsoft PowerShell install guide](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux).
+       If not, use the official `linux-arm64` tarball from the PowerShell
+       release page. To find the latest available version, check the
+       [PowerShell releases page](https://github.com/PowerShell/PowerShell/releases)
+       or query the GitHub release metadata:
 
-            ```bash
-            version=7.6.3
-            install_dir="$HOME/.local/share/powershell/$version"
-            archive="/tmp/powershell-${version}-linux-arm64.tar.gz"
+        ```bash
+        curl -fsSL https://api.github.com/repos/PowerShell/PowerShell/releases/latest \
+            | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p'
+        ```
 
-            mkdir -p "$install_dir" "$HOME/.local/bin"
-            curl -fL \
-                "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-arm64.tar.gz" \
-                -o "$archive"
-            tar -xzf "$archive" -C "$install_dir"
-            chmod +x "$install_dir/pwsh"
-            ln -sfn "$install_dir/pwsh" "$HOME/.local/bin/pwsh"
-            ```
+        For a user-local install, set `version` to that release:
 
-            Make sure `~/.local/bin` is on your `PATH`, then verify both the
-            version and architecture:
+        ```bash
+        version=7.6.3
+        install_dir="$HOME/.local/share/powershell/$version"
+        archive="/tmp/powershell-${version}-linux-arm64.tar.gz"
 
-            ```bash
-            export PATH="$HOME/.local/bin:$PATH"
-            pwsh --version
-            file "$(readlink -f "$HOME/.local/bin/pwsh")"
-            ```
+        mkdir -p "$install_dir" "$HOME/.local/bin"
+        curl -fL \
+            "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-arm64.tar.gz" \
+            -o "$archive"
+        tar -xzf "$archive" -C "$install_dir"
+        chmod +x "$install_dir/pwsh"
+        ln -sfn "$install_dir/pwsh" "$HOME/.local/bin/pwsh"
+        ```
 
-            The `file` output should report `ARM aarch64`.
+        Make sure `~/.local/bin` is on your `PATH`, then verify both the
+        version and architecture:
+
+        ```bash
+        export PATH="$HOME/.local/bin:$PATH"
+        pwsh --version
+        file "$(readlink -f "$HOME/.local/bin/pwsh")"
+        ```
+
+        The `file` output should report `ARM aarch64`.
+
+=== "Windows ARM64"
+
+    1. Install Visual Studio Build Tools with the C++ workload and native ARM64
+       compiler tools. Install with `winget`:
+
+        ```powershell
+        winget install --id Microsoft.VisualStudio.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --includeRecommended --quiet --wait --norestart"
+        ```
+
+        You can also use the Visual Studio Installer and select **Desktop
+        development with C++**, then add the **MSVC ARM64/ARM64EC build tools**
+        component. The dcc Windows build scripts use the native ARM64 MSVC
+        environment (`vcvarsarm64.bat`) when they run on Windows ARM64.
+
+    2. Verify that the ARM64 MSVC tools were installed:
+
+        ```powershell
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+        Test-Path "$installPath\VC\Auxiliary\Build\vcvarsarm64.bat"
+        ```
+
+        The final command should print `True`.
+
+    3. Install PowerShell 7 (`pwsh`) from the
+       [Microsoft PowerShell install guide](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows),
+       then verify it is available:
+
+        ```powershell
+        pwsh --version
+        ```
 
 ## Clone the repositories
 
     # Clone the dcc compiler
     git clone https://github.com/davidly/dcc.git
-    cd dcc
 
-    # Clone the ntvcm emulator (in a parallel directory, or wherever you prefer)
-    cd ..
+    # Clone the ntvcm z80 emulator
     git clone https://github.com/davidly/ntvcm.git
 
 ## Build dcc
@@ -180,7 +205,7 @@ ntvcm is a C++ project. Build it from its own directory.
 
     Produces the `ntvcm` executable.
 
-=== "Linux"
+=== "Ubuntu"
 
     Open a terminal where `g++` is available, then run the Linux build script:
 
@@ -191,6 +216,31 @@ ntvcm is a C++ project. Build it from its own directory.
     ```
 
     Produces the `ntvcm` executable.
+
+=== "Ubuntu ARM64"
+
+    Open a terminal where `g++` is available, then run the Linux build script:
+
+    ```bash
+    cd ntvcm
+    chmod +x m.sh
+    ./m.sh
+    ```
+
+    Produces the `ntvcm` executable.
+
+=== "Windows ARM64"
+
+    Open a Developer PowerShell or Developer Command Prompt for ARM64 so the
+    Microsoft C/C++ compiler (`cl`) is on your `PATH`, then run the Windows
+    build script:
+
+    ```powershell
+    cd ntvcm
+    .\m.bat
+    ```
+
+    Produces `ntvcm.exe`.
 
 ## Set up your environment
 
@@ -283,7 +333,7 @@ are needed.
         export DCCRTLSTRIP=/path/to/dcc/dccrtlstrip
         ```
 
-=== "Linux"
+=== "Ubuntu"
 
     1. Add the dcc and ntvcm directories to `PATH` for the current shell
        session:
@@ -314,6 +364,71 @@ are needed.
         export DCC=/path/to/dcc/dcc
         export DCCPEEP=/path/to/dcc/dccpeep
         export DCCRTLSTRIP=/path/to/dcc/dccrtlstrip
+        ```
+
+=== "Ubuntu ARM64"
+
+    1. Add the dcc and ntvcm directories to `PATH` for the current shell
+       session:
+
+        ```bash
+        export PATH="$PATH:/path/to/dcc:/path/to/ntvcm"
+        ```
+
+    2. To make that permanent for bash, append the same setting to `~/.bashrc`,
+       then open a new terminal or reload the file:
+
+        ```bash
+        printf '\nexport PATH="$PATH:/path/to/dcc:/path/to/ntvcm"\n' >> ~/.bashrc
+        source ~/.bashrc
+        ```
+
+    3. Replace `/path/to/dcc` and `/path/to/ntvcm` with the actual directories
+       (e.g. `~/GitHub/dcc` and `~/GitHub/ntvcm`). With this on your `PATH`,
+       the scripts find `dcc`, `dccpeep`, `dccrtlstrip`, and `ntvcm`
+       automatically.
+
+       To pin specific binaries instead (for example, when juggling multiple
+       dcc builds), set the environment variables to explicit paths and only
+       put ntvcm on `PATH`:
+
+        ```bash
+        export PATH="$PATH:/path/to/ntvcm"
+        export DCC=/path/to/dcc/dcc
+        export DCCPEEP=/path/to/dcc/dccpeep
+        export DCCRTLSTRIP=/path/to/dcc/dccrtlstrip
+        ```
+
+=== "Windows ARM64"
+
+    1. Add the dcc and ntvcm directories to `PATH` for the current PowerShell
+       session:
+
+        ```powershell
+        $env:PATH += ";C:\path\to\dcc;C:\path\to\ntvcm"
+        ```
+
+    2. To make that permanent for your Windows user account, update the user
+       `PATH` and then open a new terminal:
+
+        ```powershell
+        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        [Environment]::SetEnvironmentVariable("Path", "$userPath;C:\path\to\dcc;C:\path\to\ntvcm", "User")
+        ```
+
+    3. Replace `C:\path\to\dcc` and `C:\path\to\ntvcm` with the actual
+       directories. With this on your `PATH`, the scripts find `dcc`,
+       `dccpeep`, `dccrtlstrip`, and `ntvcm` automatically.
+
+       To pin specific binaries instead (for example, when juggling multiple
+       dcc builds), set the environment variables to explicit paths and only
+       put ntvcm on `PATH`:
+
+        ```powershell
+        $env:PATH += ";C:\path\to\ntvcm"
+        $env:DCC = "C:\path\to\dcc\dcc.exe"
+        $env:DCCPEEP = "C:\path\to\dcc\dccpeep.exe"
+        $env:DCCRTLSTRIP = "C:\path\to\dcc\dccrtlstrip.exe"
         ```
 
 ## Verify the setup

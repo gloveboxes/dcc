@@ -3644,6 +3644,287 @@ static int pass_byte_cmp_push_pop_hl(void)
 }
 
 /*
+ * Byte-indexed array address computation.
+ *
+ * When an int array a[] (2 bytes per element) is indexed by an unsigned char
+ * variable n at (ix-K), the compiler emits:
+ *
+ *   push ix
+ *   pop hl
+ *   ld de,-N          ; base offset (negative)
+ *   add hl,de
+ *   push hl           ; save base = IX-N = &a[0]
+ *   ld l,(ix-K)       ; load byte index n
+ *   ld h,0            ; zero-extend
+ *   [dec hl × M]      ; optional: compute n-M (e.g. a[n-1]: M=1)
+ *   add hl,hl         ; (n-M)*2
+ *   ex de,hl          ; DE = (n-M)*2
+ *   pop hl            ; HL = &a[0]
+ *   add hl,de         ; HL = &a[n-M]
+ *
+ * The base offset is computed early just to save it — the index multiply and
+ * then add is the same math in a different order.  Reorder to match the more
+ * efficient pattern used for 16-bit indices (ix_array_word_addr):
+ *
+ *   ld l,(ix-K)
+ *   ld h,0
+ *   [dec hl × M]
+ *   add hl,hl
+ *   push ix
+ *   pop de
+ *   add hl,de         ; HL = IX + (n-M)*2
+ *   ld de,-N
+ *   add hl,de         ; HL = IX + (n-M)*2 - N = &a[n-M]
+ *
+ * Saves 3 instructions and ~25 T-states per array access.
+ */
+static int pass_byte_ix_array_addr(void)
+{
+    int i, j, M, N_val, K_val, changed = 0;
+    char off[32], ld_l_buf[64], ld_de_buf[32];
+    char *endp;
+
+    for (i = 0; i + 10 < nlines; i++) {
+        if (!eq(i,     "push ix")) continue;
+        if (!eq(i + 1, "pop hl")) continue;
+        if (!peep_parse_ld_de_signed(lines[i + 2], &N_val)) continue;
+        if (N_val >= 0) continue;
+        if (!eq(i + 3, "add hl,de")) continue;
+        if (!eq(i + 4, "push hl")) continue;
+        if (!peep_parse_ld_l_ix(lines[i + 5], off)) continue;
+        K_val = (int)strtol(off, &endp, 10);
+        if (*endp != 0) continue;
+        if (!eq(i + 6, "ld h,0")) continue;
+
+        /* optional dec hl adjustments */
+        j = i + 7;
+        M = 0;
+        while (j < nlines && eq(j, "dec hl") && M < 8) {
+            j++;
+            M++;
+        }
+
+        if (j + 3 >= nlines) continue;
+        if (!eq(j,     "add hl,hl")) continue;
+        if (!eq(j + 1, "ex de,hl")) continue;
+        if (!eq(j + 2, "pop hl")) continue;
+        if (!eq(j + 3, "add hl,de")) continue;
+
+        /* Build new instructions */
+        sprintf(ld_l_buf, "ld l,(ix%s)", off);
+        sprintf(ld_de_buf, "ld de,%d", N_val);
+
+        /* Delete all 11+M matched lines, then re-insert 8+M lines */
+        delete_n(i, j + 3 - i + 1);
+
+        insert_line_tagged(i,         ld_l_buf, "byte_ix_array_addr");
+        insert_line(i + 1,            "ld h,0");
+        {
+            int k;
+            for (k = 0; k < M; k++)
+                insert_line(i + 2 + k, "dec hl");
+        }
+        insert_line(i + 2 + M, "add hl,hl");
+        insert_line(i + 3 + M, "push ix");
+        insert_line(i + 4 + M, "pop de");
+        insert_line(i + 5 + M, "add hl,de");
+        insert_line(i + 6 + M, ld_de_buf);
+        insert_line(i + 7 + M, "add hl,de");
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+    return changed;
+}
+
+/*
+ * Byte variable pre-decrement with immediate zero/nonzero test.
+ *
+ * The dcc code generator emits this sequence for while (--n) when n is an
+ * unsigned char local at (ix-K):
+ *
+ *   push ix
+ *   pop hl
+ *   [dec hl × K]        ; address form A: K consecutive "dec hl"
+ *   push hl             ; or form B: ld de,-K; add hl,de
+ *   ld l,(hl)
+ *   ld h,0
+ *   dec hl
+ *   ld h,0              ; clamp H back to 0 after possible underflow
+ *   ex de,hl
+ *   pop hl
+ *   ld (hl),e
+ *   ex de,hl
+ *   ld a,h
+ *   or l
+ *   jp z/nz, LABEL
+ *
+ * Becomes the optimal two-instruction form:
+ *
+ *   dec (ix-K)
+ *   jp z/nz, LABEL
+ */
+static int pass_byte_ix_predec_zero_test(void)
+{
+    int i, j, K, lde, changed = 0;
+    char cond[16], label[128], newdec[64], newjp[160], tmp[MAX_LINE];
+
+    for (i = 0; i + 13 < nlines; i++) {
+        if (!eq(i, "push ix")) continue;
+        if (!eq(i + 1, "pop hl")) continue;
+
+        j = i + 2;
+        K = 0;
+
+        /* Address form A: consecutive "dec hl" for small offsets */
+        while (j < nlines && eq(j, "dec hl") && K < 128) {
+            j++;
+            K++;
+        }
+
+        /* Address form B: "ld de,-K; add hl,de" for any offset */
+        if (K == 0) {
+            if (!peep_parse_ld_de_signed(lines[j], &lde)) continue;
+            if (lde >= 0 || lde < -128) continue;
+            j++;
+            if (!eq(j, "add hl,de")) continue;
+            j++;
+            K = -lde;
+        }
+
+        if (K <= 0 || K > 128) continue;
+        if (j + 11 >= nlines) continue;
+
+        if (!eq(j,      "push hl")) continue;
+        if (!eq(j + 1,  "ld l,(hl)")) continue;
+        if (!eq(j + 2,  "ld h,0")) continue;
+        if (!eq(j + 3,  "dec hl")) continue;
+        if (!eq(j + 4,  "ld h,0")) continue;
+        if (!eq(j + 5,  "ex de,hl")) continue;
+        if (!eq(j + 6,  "pop hl")) continue;
+        if (!eq(j + 7,  "ld (hl),e")) continue;
+        if (!eq(j + 8,  "ex de,hl")) continue;
+        if (!eq(j + 9,  "ld a,h")) continue;
+        if (!eq(j + 10, "or l")) continue;
+
+        /* Must end with a conditional jump testing zero */
+        strip_peep_comment_copy(tmp, lines[j + 11]);
+        if (!peep_parse_any_cond_jump(tmp, cond, label)) continue;
+        if (strcmp(cond, "z") != 0 && strcmp(cond, "nz") != 0) continue;
+
+        sprintf(newdec, "dec (ix-%d)", K);
+        sprintf(newjp, "jp %s, %s", cond, label);
+
+        replace1_tagged(i, newdec, "byte_predec_zero");
+        replace1(i + 1, newjp);
+        delete_n(i + 2, j + 10 - i);
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+    return changed;
+}
+
+/*
+ * Zero-extended byte load into DE via HL push/pop roundtrip:
+ *
+ *   push hl
+ *   ld l,(ix+N)
+ *   ld h,0
+ *   ex de,hl
+ *   pop hl
+ *
+ * DE is always dead before the push, so we can load the byte directly
+ * into DE without touching HL or the stack:
+ *
+ *   ld e,(ix+N)
+ *   ld d,0
+ */
+static int pass_ix_byte_load_to_de(void)
+{
+    int i, changed = 0;
+    char off[32], new_lo[64];
+
+    for (i = 0; i + 4 < nlines; i++) {
+        if (!eq(i, "push hl")) continue;
+        if (!peep_parse_ld_l_ix(lines[i + 1], off)) continue;
+        if (!eq(i + 2, "ld h,0")) continue;
+        if (!eq(i + 3, "ex de,hl")) continue;
+        if (!eq(i + 4, "pop hl")) continue;
+
+        sprintf(new_lo, "ld e,(ix%s)", off);
+        replace1_tagged(i, new_lo, "ix_byte_load_to_de");
+        replace1(i + 1, "ld d,0");
+        delete_n(i + 2, 3);
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+    return changed;
+}
+
+/*
+ * Byte post-decrement with old-value copy, after a_tracks_ix has run:
+ *
+ *   ld l,a          ; A holds the old value of the byte variable
+ *   ld h,0
+ *   push hl         ; save old value
+ *   dec hl          ; compute old - 1
+ *   ld (ix+K),l     ; store decremented value back (byte)
+ *   pop hl          ; restore old value
+ *   ld (ix+J),l     ; copy old value to another local (byte)
+ *
+ * Since A still holds the old value throughout, and ld e/(ix+K) does
+ * not touch A, the sequence reduces to:
+ *
+ *   ld (ix+J),a     ; copy old value from A
+ *   dec (ix+K)      ; decrement in-place
+ */
+static int pass_byte_postdec_copy(void)
+{
+    int i, K, J, changed = 0;
+    char tmp[MAX_LINE], newcopy[64], newdec[64];
+    char *p, *endp;
+
+    for (i = 0; i + 6 < nlines; i++) {
+        if (!eq(i,     "ld l,a")) continue;
+        if (!eq(i + 1, "ld h,0")) continue;
+        if (!eq(i + 2, "push hl")) continue;
+        if (!eq(i + 3, "dec hl")) continue;
+
+        strip_peep_comment_copy(tmp, lines[i + 4]);
+        if (strncmp(tmp, "ld (ix", 6) != 0) continue;
+        p = tmp + 6;
+        K = (int)strtol(p, &endp, 10);
+        if (*endp != ')' || endp[1] != ',' || endp[2] != 'l' || endp[3] != 0) continue;
+
+        if (!eq(i + 5, "pop hl")) continue;
+
+        strip_peep_comment_copy(tmp, lines[i + 6]);
+        if (strncmp(tmp, "ld (ix", 6) != 0) continue;
+        p = tmp + 6;
+        J = (int)strtol(p, &endp, 10);
+        if (*endp != ')' || endp[1] != ',' || endp[2] != 'l' || endp[3] != 0) continue;
+
+        {
+            char offK[32], offJ[32];
+            peep_format_ix_off(offK, K);
+            peep_format_ix_off(offJ, J);
+            sprintf(newcopy, "ld (ix%s),a", offJ);
+            sprintf(newdec,  "dec (ix%s)", offK);
+        }
+
+        replace1_tagged(i, newcopy, "byte_postdec_copy");
+        replace1(i + 1, newdec);
+        delete_n(i + 2, 5);
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+    return changed;
+}
+
+/*
  * Binary operations (ADD, SUB, CMP, etc.) load the second operand via:
  *
  *   push hl             ; save HL (first operand 'a')
@@ -3900,6 +4181,49 @@ static int pass_cp_jz_jpnc(void)
 
         sprintf(new_cp, "cp %d", n + 1);
         replace1_tagged(i, new_cp, "cp_jz_jpnc");
+        delete_n(i + 1, 1);
+
+        changed = 1;
+        if (i > 0) i--;
+    }
+    return changed;
+}
+
+/*
+ * Fold unsigned less-than-or-equal compare:
+ *
+ *   cp N
+ *   jp z, LABEL     ; jump if A == N
+ *   jp c, LABEL     ; jump if A < N  (same label)
+ *
+ * Combined: jump when A <= N, i.e. A < N+1.  Becomes:
+ *
+ *   cp N+1
+ *   jp c, LABEL
+ */
+static int pass_cp_jz_jpc(void)
+{
+    int i, n, changed = 0;
+    char cond1[16], cond2[16], label1[128], label2[128];
+    char tmp[MAX_LINE], new_cp[32];
+    char *endp;
+
+    for (i = 0; i + 2 < nlines; i++) {
+        strip_peep_comment_copy(tmp, lines[i]);
+        if (strncmp(tmp, "cp ", 3) != 0) continue;
+        n = (int)strtol(tmp + 3, &endp, 10);
+        if (*endp != 0 || n < 0 || n > 254) continue;
+
+        if (!peep_parse_any_cond_jump(lines[i + 1], cond1, label1)) continue;
+        if (strcmp(cond1, "z") != 0) continue;
+
+        if (!peep_parse_any_cond_jump(lines[i + 2], cond2, label2)) continue;
+        if (strcmp(cond2, "c") != 0) continue;
+
+        if (strcmp(label1, label2) != 0) continue;
+
+        sprintf(new_cp, "cp %d", n + 1);
+        replace1_tagged(i, new_cp, "cp_jz_jpc");
         delete_n(i + 1, 1);
 
         changed = 1;
@@ -9743,14 +10067,19 @@ int main(int argc, char **argv)
         if (pass_deref_byte_cmp()) changed = 1;
         if (pass_cpir()) changed = 1;
         if (pass_reg_bc_deref_byte_cmp()) changed = 1;
+        if (pass_byte_ix_array_addr()) changed = 1;
+        if (pass_byte_ix_predec_zero_test()) changed = 1;
         if (pass_ix_pair_load_to_de()) changed = 1;
+        if (pass_ix_byte_load_to_de()) changed = 1;
         if (pass_remove_ix_store_reload_hl()) changed = 1;
         if (pass_postinc_ix_word()) changed = 1;
         if (pass_cp_jz_jpnc()) changed = 1;
+        if (pass_cp_jz_jpc()) changed = 1;
         if (pass_bool_from_cmp()) changed = 1;
         if (pass_elim_dead_ix_stores()) changed = 1;
         if (pass_remove_ix_store_reload_a()) changed = 1;
         if (pass_a_tracks_ix_byte()) changed = 1;
+        if (pass_byte_postdec_copy()) changed = 1;
         if (pass_elim_redundant_ld_h_zero()) changed = 1;
         if (pass_elim_long_store_reload()) changed = 1;
         if (pass_branch_over_jump()) changed = 1;

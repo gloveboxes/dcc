@@ -5,8 +5,12 @@
 #include <stdio.h>
 
 extern int main() {
+#if 0 // generates faster code, but the benchmark is in part about a compiler doing this on its own.
+  unsigned char N, n;
+#else
   int N;
   register int n;
+#endif
   int x;
   int a[DIGITS_TO_FIND];
 

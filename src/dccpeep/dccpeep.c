@@ -3644,6 +3644,194 @@ static int pass_byte_cmp_push_pop_hl(void)
 }
 
 /*
+ * Two-level global array address computation (int indices, mulu5xN row stride).
+ *
+ * For 2D arrays with int loop variables, the compiler emits two nested
+ * push/pop pairs to compute &arr[i][j]:
+ *
+ *   ld hl,_ARR         ; load array base address
+ *   push hl            ; LEVEL 1: save base
+ *   ld l,(ix-Ki)       ; row index (int pair)
+ *   ld h,(ix-Ki+1)
+ *   ld d,h             ; mulu5×N: save lo/hi copy
+ *   ld e,l
+ *   add hl,hl × 2
+ *   add hl,de          ; ×5
+ *   add hl,hl × M      ; ×5×2^M (e.g. M=4 → ×80)
+ *   ex de,hl           ; DE = i × row_stride
+ *   pop hl             ; HL = _ARR
+ *   add hl,de          ; HL = _ARR + i×row_stride  (row base)
+ *   push hl            ; LEVEL 2: save row base
+ *   ld l,(ix-Kj)       ; col index (int pair)
+ *   ld h,(ix-Kj+1)
+ *   add hl,hl × S      ; HL = j × element_size
+ *   ex de,hl           ; DE = j × element_size
+ *   pop hl             ; HL = row base
+ *   add hl,de          ; HL = &arr[i][j]
+ *
+ * Both push/pop pairs can be eliminated.  The row index load overwrites HL
+ * immediately after push, so the initial base load can be moved to after the
+ * row-stride multiply.  The row base can be held in DE (via ex de,hl) while
+ * the column index is computed in HL:
+ *
+ *   ld l,(ix-Ki)
+ *   ld h,(ix-Ki+1)
+ *   ld d,h
+ *   ld e,l
+ *   add hl,hl × 2
+ *   add hl,de
+ *   add hl,hl × M
+ *   ex de,hl           ; DE = i × row_stride
+ *   ld hl,_ARR
+ *   add hl,de          ; HL = row base
+ *   ex de,hl           ; DE = row base
+ *   ld l,(ix-Kj)
+ *   ld h,(ix-Kj+1)
+ *   add hl,hl × S
+ *   add hl,de          ; HL = &arr[i][j]
+ *
+ * Saves 4 instructions and ~42 T-states per 2D array access.
+ */
+static int pass_int_global_array_addr(void)
+{
+    int i, j, n, M, S, lval, hval, lval_col, hval_col, changed = 0;
+    char base[MAX_LINE], loff_row[32], hoff_row[32], loff_col[32], hoff_col[32];
+    char ld_hl_buf[MAX_LINE], ld_l_row[64], ld_h_row[64], ld_l_col[64], ld_h_col[64];
+    char *endp;
+
+    for (i = 0; i + 18 < nlines; i++) {
+        if (!parse_ld_hl_imm(lines[i], base)) continue;
+        if (!eq(i + 1, "push hl")) continue;
+        if (!peep_parse_ld_l_ix(lines[i + 2], loff_row)) continue;
+        if (!peep_parse_ld_h_ix(lines[i + 3], hoff_row)) continue;
+        lval = (int)strtol(loff_row, &endp, 10);
+        if (*endp != 0) continue;
+        hval = (int)strtol(hoff_row, &endp, 10);
+        if (*endp != 0) continue;
+        if (hval != lval + 1) continue;
+        if (!eq(i + 4, "ld d,h")) continue;
+        if (!eq(i + 5, "ld e,l")) continue;
+        if (!eq(i + 6, "add hl,hl")) continue;
+        if (!eq(i + 7, "add hl,hl")) continue;
+        if (!eq(i + 8, "add hl,de")) continue;
+        j = i + 9; M = 0;
+        while (j < nlines && eq(j, "add hl,hl") && M < 6) { j++; M++; }
+        if (j + 8 >= nlines) continue;
+        if (!eq(j,     "ex de,hl")) continue;
+        if (!eq(j + 1, "pop hl")) continue;
+        if (!eq(j + 2, "add hl,de")) continue;
+        if (!eq(j + 3, "push hl")) continue;
+        if (!peep_parse_ld_l_ix(lines[j + 4], loff_col)) continue;
+        if (!peep_parse_ld_h_ix(lines[j + 5], hoff_col)) continue;
+        lval_col = (int)strtol(loff_col, &endp, 10);
+        if (*endp != 0) continue;
+        hval_col = (int)strtol(hoff_col, &endp, 10);
+        if (*endp != 0) continue;
+        if (hval_col != lval_col + 1) continue;
+        n = j + 6; S = 0;
+        while (n < nlines && eq(n, "add hl,hl") && S < 8) { n++; S++; }
+        if (S == 0) continue;
+        if (n + 2 >= nlines) continue;
+        if (!eq(n,     "ex de,hl")) continue;
+        if (!eq(n + 1, "pop hl")) continue;
+        if (!eq(n + 2, "add hl,de")) continue;
+
+        sprintf(ld_hl_buf, "ld hl,%s", base);
+        sprintf(ld_l_row, "ld l,(ix%s)", loff_row);
+        sprintf(ld_h_row, "ld h,(ix%s)", hoff_row);
+        sprintf(ld_l_col, "ld l,(ix%s)", loff_col);
+        sprintf(ld_h_col, "ld h,(ix%s)", hoff_col);
+
+        delete_n(i, n + 2 - i + 1);
+        {
+            int pos = i, k;
+            insert_line_tagged(pos++, ld_l_row, "int_global_array_addr");
+            insert_line(pos++, ld_h_row);
+            insert_line(pos++, "ld d,h");
+            insert_line(pos++, "ld e,l");
+            insert_line(pos++, "add hl,hl");
+            insert_line(pos++, "add hl,hl");
+            insert_line(pos++, "add hl,de");
+            for (k = 0; k < M; k++) insert_line(pos++, "add hl,hl");
+            insert_line(pos++, "ex de,hl");
+            insert_line(pos++, ld_hl_buf);
+            insert_line(pos++, "add hl,de");
+            insert_line(pos++, "ex de,hl");
+            insert_line(pos++, ld_l_col);
+            insert_line(pos++, ld_h_col);
+            for (k = 0; k < S; k++) insert_line(pos++, "add hl,hl");
+            insert_line(pos++, "add hl,de");
+        }
+        changed = 1; if (i > 0) i--;
+    }
+    return changed;
+}
+
+/*
+ * Byte-indexed array address through a global base pointer.
+ *
+ * When a float/int array is indexed by a uint8_t variable and the base comes
+ * from a global (either a direct label or a dereferenced pointer), the
+ * compiler emits:
+ *
+ *   ld hl,X             ; load base (address or pointer value) into HL
+ *   push hl             ; save base
+ *   ld l,(ix-K)         ; byte index
+ *   ld h,0
+ *   add hl,hl × S       ; scale (S doublings: ×2, ×4, ×8, ...)
+ *   ex de,hl            ; DE = scaled index
+ *   pop hl              ; HL = base (restored)
+ *   add hl,de           ; HL = base + scaled_index
+ *
+ * The push/pop can be removed by computing the index first, then loading the
+ * base — X is a constant expression so reordering is always safe:
+ *
+ *   ld l,(ix-K)
+ *   ld h,0
+ *   add hl,hl × S
+ *   ex de,hl            ; DE = scaled index
+ *   ld hl,X             ; HL = base
+ *   add hl,de           ; HL = base + scaled_index
+ *
+ * Saves 2 instructions and ~21 T-states per array access.
+ */
+static int pass_byte_global_ptr_array_addr(void)
+{
+    int i, j, S, changed = 0;
+    char base[MAX_LINE], off[32], ld_hl_buf[MAX_LINE];
+
+    for (i = 0; i + 6 < nlines; i++) {
+        if (!parse_ld_hl_imm(lines[i], base)) continue;
+        if (!eq(i + 1, "push hl")) continue;
+        if (!peep_parse_ld_l_ix(lines[i + 2], off)) continue;
+        if (!eq(i + 3, "ld h,0")) continue;
+        j = i + 4; S = 0;
+        while (j < nlines && eq(j, "add hl,hl") && S < 8) { j++; S++; }
+        if (S == 0) continue;
+        if (j + 2 >= nlines) continue;
+        if (!eq(j,     "ex de,hl")) continue;
+        if (!eq(j + 1, "pop hl")) continue;
+        if (!eq(j + 2, "add hl,de")) continue;
+
+        sprintf(ld_hl_buf, "ld hl,%s", base);
+        delete_n(i, j + 2 - i + 1);
+        {
+            char ld_l_buf[64]; int k;
+            sprintf(ld_l_buf, "ld l,(ix%s)", off);
+            insert_line_tagged(i,     ld_l_buf, "byte_global_ptr_array_addr");
+            insert_line(i + 1,        "ld h,0");
+            for (k = 0; k < S; k++)
+                insert_line(i + 2 + k, "add hl,hl");
+            insert_line(i + 2 + S, "ex de,hl");
+            insert_line(i + 3 + S, ld_hl_buf);
+            insert_line(i + 4 + S, "add hl,de");
+        }
+        changed = 1; if (i > 0) i--;
+    }
+    return changed;
+}
+
+/*
  * Byte-indexed array address computation.
  *
  * When an int array a[] (2 bytes per element) is indexed by an unsigned char
@@ -10067,6 +10255,8 @@ int main(int argc, char **argv)
         if (pass_deref_byte_cmp()) changed = 1;
         if (pass_cpir()) changed = 1;
         if (pass_reg_bc_deref_byte_cmp()) changed = 1;
+        if (pass_int_global_array_addr()) changed = 1;
+        if (pass_byte_global_ptr_array_addr()) changed = 1;
         if (pass_byte_ix_array_addr()) changed = 1;
         if (pass_byte_ix_predec_zero_test()) changed = 1;
         if (pass_ix_pair_load_to_de()) changed = 1;

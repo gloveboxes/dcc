@@ -49,10 +49,20 @@ Copy the skill folder into one personal skills root, for example
     mkdir -p ~/.agents/skills
     cp -R .github/skills/c89-cpm-z80 ~/.agents/skills/
 
-=== "Linux"
+=== "Ubuntu"
 
     mkdir -p ~/.agents/skills
     cp -R .github/skills/c89-cpm-z80 ~/.agents/skills/
+
+=== "Ubuntu ARM64"
+
+    mkdir -p ~/.agents/skills
+    cp -R .github/skills/c89-cpm-z80 ~/.agents/skills/
+
+=== "Windows ARM64"
+
+    New-Item -ItemType Directory -Force "$env:USERPROFILE\.agents\skills" | Out-Null
+    Copy-Item -Recurse ".github\skills\c89-cpm-z80" "$env:USERPROFILE\.agents\skills\"
 
 The repo copy and the personal copy are independent files, so re-copy after
 editing either one to keep them in sync.

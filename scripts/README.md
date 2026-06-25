@@ -10,12 +10,14 @@ the dcc host tools themselves, use the normal native compiler for each platform:
 | Platform | Recommended compiler | Install notes |
 | -------- | -------------------- | ------------- |
 | Windows | MSVC x64 | Install Visual Studio 2022 or Visual Studio Build Tools with **Desktop development with C++**. |
+| Windows ARM64 | MSVC ARM64 | Install Visual Studio Build Tools with **Desktop development with C++** plus the **MSVC ARM64/ARM64EC build tools** component. |
 | macOS | Apple clang | Install Xcode Command Line Tools with `xcode-select --install`. |
 | Linux | GCC | Install your distribution's C/C++ build tools. |
 
 `build-dcc.ps1` and `validate-unit-test.ps1` follow those defaults: MSVC on
-Windows, clang on macOS, and gcc on Linux. On Unix-like hosts, pass `-CC` or set
-`CC` when you intentionally want a different compiler.
+Windows, native ARM64 MSVC on Windows ARM64, clang on macOS, and gcc on Linux.
+On Unix-like hosts, pass `-CC` or set `CC` when you intentionally want a
+different compiler.
 
 ### Linux 32-bit GCC support for baseline validation
 

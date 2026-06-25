@@ -71,17 +71,18 @@ function Invoke-Checked {
 }
 
 function Get-WindowsBuildToolsHelp {
+        $toolchain = Get-MsvcToolchain
         @"
 Could not find MSVC build tools.
 
 Install one of these, then rerun this script:
-    winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait"
-    winget install --id Microsoft.VisualStudio.2022.Community -e
+    $($toolchain.InstallCommand)
+    winget install --id Microsoft.VisualStudio.Community -e
 
 If Visual Studio is already installed, open Visual Studio Installer and add:
     Desktop development with C++
 
-This script looks for vcvars64.bat and requires the MSVC x64 C++ toolchain.
+This script looks for $($toolchain.VcVars) and requires the $($toolchain.Description).
 "@
 }
 
@@ -122,12 +123,32 @@ You can also pass a compiler explicitly:
 "@
 }
 
+function Get-MsvcToolchain {
+    $isWindowsArm64 = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64
+    if ($isWindowsArm64) {
+        return [pscustomobject]@{
+            Component = "Microsoft.VisualStudio.Component.VC.Tools.ARM64"
+            VcVars = "vcvarsarm64.bat"
+            Description = "MSVC ARM64 C++ toolchain"
+            InstallCommand = 'winget install --id Microsoft.VisualStudio.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --includeRecommended --quiet --wait"'
+        }
+    }
+
+    return [pscustomobject]@{
+        Component = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+        VcVars = "vcvars64.bat"
+        Description = "MSVC x64 C++ toolchain"
+        InstallCommand = 'winget install --id Microsoft.VisualStudio.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait"'
+    }
+}
+
 function Get-MsvcVarsPath {
+    $toolchain = Get-MsvcToolchain
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
-        $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        $installPath = & $vswhere -latest -products * -requires $toolchain.Component -property installationPath
         if ($installPath) {
-            $candidate = Join-Path $installPath "VC\Auxiliary\Build\vcvars64.bat"
+            $candidate = Join-Path $installPath "VC\Auxiliary\Build\$($toolchain.VcVars)"
             if (Test-Path $candidate) {
                 return $candidate
             }
@@ -141,7 +162,7 @@ function Get-MsvcVarsPath {
     foreach ($root in $roots) {
         foreach ($version in $versions) {
             foreach ($edition in $editions) {
-                $candidate = Join-Path $root "Microsoft Visual Studio\$version\$edition\VC\Auxiliary\Build\vcvars64.bat"
+                $candidate = Join-Path $root "Microsoft Visual Studio\$version\$edition\VC\Auxiliary\Build\$($toolchain.VcVars)"
                 if (Test-Path $candidate) {
                     return $candidate
                 }
@@ -153,12 +174,13 @@ function Get-MsvcVarsPath {
 }
 
 function Initialize-Msvc {
+    $toolchain = Get-MsvcToolchain
     $vcvars = Get-MsvcVarsPath
     if (-not $vcvars) {
         throw (Get-WindowsBuildToolsHelp)
     }
 
-    Write-Host "Found MSVC: $vcvars"
+    Write-Host "Found $($toolchain.Description): $vcvars"
     $envBlock = & cmd /c "`"$vcvars`" >nul 2>&1 && set"
     foreach ($line in $envBlock) {
         if ($line -match "^([^=]+)=(.*)$") {

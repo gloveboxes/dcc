@@ -3682,20 +3682,63 @@ static int pass_ix_pair_load_to_de(void)
     return changed;
 }
 
+/* Returns 1 if instruction s is safe to skip over when checking whether a
+ * reload of HL from (ix+off_lo)/(ix+off_hi) is redundant.  An instruction
+ * is safe when it neither modifies L/H nor writes to the two stored slots. */
+static int hl_store_reload_safe_intervening(const char *s, int off_lo, int off_hi)
+{
+    char tmp[MAX_LINE];
+    char store_lo[64], store_hi[64];
+
+    strip_peep_comment_copy(tmp, s);
+    if (starts_label(tmp))          return 0; /* label: unknown incoming HL */
+    /* Instructions that write to L or H */
+    if (strncmp(tmp, "ld l,",   5) == 0) return 0;
+    if (strncmp(tmp, "ld h,",   5) == 0) return 0;
+    if (strncmp(tmp, "ld hl,",  6) == 0) return 0;
+    if (strncmp(tmp, "add hl,", 7) == 0) return 0;
+    if (strncmp(tmp, "sbc hl,", 7) == 0) return 0;
+    if (strncmp(tmp, "adc hl,", 7) == 0) return 0;
+    if (strcmp (tmp, "inc hl")      == 0) return 0;
+    if (strcmp (tmp, "dec hl")      == 0) return 0;
+    if (strcmp (tmp, "pop hl")      == 0) return 0;
+    if (strcmp (tmp, "ex de,hl")    == 0) return 0;
+    if (strcmp (tmp, "ex (sp),hl")  == 0) return 0;
+    /* Jumps/calls: would need dataflow analysis */
+    if (strncmp(tmp, "jp ",   3) == 0) return 0;
+    if (strncmp(tmp, "jr ",   3) == 0) return 0;
+    if (strncmp(tmp, "call ", 5) == 0) return 0;
+    if (strcmp (tmp, "ret")       == 0) return 0;
+    if (strncmp(tmp, "ret ",  4) == 0) return 0;
+    /* Writes to the stored memory slots */
+    sprintf(store_lo, "ld (ix%+d),", off_lo);
+    sprintf(store_hi, "ld (ix%+d),", off_hi);
+    if (strncmp(tmp, store_lo, strlen(store_lo)) == 0) return 0;
+    if (strncmp(tmp, store_hi, strlen(store_hi)) == 0) return 0;
+    return 1;
+}
+
 static int pass_remove_ix_store_reload_hl(void)
 {
-    int i, off, changed = 0;
+    int i, j, off, changed = 0;
     char expected_lo[64], expected_hi[64];
 
     for (i = 0; i + 3 < nlines; i++) {
         if (!peep_parse_st_ix_pair(lines[i], lines[i + 1], &off)) continue;
         sprintf(expected_lo, "ld l,(ix%+d)", off);
         sprintf(expected_hi, "ld h,(ix%+d)", off + 1);
-        if (!eq(i + 2, expected_lo)) continue;
-        if (!eq(i + 3, expected_hi)) continue;
-        delete_n(i + 2, 2);
-        changed = 1;
-        if (i > 0) i--;
+        for (j = i + 2; j < nlines && j <= i + 10; j++) {
+            if (eq(j, expected_lo)) {
+                if (j + 1 < nlines && eq(j + 1, expected_hi)) {
+                    delete_n(j, 2);
+                    changed = 1;
+                    if (i > 0) i--;
+                }
+                break;
+            }
+            if (!hl_store_reload_safe_intervening(lines[j], off, off + 1))
+                break;
+        }
     }
     return changed;
 }

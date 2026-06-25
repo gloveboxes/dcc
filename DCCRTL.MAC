@@ -11833,64 +11833,65 @@ FMSET_AB_24:
         ld      b,24
 
 FMLP:
-        ld      a,e             ; FQ0 in register E
-        and     1
-        jp      z,FMNA
-        ; P += M
-        ld      a,(FP0)
-        ld      c,a
-        ld      a,(FM0)
-        add     a,c
-        ld      (FP0),a
-        ld      a,(FP1)
-        ld      c,a
-        ld      a,(FM1)
-        adc     a,c
-        ld      (FP1),a
-        ld      a,(FP2)
-        ld      c,a
-        ld      a,(FM2)
-        adc     a,c
-        ld      (FP2),a
-        ld      a,(FP3)
-        ld      c,a
-        ld      a,(FM3)
-        adc     a,c
-        ld      (FP3),a
-        ld      a,(FP4)
-        ld      c,a
-        ld      a,(FM4)
-        adc     a,c
-        ld      (FP4),a
-        ld      a,(FP5)
-        ld      c,a
-        ld      a,(FM5)
-        adc     a,c
-        ld      (FP5),a
-FMNA:
-        ; M <<= 1
-        ld      a,(FM0)
-        add     a,a
-        ld      (FM0),a
-        ld      a,(FM1)
-        rla
-        ld      (FM1),a
-        ld      a,(FM2)
-        rla
-        ld      (FM2),a
-        ld      a,(FM3)
-        rla
-        ld      (FM3),a
-        ld      a,(FM4)
-        rla
-        ld      (FM4),a
-        ld      a,(FM5)
-        rla
-        ld      (FM5),a
-        ; Q >>= 1 (registers only: H=FQ2, L=FQ1, E=FQ0)
+        ; Q >>= 1; carry = old bit-0 of E (the multiplier bit to test)
         srl     h
         rr      l
         rr      e
+        push    hl              ; save Q high bytes (H=FQ2, L=FQ1)
+        ld      hl,FM0          ; HL -> M[0]; pointer for both P+=M and M<<=1
+        jp      nc,FMNA         ; skip accumulate if this Q bit was 0
+
+        ; P += M  (HL = FM0; 'add' on byte 0 ignores the stale carry=1)
+        ld      a,(FP0)
+        add     a,(hl)
+        ld      (FP0),a
+        inc     hl
+        ld      a,(FP1)
+        adc     a,(hl)
+        ld      (FP1),a
+        inc     hl
+        ld      a,(FP2)
+        adc     a,(hl)
+        ld      (FP2),a
+        inc     hl
+        ld      a,(FP3)
+        adc     a,(hl)
+        ld      (FP3),a
+        inc     hl
+        ld      a,(FP4)
+        adc     a,(hl)
+        ld      (FP4),a
+        inc     hl
+        ld      a,(FP5)
+        adc     a,(hl)
+        ld      (FP5),a
+        ld      hl,FM0          ; reset HL -> M[0] for M shift below
+FMNA:
+        ; M <<= 1  (HL = FM0; 'add' on byte 0 ignores carry from P+=M)
+        ld      a,(hl)
+        add     a,a
+        ld      (hl),a
+        inc     hl
+        ld      a,(hl)
+        rla
+        ld      (hl),a
+        inc     hl
+        ld      a,(hl)
+        rla
+        ld      (hl),a
+        inc     hl
+        ld      a,(hl)
+        rla
+        ld      (hl),a
+        inc     hl
+        ld      a,(hl)
+        rla
+        ld      (hl),a
+        inc     hl
+        ld      a,(hl)
+        rla
+        ld      (hl),a
+        pop     hl              ; restore Q (H=FQ2, L=FQ1)
         dec     b
         jp      nz,FMLP
 

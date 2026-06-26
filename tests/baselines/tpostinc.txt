@@ -1,0 +1,9 @@
+char post++: old=t new=u
+char post--: old=u new=t
+char ptr+1 post++: old=e new=f
+char ptr+i post++: old=s new=t
+char ptr+j post--: old=t new=s
+int post++: old=10 new=11
+int post--: old=11 new=10
+int ptr+1 post++: old=200 new=201
+int ptr+k post--: old=300 new=299

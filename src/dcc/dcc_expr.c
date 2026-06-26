@@ -3088,6 +3088,33 @@ static void gen_primary_postfix_chain(void)
     }
 }
 
+/* Lookahead: returns nonzero if the token stream starts with (lvalue)++ or
+ * (lvalue)--.  Used to handle (*p)++ and similar as an lvalue post-increment
+ * rather than a generic parenthesized expression that leaves ++ stranded. */
+static int paren_lvalue_followed_by_incdec(void)
+{
+    long save_pos = posi;
+    long save_tok_start = tok_start_pos;
+    int save_line = line_no;
+    int save_tok_line = tok_line;
+    struct Token save_tok = tok;
+    int result = 0;
+
+    /* consume the leading '(' */
+    next_token();
+    if (skip_lvalue_syntax() && tok.kind == ')') {
+        next_token();
+        result = (tok.kind == TOK_INC || tok.kind == TOK_DEC);
+    }
+
+    posi = save_pos;
+    tok_start_pos = save_tok_start;
+    line_no = save_line;
+    tok_line = save_tok_line;
+    tok = save_tok;
+    return result;
+}
+
 void gen_primary(void)
 {
     current_field_bit_width = 0;
@@ -3185,6 +3212,19 @@ void gen_primary(void)
         emit_cleanup_stack_bytes(fp_arg_bytes + 2);
         g_expr_type = TYPE_INT;
         g_long_from16 = 0;
+        return;
+    }
+
+    /* (lvalue)++ / (lvalue)--: compute the lvalue address then post-update. */
+    if (tok.kind == '(' && paren_lvalue_followed_by_incdec()) {
+        int lv_type;
+        int op;
+        accept('(');
+        gen_lvalue_addr(&lv_type);
+        expect(')');
+        op = tok.kind;
+        next_token();
+        gen_post_update_from_addr(lv_type, op);
         return;
     }
 

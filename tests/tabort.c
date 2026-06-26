@@ -7,7 +7,7 @@ static int fails;
 
 static void chki(const char *name, int got, int expected)
 {
-    if (got != expected) {
+    if (!!got != !!expected) {
         printf("FAIL %s: got %d expected %d\n", name, got, expected);
         fails++;
     }

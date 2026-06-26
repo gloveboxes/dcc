@@ -287,6 +287,11 @@ You can also pass a compiler explicitly:
             @{ Pattern = '(?<![A-Za-z0-9_])outp\s*\('; Reason = 'Z80 port output' },
             @{ Pattern = '(?<![A-Za-z0-9_])getch\s*\('; Reason = 'CP/M non-echo console input' },
             @{ Pattern = '(?<![A-Za-z0-9_])kbhit\s*\('; Reason = 'CP/M console polling' },
+            @{ Pattern = '(?<![A-Za-z0-9_])tmpnam\s*\('; Reason = 'CP/M 8.3 limit' },
+            @{ Pattern = '(?<![A-Za-z0-9_])execv\s*\('; Reason = 'CP/M execv' },
+            @{ Pattern = '(?<![A-Za-z0-9_])strftime\s*\('; Reason = 'CP/M strftime' },
+            @{ Pattern = '(?<![A-Za-z0-9_])assert\s*\('; Reason = 'CP/M assert' },
+            @{ Pattern = '(?<![A-Za-z0-9_])abort\s*\('; Reason = 'CP/M abort' },
             @{ Pattern = '\*\s*\([^\)]*\*\)\s*6\b'; Reason = 'CP/M BDOS vector memory access' }
         )
 

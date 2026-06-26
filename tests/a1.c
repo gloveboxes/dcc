@@ -1412,7 +1412,7 @@ int main( argc, argv ) int argc; char * argv[];
 
     if ( !fits_in_ram() )
     {
-        printf( "a1 is too large to fit in RAM; adjust APPLE1_32K in m6502.c or m_0000 in m6.asm\n" );
+        printf( "a1 is too large to fit in RAM; adjust ARM size in a1.c\n" );
         exit( 1 );
     }
 

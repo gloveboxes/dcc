@@ -2,7 +2,7 @@
   "apps": [
     { "name": "ttt", "args": "10" },
     { "name": "pint", "args": "e.pas" },
-    { "name": "cobint", "args": "e.cob", "stack_size": 1536 },
+    { "name": "cobint", "args": "e.cob", "stack_size": 2048 },
     { "name": "forint", "args": "e.for" },
     { "name": "adaint", "args": "e.ada" },
     { "name": "bint", "args": "e.bas" },

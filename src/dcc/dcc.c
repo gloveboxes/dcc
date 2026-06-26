@@ -61,9 +61,13 @@ char *read_file(const char *name, long *lenp)
     FILE *f;
     long n;
     char *p;
+    char errbuf[640];
 
     f = fopen(name, "rb");
-    if (!f) fatal("cannot open input");
+    if (!f) {
+        sprintf(errbuf, "cannot open input: %s", name);
+        fatal(errbuf);
+    }
 
     n = file_size(f);
     p = (char *)xmalloc((size_t)n + 1);

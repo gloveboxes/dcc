@@ -1,0 +1,32 @@
+x: 5
+z: 50
+x_after_xplusplus: 21
+c: ?
+x: 30
+my_func
+str: Hello World C89
+mm1: 0 0 1
+digraph: 123
+bitops: 2 7 5
+idx: 40 40
+comma idx: 40
+assign idx: 3 99
+my_func
+adj: AB
+sizeof: 2 5
+charconst: 65 2
+oldsum: 15
+arr sizes: 10 2
+struct assign: 42 x
+cond promo: 1
+ptr-to-array: 50
+strvar: l
+strderef: h
+revstr: h
+chain: 5 5 5
+for comma: 45
+sizeofstr: 6
+nested ternary: -1
+hex oct: 255 127 65 65
+unary plus: 65
+bitnot: -16

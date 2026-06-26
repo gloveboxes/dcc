@@ -2357,6 +2357,8 @@ void next_token(void)
     } else if (c == '<') {
         if (d == '=') { getc_src(); tok.kind = TOK_LE; strcpy(tok.text, "<="); return; }
         if (d == '<') { getc_src(); if (peekc() == '=') { getc_src(); tok.kind = TOK_SHLEQ; strcpy(tok.text, "<<="); return; } tok.kind = TOK_SHL; strcpy(tok.text, "<<"); return; }
+        if (d == '%') { getc_src(); tok.kind = '{'; strcpy(tok.text, "<%"); return; }
+        if (d == ':') { getc_src(); tok.kind = '['; strcpy(tok.text, "<:"); return; }
     } else if (c == '>') {
         if (d == '=') { getc_src(); tok.kind = TOK_GE; strcpy(tok.text, ">="); return; }
         if (d == '>') { getc_src(); if (peekc() == '=') { getc_src(); tok.kind = TOK_SHREQ; strcpy(tok.text, ">>="); return; } tok.kind = TOK_SHR; strcpy(tok.text, ">>"); return; }
@@ -2379,6 +2381,9 @@ void next_token(void)
         if (d == '=') { getc_src(); tok.kind = TOK_DIVEQ; strcpy(tok.text, "/="); return; }
     } else if (c == '%') {
         if (d == '=') { getc_src(); tok.kind = TOK_MODEQ; strcpy(tok.text, "%="); return; }
+        if (d == '>') { getc_src(); tok.kind = '}'; strcpy(tok.text, "%>"); return; }
+    } else if (c == ':') {
+        if (d == '>') { getc_src(); tok.kind = ']'; strcpy(tok.text, ":>"); return; }
     } else if (c == '^') {
         if (d == '=') { getc_src(); tok.kind = TOK_XOREQ; strcpy(tok.text, "^="); return; }
     }

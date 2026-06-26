@@ -36,6 +36,12 @@ int parse_sizeof_expr_operand(void)
         if (op == '?' || op == ':')
             break;
 
+        /* post-increment/decrement are unary postfix: no right operand */
+        if (op == TOK_INC || op == TOK_DEC) {
+            next_token();
+            continue;
+        }
+
         next_token();
         if (!sizeof_parse_primary_type(&rhs_type, &rhs_sz))
             break;
@@ -1812,7 +1818,8 @@ int paren_starts_indirect_call(void)
 
     r = 0;
     next_token();
-    if (accept('*')) {
+    if (tok.kind == '*') {
+        while (tok.kind == '*') next_token();
         if (tok.kind == TOK_ID) {
             next_token();
             if (accept(')') && tok.kind == '(')
@@ -2981,6 +2988,25 @@ static void gen_primary_postfix_chain(void)
             int elem_size;
             long const_index;
 
+            /* n[ptr] == ptr[n]: integer on left, array/ptr on right */
+            if (!is_array && type_ptr_depth(cur_type) == 0) {
+                int inner_type;
+                emit("\tpush hl\n");
+                gen_expr();
+                inner_type = g_expr_type;
+                expect(']');
+                elem_size = type_index_elem_size(inner_type);
+                emit("\tex de,hl\n");
+                emit("\tpop hl\n");
+                scale_hl_by_elem_size(elem_size);
+                emit("\tadd hl,de\n");
+                g_expr_type = type_decay_ptr(inner_type);
+                if (tok.kind != '[' && tok.kind != '.' && tok.kind != TOK_ARROW)
+                    if (!type_is_struct_object(g_expr_type))
+                        emit_load_from_hl(g_expr_type);
+                continue;
+            }
+
             if (try_parse_const_subscript(&const_index)) {
                 if (is_array)
                     elem_size = field_array_index_stride(type_index_elem_size(cur_type),
@@ -3175,6 +3201,7 @@ void gen_primary(void)
                 g_expr_type |= TYPE_UNSIGNED;
         }
         next_token();
+        gen_primary_postfix_chain();
         return;
     }
 
@@ -3185,7 +3212,8 @@ void gen_primary(void)
         sid = add_string_ex(lit, is_wide);
         free(lit);
         fprintf(outf, "\tld hl,S%d\n", sid);
-        g_expr_type = TYPE_INT;
+        g_expr_type = TYPE_CHAR | TYPE_PTR;
+        gen_primary_postfix_chain();
         return;
     }
 
@@ -3202,7 +3230,7 @@ void gen_primary(void)
         int fp_arg_bytes;
 
         expect('(');
-        expect('*');
+        while (tok.kind == '*') next_token();
         gen_expr();
         expect(')');
         parse_call_args_after_lparen(fp_arg_start, fp_arg_end, &fp_argc);

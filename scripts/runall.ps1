@@ -383,15 +383,12 @@ function Invoke-AppTest {
 
     foreach ($buildMode in $Modes) {
         $displayMode = if ($buildMode -eq "peep") { "fast" } else { $buildMode }
-        if ($StackSize) { $env:DCC_STACK_SIZE = $StackSize }
+        $stackSizeInt = if ($StackSize) { [int]$StackSize } else { 0 }
         $ok = $false
         try {
-            $ok = Invoke-MaBuild -Name $AppName -Mode $buildMode -BuildDir $BuildDir -Emulator $Emulator -Quiet
+            $ok = Invoke-MaBuild -Name $AppName -Mode $buildMode -BuildDir $BuildDir -Emulator $Emulator -StackSize $stackSizeInt -Quiet
         }
         catch { $ok = $false }
-        finally {
-            if ($StackSize) { Remove-Item env:DCC_STACK_SIZE -ErrorAction SilentlyContinue }
-        }
 
         if (-not $ok) {
             $lines.Add("  Building $AppName ($displayMode)... FAILED")
@@ -466,7 +463,23 @@ function Invoke-AppTest {
             $actual = ($output -replace "`r`n", "`n").TrimEnd("`n")
             if (-not (Test-MatchesBaseline -Actual $actual -Baseline $expected -Placeholders $Placeholders)) {
                 $lines.Add("    OUTPUT MISMATCH (vs $BaselineDir/$AppName.txt)")
-                $lines.Add("    Got: " + (($actual -split "`n" | Select-Object -First 3) -join ' | '))
+                $expLines = if ($expected) { @($expected -split "`n") } else { @() }
+                $actLines = if ($actual)   { @($actual   -split "`n") } else { @() }
+                $maxLen = [Math]::Max($expLines.Count, $actLines.Count)
+                for ($i = 0; $i -lt $maxLen; $i++) {
+                    $e = if ($i -lt $expLines.Count) { $expLines[$i] } else { $null }
+                    $a = if ($i -lt $actLines.Count) { $actLines[$i] } else { $null }
+                    if ($null -eq $a) {
+                        $lines.Add("    DIFF- $e")
+                    } elseif ($null -eq $e) {
+                        $lines.Add("    DIFF+ $a")
+                    } elseif ($e -ceq $a) {
+                        $lines.Add("    DIFF  $e")
+                    } else {
+                        $lines.Add("    DIFF- $e")
+                        $lines.Add("    DIFF+ $a")
+                    }
+                }
                 $appPassed = $false
             }
             else {
@@ -517,13 +530,15 @@ function Get-Baseline {
 # content in the single baseline file (no per-app rules elsewhere) while still
 # tolerating values that legitimately change between builds/platforms.
 #
-#   {{DATE}} - C __DATE__ value, e.g. "Jun 16 2026"
-#   {{TIME}} - C __TIME__ value, e.g. "20:01:50"
-#   {{SEP}}  - path separator, "/" (Unix) or "\" (Windows)
+#   {{DATE}}  - C __DATE__ value, e.g. "Jun 16 2026"
+#   {{TIME}}  - C __TIME__ value, e.g. "20:01:50"
+#   {{SEP}}   - path separator, "/" (Unix) or "\" (Windows)
+#   {{HEX4}}  - four uppercase hex digits, e.g. "0040"
 $Placeholders = [ordered]@{
     '{{DATE}}' = '[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}'
     '{{TIME}}' = '\d{2}:\d{2}:\d{2}'
     '{{SEP}}'  = '[/\\]'
+    '{{HEX4}}' = '[0-9A-F]{4}'
 }
 
 # Compare actual output against a baseline that may contain placeholder tokens.
@@ -537,13 +552,13 @@ function Test-MatchesBaseline {
         [System.Collections.IDictionary]$Placeholders
     )
     if (-not $Placeholders) { $Placeholders = $script:Placeholders }
-    if ($Baseline -notmatch '\{\{[A-Z]+\}\}') {
+    if ($Baseline -notmatch '\{\{[A-Z][A-Z0-9]*\}\}') {
         return ($Actual -ceq $Baseline)
     }
     # Build a regex from the baseline: escape literal text segments, and insert
     # each placeholder's pattern in place of its token. Escaping only the
     # literal parts avoids double-escaping the tokens themselves.
-    $tokenRegex = [regex]'\{\{([A-Z]+)\}\}'
+    $tokenRegex = [regex]'\{\{([A-Z][A-Z0-9]*)\}\}'
     $sb = [System.Text.StringBuilder]::new()
     $last = 0
     foreach ($m in $tokenRegex.Matches($Baseline)) {
@@ -633,6 +648,9 @@ function Show-AppResult {
     foreach ($line in $result.Lines) {
         $color = if ($line -match 'FAILED|MISMATCH|WARNING|ERROR') { 'Red' }
                  elseif ($line -match 'matches baseline') { 'Green' }
+                 elseif ($line -match '^    DIFF-') { 'Red' }
+                 elseif ($line -match '^    DIFF\+') { 'Green' }
+                 elseif ($line -match '^    DIFF  ') { 'DarkGray' }
                  else { 'Gray' }
         Write-Host $line -ForegroundColor $color
     }
@@ -767,6 +785,10 @@ if ($Parallel) {
             foreach ($detail in $result.Lines) {
                 if ($detail -match 'FAILED|MISMATCH|WARNING|ERROR') {
                     Write-Host "        $($detail.Trim())" -ForegroundColor Red
+                } elseif ($detail -match '^    DIFF-') {
+                    Write-Host "        $($detail.Trim())" -ForegroundColor Red
+                } elseif ($detail -match '^    DIFF\+') {
+                    Write-Host "        $($detail.Trim())" -ForegroundColor Green
                 }
             }
         }

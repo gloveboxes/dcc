@@ -94,6 +94,7 @@ function Invoke-MaBuild {
         [string]$Mode = "fast",
         [string]$BuildDir = "build",
         [string]$Emulator = "ntvcm",
+        [int]$StackSize = 0,
         [switch]$Quiet
     )
 
@@ -105,8 +106,8 @@ function Invoke-MaBuild {
     # Normalize mode
     $modeLower = $Mode.ToLower()
     if ($modeLower -eq "full") {
-        $fastOk = Invoke-MaBuild -Name $Name -Mode fast -BuildDir $BuildDir -Emulator $Emulator -Quiet:$Quiet
-        $nopeepOk = Invoke-MaBuild -Name $Name -Mode nopeep -BuildDir $BuildDir -Emulator $Emulator -Quiet:$Quiet
+        $fastOk = Invoke-MaBuild -Name $Name -Mode fast -BuildDir $BuildDir -Emulator $Emulator -StackSize $StackSize -Quiet:$Quiet
+        $nopeepOk = Invoke-MaBuild -Name $Name -Mode nopeep -BuildDir $BuildDir -Emulator $Emulator -StackSize $StackSize -Quiet:$Quiet
         return ($fastOk -and $nopeepOk)
     }
     $usePeep = @("fast", "peep", "opt", "optimized", "o", "1", "yes", "true") -contains $modeLower
@@ -198,8 +199,10 @@ function Invoke-MaBuild {
     # Clean old artifacts
     Remove-Item -Path @($appMac, $appRel, $appCom, (Join-Path $BuildDir "$upperBase.PRN"), $peepTmp, $rtlSrc, $rtlMin, (Join-Path $BuildDir "RTLMIN.REL"), (Join-Path $BuildDir "RTLMIN.PRN")) -Force -ErrorAction SilentlyContinue
 
-    # Determine stack size
-    $dccStackSize = if ($env:DCC_STACK_SIZE) { $env:DCC_STACK_SIZE } else { "512" }
+    # Determine stack size: explicit parameter wins, then env var, then default.
+    $dccStackSize = if ($StackSize -gt 0) { "$StackSize" }
+                    elseif ($env:DCC_STACK_SIZE) { $env:DCC_STACK_SIZE }
+                    else { "512" }
 
     # Compile to .MAC
     $dccArgs = @($dccStackChk, "-stack", $dccStackSize)

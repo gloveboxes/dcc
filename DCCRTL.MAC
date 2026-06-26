@@ -4595,15 +4595,61 @@ __stchk:
         jr      c,stchk_over
         ret
 stchk_over:
-        call    __cflush        ; flush buffered output before the diagnostic
+        ; HL = SP - __hlimit (negative). Negate to get overflow = __hlimit - SP.
+        ld      a,l
+        cpl
+        ld      l,a
+        ld      a,h
+        cpl
+        ld      h,a
+        inc     hl              ; HL = overflow bytes (positive)
+        call    __cflush        ; preserves all regs except F
         ld      de,stchk_msg
-        ld      c,9             ; BDOS print-string ('$'-terminated)
+        ld      c,9
+        call    5               ; print prefix through "0x"
+        ld      a,h
+        call    stchk_pb        ; high byte of overflow
+        ld      a,l
+        call    stchk_pb        ; low byte of overflow
+        ld      de,stchk_sep
+        ld      c,9
+        call    5               ; print " limit 0x"
+        ld      hl,__stack_size ; configured limit (immediate, not a memory ref)
+        ld      a,h
+        call    stchk_pb
+        ld      a,l
+        call    stchk_pb
+        ld      de,stchk_end
+        ld      c,9
         call    5
         ld      hl,00ffh
         call    __cpm_set_retcode
         jp      0000h
+stchk_pb:                       ; print byte in A as two uppercase hex digits
+        push    af
+        rrca
+        rrca
+        rrca
+        rrca                    ; high nibble -> bits 3:0
+        call    stchk_pn
+        pop     af              ; restore original byte; fall through for low nibble
+stchk_pn:                       ; print low nibble of A as one hex digit
+        and     0fh
+        add     a,'0'
+        cp      '9'+1
+        jr      c,stchk_pn1
+        add     a,7             ; A-F
+stchk_pn1:
+        ld      e,a
+        ld      c,2
+        call    5
+        ret
 stchk_msg:
-        db      0dh,0ah,'?stack overflow',0dh,0ah,'$'
+        db      0dh,0ah,'?stack overflow: exceeded by 0x','$'
+stchk_sep:
+        db      ' limit 0x','$'
+stchk_end:
+        db      0dh,0ah,'$'
 
         public  _atoi
 _atoi:

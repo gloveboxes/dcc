@@ -12,6 +12,11 @@
  *   trtl_string_remaining: all tests passed
  */
 
+#ifdef _MSC_VER
+#define _CRT_NONSTDC_NO_DEPRECATE
+#define strdup _strdup
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

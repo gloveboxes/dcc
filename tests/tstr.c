@@ -7,60 +7,61 @@ char ac[ 4096 ];
 char other[ 4096 ];
 char zeroes[ 4096 ]; // will be put in bss and guaranteed to be 0 by C89 and later
 
+#ifndef _MSC_VER
 #define _countof( X ) ( sizeof( X ) / sizeof( X[0] ) )
+#endif
 
 #define TEST_WCHAR_T
 
 #ifdef TEST_WCHAR_T
 
-typedef unsigned int twchar_t;
+wchar_t wc[ 4096 ];
+wchar_t wc_other[ 4096 ];
+wchar_t wc_zeroes[ 4096 ];
 
-twchar_t wc[ 4096 ];
-twchar_t wc_other[ 4096 ];
-twchar_t wc_zeroes[ 4096 ];
-
-twchar_t *wcscpy(twchar_t * dest, const twchar_t * src)
+#ifndef _MSC_VER
+wchar_t *wcscpy(wchar_t * dest, const wchar_t * src)
 {
-    twchar_t * r = dest;
+    wchar_t * r = dest;
     while ( *src )
         *dest++ = *src++;
     *dest = 0;
     return r;
 }
 
-twchar_t * wcschr(const twchar_t *str, int c) 
+wchar_t * wcschr(const wchar_t *str, int c) 
 {
     while (*str != 0) 
     {
         if (*str == c)
-            return (twchar_t *)str; 
+            return (wchar_t *)str; 
         str++;
     }
 
     return NULL;
 }
 
-twchar_t * wcsrchr(const twchar_t *str, int c) 
+wchar_t * wcsrchr(const wchar_t *str, int c) 
 {
-    const twchar_t *last_occurrence = NULL;
+    const wchar_t *last_occurrence = NULL;
     while (*str != 0) 
     {
         if (*str == c)
             last_occurrence = str;
         str++;
     }
-    return (twchar_t *)last_occurrence;
+    return (wchar_t *)last_occurrence;
 }
 
-twchar_t * wcsstr(const twchar_t *haystack, const twchar_t *needle) 
+wchar_t * wcsstr(const wchar_t *haystack, const wchar_t *needle) 
 {
     if (!*needle)
-        return (twchar_t *)haystack;
+        return (wchar_t *)haystack;
 
     while (*haystack) 
     {
-        const twchar_t *h = haystack;
-        const twchar_t *n = needle;
+        const wchar_t *h = haystack;
+        const wchar_t *n = needle;
 
         while (*h && *n && *h == *n) 
         {
@@ -69,20 +70,21 @@ twchar_t * wcsstr(const twchar_t *haystack, const twchar_t *needle)
         }
 
         if (!*n)
-            return (twchar_t *)haystack;
+            return (wchar_t *)haystack;
 
         haystack++;
     }
     return NULL;
 }
 
-size_t wcslen(const twchar_t *str) 
+size_t wcslen(const wchar_t *str) 
 {
-    const twchar_t *orig = str;
+    const wchar_t *orig = str;
     while (*str != 0) 
         str++; 
     return ( str - orig );
 }
+#endif
 
 void test_wide()
 {
@@ -95,7 +97,7 @@ void test_wide()
         int start = ( (unsigned int) rand() % 300 );
         int end = 1 + start + ( (unsigned int) rand() % 3000 );
         int len = end - start;
-        twchar_t orig = wc[ end ];
+        wchar_t orig = wc[ end ];
         wc[ end ] = 0;
         int slen = wcslen( wc + start );
         if ( len != slen )
@@ -112,9 +114,9 @@ void test_wide()
         int start = ( (unsigned int) rand() % 300 );
         int end = 1 + start + ( (unsigned int) rand() % 70 );
         int len = end - start;
-        twchar_t orig = wc[ end ];
+        wchar_t orig = wc[ end ];
         wc[ end ] = L'!';
-        twchar_t * pbang = wcschr( wc + start, L'!' );
+        wchar_t * pbang = wcschr( wc + start, L'!' );
         if ( !pbang )
         {
             printf( "wcschr failed to find char: iteration %d, len %d, start %d, end %d\n", i, len, start, end );
@@ -141,7 +143,7 @@ void test_wide()
     }
 
     printf( "testing wcsstr\n" );
-    twchar_t alpha[27];
+    wchar_t alpha[27];
     wcscpy( alpha, L"abcdefghijklmnopqrstuvwxyz" );
     for ( int i = 0; i < 1000; i++ )
     {
@@ -153,14 +155,14 @@ void test_wide()
             printf( "test bug offset %d, len %d\n", offset, len );
             exit( 1 );
         }
-        const twchar_t * pattern = alpha + offset;
-        const twchar_t * p = wcsstr( wc + start, pattern );
+        const wchar_t * pattern = alpha + offset;
+        const wchar_t * p = wcsstr( wc + start, pattern );
         if ( !p )
         {
             printf( "wcsstr pattern not found iteration %d, start %d, offset %d, len %d, pattern %ls\n", i, start, offset, len, pattern );
             exit( 1 );
         }
-        if ( memcmp( p, pattern, len * sizeof( twchar_t ) ) )
+        if ( memcmp( p, pattern, len * sizeof( wchar_t ) ) )
         {
             printf( "wcsstr found the wrong pattern iteration %d, start %d, offset %d, len %d, pattern %ls\n", i, start, offset, len, pattern );
             exit( 1 );

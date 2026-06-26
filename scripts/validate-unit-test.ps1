@@ -341,7 +341,7 @@ You can also pass a compiler explicitly:
 
         if ($Compiler.Kind -eq "msvc") {
             $objPath = Join-Path $WorkDir ([System.IO.Path]::GetFileNameWithoutExtension($ExePath) + ".obj")
-            $arguments = @("/nologo", "/w", "/O2", "/std:c11", "/Fe:$ExePath", "/Fo:$objPath", $SourceFile)
+            $arguments = @("/nologo", "/w", "/O2", "/Zc:__STDC__", "/std:c11", "/Fe:$ExePath", "/Fo:$objPath", $SourceFile)
             $output = & $Compiler.Command @arguments 2>&1
             return [pscustomobject]@{ Success = ($LASTEXITCODE -eq 0 -and (Test-Path $ExePath -PathType Leaf)); Output = ($output -join "`n") }
         }

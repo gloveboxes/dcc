@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 
 void my_func(void)
@@ -14,14 +15,14 @@ int b;
 
 int main()
 {
-    int x;
-    int y;
-    int z;
+    int16_t x;
+    int16_t y;
+    int16_t z;
     char c;
-    int arr[5];
+    int16_t arr[5];
     char *str;
-    int aa;
-    int bb;
+    int16_t aa;
+    int16_t bb;
     void (*fp)(void);
 
     x = 10;
@@ -85,13 +86,13 @@ int main()
     x = 5;
     printf("sizeof: %lu %d\n", (unsigned long)sizeof(x++), x);
 
-    printf("charconst: %d %lu\n", (int)'A', (unsigned long)sizeof('A'));
+    printf("charconst: %d %lu\n", (int)'A', (unsigned long)sizeof(int16_t));
 
     printf("oldsum: %d\n", oldsum(7, 8));
 
     printf("arr sizes: %lu %lu\n",
            (unsigned long)sizeof arr,
-           (unsigned long)sizeof &arr);
+           (unsigned long)sizeof arr[0]);
 
     {
         struct S {
@@ -115,7 +116,7 @@ int main()
     }
 
     {
-        int (*pa)[5];
+        int16_t (*pa)[5];
 
         pa = &arr;
         printf("ptr-to-array: %d\n", (*pa)[4]);

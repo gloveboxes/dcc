@@ -2146,6 +2146,12 @@ void parse_translation_unit(void)
             } else {
                 parse_function_or_global(t);
             }
+        } else if (tok.kind == TOK_ID) {
+            /* C89: implicit int return type for function definition/declaration. */
+            decl_is_extern = 0;
+            decl_is_static = 0;
+            decl_is_const = 0;
+            parse_function_or_global(TYPE_INT);
         } else {
             error_here("external declaration expected");
             next_token();

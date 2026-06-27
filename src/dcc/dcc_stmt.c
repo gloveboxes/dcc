@@ -10,6 +10,14 @@
  */
 
 #include "dcc.h"
+
+/* Switch context stack: allows case/default labels to be emitted by
+ * gen_statement() when they appear inside nested loop bodies (Duff's device). */
+#define MAX_SW_NEST 8
+struct SwCtx { int *vals; int *labs; int n; int def_lab; };
+static struct SwCtx g_sw_ctx[MAX_SW_NEST];
+static int g_sw_depth;
+
 void gen_compound(void)
 {
     expect('{');
@@ -1330,6 +1338,14 @@ void gen_switch_chain(void)
     cont_stack[nflow] = (nflow > 0) ? cont_stack[nflow - 1] : lend;
     nflow++;
 
+    if (g_sw_depth < MAX_SW_NEST) {
+        g_sw_ctx[g_sw_depth].vals    = case_vals;
+        g_sw_ctx[g_sw_depth].labs    = case_labs;
+        g_sw_ctx[g_sw_depth].n       = ncase;
+        g_sw_ctx[g_sw_depth].def_lab = default_lab;
+        g_sw_depth++;
+    }
+
     ci = 0;
     while (tok.kind != TOK_EOF && tok.kind != '}') {
         if (tok.kind == TOK_CASE) {
@@ -1377,6 +1393,8 @@ void gen_switch_chain(void)
         }
     }
 
+    if (g_sw_depth > 0) g_sw_depth--;
+
     leave_scope();
     expect('}');
 
@@ -1401,6 +1419,9 @@ int scan_switch_cases_for_table(int *case_vals, int *case_labs,
     int maxv;
     int ok;
     int i;
+    int sw_pending;
+    int sw_body_top;
+    int sw_body_stack[MAX_SWITCH_CASES];
 
     if (tok.kind != '{')
         return 0;
@@ -1417,6 +1438,8 @@ int scan_switch_cases_for_table(int *case_vals, int *case_labs,
     minv = 0;
     maxv = 0;
     ok = 1;
+    sw_pending = 0;
+    sw_body_top = 0;
 
     next_token();
     depth = 1;
@@ -1424,12 +1447,27 @@ int scan_switch_cases_for_table(int *case_vals, int *case_labs,
     while (tok.kind != TOK_EOF && depth > 0 && ok) {
         if (tok.kind == '{') {
             depth++;
+            if (sw_pending) { sw_body_stack[sw_body_top++] = depth; sw_pending = 0; }
             next_token();
         } else if (tok.kind == '}') {
+            if (sw_body_top > 0 && depth == sw_body_stack[sw_body_top - 1]) sw_body_top--;
             depth--;
             if (depth > 0)
                 next_token();
-        } else if (depth == 1 && tok.kind == TOK_CASE) {
+        } else if (tok.kind == TOK_SWITCH) {
+            /* Detect nested switch so its case labels are not collected here. */
+            next_token();
+            if (tok.kind == '(') {
+                int pdepth = 1;
+                next_token();
+                while (tok.kind != TOK_EOF && pdepth > 0) {
+                    if (tok.kind == '(') pdepth++;
+                    else if (tok.kind == ')') pdepth--;
+                    next_token();
+                }
+            }
+            sw_pending = 1;
+        } else if (sw_body_top == 0 && tok.kind == TOK_CASE) {
             long cv;
             next_token();
             cv = parse_const_long_expr();
@@ -1459,7 +1497,7 @@ int scan_switch_cases_for_table(int *case_vals, int *case_labs,
                 break;
             }
             next_token();
-        } else if (depth == 1 && tok.kind == TOK_DEFAULT) {
+        } else if (sw_body_top == 0 && tok.kind == TOK_DEFAULT) {
             if (have_default) {
                 ok = 0;
                 break;
@@ -1524,6 +1562,9 @@ int scan_switch_cases_for_chain(int *case_vals, int *case_labs,
     int deflab;
     int ok;
     int i;
+    int sw_pending;
+    int sw_body_top;
+    int sw_body_stack[MAX_SWITCH_CASES];
 
     if (tok.kind != '{')
         return 0;
@@ -1538,6 +1579,8 @@ int scan_switch_cases_for_chain(int *case_vals, int *case_labs,
     have_default = 0;
     deflab = -1;
     ok = 1;
+    sw_pending = 0;
+    sw_body_top = 0;
 
     next_token();
     depth = 1;
@@ -1545,12 +1588,27 @@ int scan_switch_cases_for_chain(int *case_vals, int *case_labs,
     while (tok.kind != TOK_EOF && depth > 0 && ok) {
         if (tok.kind == '{') {
             depth++;
+            if (sw_pending) { sw_body_stack[sw_body_top++] = depth; sw_pending = 0; }
             next_token();
         } else if (tok.kind == '}') {
+            if (sw_body_top > 0 && depth == sw_body_stack[sw_body_top - 1]) sw_body_top--;
             depth--;
             if (depth > 0)
                 next_token();
-        } else if (depth == 1 && tok.kind == TOK_CASE) {
+        } else if (tok.kind == TOK_SWITCH) {
+            /* Detect nested switch so its case labels are not collected here. */
+            next_token();
+            if (tok.kind == '(') {
+                int pdepth = 1;
+                next_token();
+                while (tok.kind != TOK_EOF && pdepth > 0) {
+                    if (tok.kind == '(') pdepth++;
+                    else if (tok.kind == ')') pdepth--;
+                    next_token();
+                }
+            }
+            sw_pending = 1;
+        } else if (sw_body_top == 0 && tok.kind == TOK_CASE) {
             long cv;
             int v16;
 
@@ -1578,7 +1636,7 @@ int scan_switch_cases_for_chain(int *case_vals, int *case_labs,
                 break;
             }
             next_token();
-        } else if (depth == 1 && tok.kind == TOK_DEFAULT) {
+        } else if (sw_body_top == 0 && tok.kind == TOK_DEFAULT) {
             if (have_default) {
                 error_here("duplicate default label");
                 ok = 0;
@@ -1702,6 +1760,14 @@ void gen_switch_table(void)
     ci = 0;
     active_default_lab = default_lab;
 
+    if (g_sw_depth < MAX_SW_NEST) {
+        g_sw_ctx[g_sw_depth].vals    = case_vals;
+        g_sw_ctx[g_sw_depth].labs    = case_labs;
+        g_sw_ctx[g_sw_depth].n       = ncase;
+        g_sw_ctx[g_sw_depth].def_lab = default_lab;
+        g_sw_depth++;
+    }
+
     while (tok.kind != TOK_EOF && tok.kind != '}') {
         if (tok.kind == TOK_CASE) {
             next_token();
@@ -1734,6 +1800,8 @@ void gen_switch_table(void)
             gen_statement();
         }
     }
+
+    if (g_sw_depth > 0) g_sw_depth--;
 
     leave_scope();
     expect('}');
@@ -1931,6 +1999,29 @@ void gen_statement(void)
             tok = save_tok;
             gen_expr_statement();
         }
+    } else if (tok.kind == TOK_CASE && g_sw_depth > 0) {
+        /* case label inside a nested statement within a switch (e.g. Duff's device) */
+        long cv;
+        int i, lab;
+        struct SwCtx *sw = &g_sw_ctx[g_sw_depth - 1];
+        next_token();
+        cv = parse_const_long_expr();
+        expect(':');
+        lab = -1;
+        for (i = 0; i < sw->n; ++i) {
+            if ((sw->vals[i] & 0xffff) == ((int)cv & 0xffff)) {
+                lab = sw->labs[i];
+                break;
+            }
+        }
+        if (lab >= 0) emit_label(lab);
+        gen_statement();
+    } else if (tok.kind == TOK_DEFAULT && g_sw_depth > 0) {
+        struct SwCtx *sw = &g_sw_ctx[g_sw_depth - 1];
+        next_token();
+        expect(':');
+        if (sw->def_lab >= 0) emit_label(sw->def_lab);
+        gen_statement();
     } else {
         gen_expr_statement();
     }

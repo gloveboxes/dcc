@@ -216,18 +216,44 @@ int is_ident_char(int c)
     return isalnum((unsigned char)c) || c == '_';
 }
 
+static int trigraph_xlat(int third)
+{
+    switch (third) {
+        case '=':  return '#';
+        case '/':  return '\\';
+        case '\'': return '^';
+        case '(':  return '[';
+        case ')':  return ']';
+        case '!':  return '|';
+        case '<':  return '{';
+        case '>':  return '}';
+        case '-':  return '~';
+        default:   return 0;
+    }
+}
+
 int peekc(void)
 {
+    int t;
     if (posi >= src_len) return 0;
+    if ((unsigned char)src[posi] == '?' && posi + 2 < src_len &&
+            (unsigned char)src[posi + 1] == '?' &&
+            (t = trigraph_xlat((unsigned char)src[posi + 2])) != 0)
+        return t;
     return (unsigned char)src[posi];
 }
 
 int getc_src(void)
 {
-    int c;
+    int c, t;
     if (posi >= src_len) return 0;
     c = (unsigned char)src[posi++];
-    if (c == '\n') line_no++;
+    if (c == '\n') { line_no++; return c; }
+    if (c == '?' && posi + 1 < src_len && (unsigned char)src[posi] == '?' &&
+            (t = trigraph_xlat((unsigned char)src[posi + 1])) != 0) {
+        posi += 2;
+        return t;
+    }
     return c;
 }
 

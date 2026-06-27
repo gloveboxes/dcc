@@ -1,12 +1,15 @@
+duff: 1 5
+Point: 15, 20
+sz: 2, count: 10
+implicit test: 12
 x: 5
 z: 50
 x_after_xplusplus: 21
-c: ?
+c: #
 x: 30
 my_func
 str: Hello World C89
 mm1: 0 0 1
-digraph: 123
 bitops: 2 7 5
 idx: 40 40
 comma idx: 40

@@ -13,6 +13,43 @@ int b;
     return a + b;
 }
 
+/* Valid C89. Return type defaults to int. */
+mystery_fn(a, b) {
+    return a * b;
+}
+
+int implicit_test() {
+    /* Implicit int declaration; returns 12 */
+    return mystery_fn(3, 4); 
+}
+
+struct Point { int x; int y; };
+
+static void print_point(struct Point p) {
+    printf("Point: %d, %d\n", p.x, p.y);
+}
+
+int struct_cast_test() {
+    struct Point p = { 15, 20 };
+    print_point(p);
+    return 0;
+}
+
+void duff_device(int *to, int *from, int count) {
+    int n = (count + 7) / 8;
+    switch (count % 8) {
+        case 0: do { *to++ = *from++;
+        case 7:      *to++ = *from++;
+        case 6:      *to++ = *from++;
+        case 5:      *to++ = *from++;
+        case 4:      *to++ = *from++;
+        case 3:      *to++ = *from++;
+        case 2:      *to++ = *from++;
+        case 1:      *to++ = *from++;
+                } while (--n > 0);
+    }
+}
+
 int main()
 {
     int16_t x;
@@ -24,6 +61,23 @@ int main()
     int16_t aa;
     int16_t bb;
     void (*fp)(void);
+    int dsrc[5];
+    int ddst[5];
+    int di;
+    int count = 10;
+    size_t sz = sizeof(count);
+
+    for (di = 0; di < 5; di++) dsrc[di] = di + 1;
+    for (di = 0; di < 5; di++) ddst[di] = 0;
+    duff_device(ddst, dsrc, 5);
+    printf("duff: %d %d\n", ddst[0], ddst[4]);
+
+    struct_cast_test();
+
+    /* sizeof does not evaluate its operand; count stays 10 */
+    printf("sz: %lu, count: %d\n", (unsigned long)sz, count);
+
+    printf( "implicit test: %d\n", implicit_test() );
 
     x = 10;
     x =+ 5;              /* old spelling: x = +5, not x += 5 */
@@ -57,13 +111,6 @@ int main()
     y = 2;
     z = x-- - --y;
     printf("mm1: %d %d %d\n", z, x, y);
-
-    /* Digraphs: <% and %> are { and }. */
-<%
-    int dg;
-    dg = 123;
-    printf("digraph: %d\n", dg);
-%>
 
     aa = 6;
     bb = 3;

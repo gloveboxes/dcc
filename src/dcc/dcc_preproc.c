@@ -1907,7 +1907,8 @@ int define_number_value(const char *name, long *out, int depth)
         v = v + 1;
     }
 
-    if (isdigit((unsigned char)v[0]) || v[0] == '-' || v[0] == '+') {
+    if (isdigit((unsigned char)v[0]) ||
+        ((v[0] == '-' || v[0] == '+') && isdigit((unsigned char)v[1]))) {
         out[0] = parse_number_string(v);
         return 1;
     }

@@ -50,6 +50,21 @@ void duff_device(int *to, int *from, int count) {
     }
 }
 
+#define _ -'/'/'/'
+
+hi_world() {
+    int i = _ ;
+    char *s = "hell\157, w\157rld!\n";
+
+    if (1 [ "d" ] < 0) ;
+    else {
+        while (s [++ i]) {
+            putchar (s [i]);
+        }
+    }
+}
+
+
 int main()
 {
     int16_t x;
@@ -66,6 +81,8 @@ int main()
     int di;
     int count = 10;
     size_t sz = sizeof(count);
+
+    hi_world();
 
     for (di = 0; di < 5; di++) dsrc[di] = di + 1;
     for (di = 0; di < 5; di++) ddst[di] = 0;

@@ -1,0 +1,1890 @@
+<!DOCTYPE html><html lang="en" class="no-js"><head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="MkDocs documentation for the dcc compiler, runtime, and dccrtlstrip size analysis.">
+      
+      
+        <meta name="author" content="David Lee">
+      
+      
+      
+        <link rel="prev" href="../02-runtime-sizes/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Utilities - dcc C89 Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  <link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+            html.glightbox-open { overflow: initial; height: 100%; }
+            .gslide-title { margin-top: 0px; user-select: text; }
+            .gslide-desc { color: #666; user-select: text; }
+            .gslide-image img { background: white; }
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color); }
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color); }
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color); }
+        </style></head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="pink">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#utilities" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="dcc C89 Reference" class="md-header__button md-logo" aria-label="dcc C89 Reference" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            dcc C89 Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Utilities
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="pink" aria-label="Switch to dark mode" type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden="">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 2c-1.82 0-3.53.5-5 1.35C8 5.08 10 8.3 10 12s-2 6.92-5 8.65C6.47 21.5 8.18 22 10 22a10 10 0 0 0 10-10A10 10 0 0 0 10 2"></path></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="amber" data-md-color-accent="cyan" aria-label="Switch to light mode" type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden="">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required="">
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix="">
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/davidly/dcc" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    dcc
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="dcc C89 Reference" class="md-nav__button md-logo" aria-label="dcc C89 Reference" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+
+    </a>
+    dcc C89 Reference
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/davidly/dcc" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    dcc
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix="">
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../00-setup-toolchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The toolchain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../00-agent-skills/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agentic skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../01-c89-conformance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    C89 conformance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../02-build-and-link/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building and linking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../03-types-and-conventions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Types and conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../04-operators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8">
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    C standard libraries
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    C standard libraries
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/01-assert/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    assert.h: Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/07-ctype/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ctype.h: Character handling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/02-errno/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    errno.h: Error reporting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/03-float/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    float.h: Floating-point limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/04-limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    limits.h: Integer limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/08-math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    math.h: Floating point math
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/09-setjmp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    setjmp.h: Non-local jumps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/10-stdarg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    stdarg.h: Variadic arguments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/11-stdbool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    stdbool.h: Boolean type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/12-stddef/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    stddef.h: Common definitions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/13-stdint/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    stdint.h: Fixed-width integers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/05-stdio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    stdio.h: Console and file I/O
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/06-stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    stdlib.h: Memory and utilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standard-lib/14-string/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    string.h: String handling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../10-system-and-cpm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System and CP/M services
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../11-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Limitations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../12-examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worked examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" checked="">
+        
+          
+          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Appendix
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_12">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Appendix
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../00-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compiler architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../01-dccrtlstrip/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02-runtime-sizes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime function sizes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Utilities
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Utilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#build-driver-maps1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build Driver (ma.ps1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-suite-runner-runallps1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test Suite Runner (runall.ps1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#host-unit-test-validator-validate-unit-testps1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Host Unit Test Validator (validate-unit-test.ps1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-overrides-tests_test_overridesjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test Overrides (tests/_test_overrides.json)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-reporting-runallps1-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Reporting (runall.ps1 -Report)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stack-size-measurement-stacksizesh-stacksizebat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stack Size Measurement (stacksize.sh / stacksize.bat)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#build-driver-maps1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build Driver (ma.ps1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-suite-runner-runallps1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test Suite Runner (runall.ps1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#host-unit-test-validator-validate-unit-testps1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Host Unit Test Validator (validate-unit-test.ps1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-overrides-tests_test_overridesjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test Overrides (tests/_test_overrides.json)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-reporting-runallps1-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Reporting (runall.ps1 -Report)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stack-size-measurement-stacksizesh-stacksizebat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stack Size Measurement (stacksize.sh / stacksize.bat)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="utilities">Utilities<a class="headerlink" href="#utilities" title="Permanent link">¶</a></h1>
+<p>Developer scripts for building and testing dcc programs.</p>
+<p>Run these scripts from the dcc checkout. Open your operating-system terminal or
+the VS Code terminal, change to the dcc directory, start PowerShell, and then
+run the script commands shown below:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">cd </span><span class="p">/</span><span class="n">path</span><span class="p">/</span><span class="n">to</span><span class="p">/</span><span class="n">dcc</span>
+<span class="n">pwsh</span>
+</code></pre></div>
+<h2 id="build-driver-maps1">Build Driver (<code>ma.ps1</code>)<a class="headerlink" href="#build-driver-maps1" title="Permanent link">¶</a></h2>
+<p>Cross-platform PowerShell 7+ build driver. It compiles one app, optionally runs
+<code>dccpeep</code>, strips the runtime, assembles, and links a <code>.COM</code> executable.</p>
+<h3 id="build-driver-usage">Build Driver Usage<a class="headerlink" href="#build-driver-usage" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">ma</span><span class="p">.</span><span class="n">ps1</span> <span class="p">&lt;</span><span class="n">name</span><span class="p">&gt;</span> <span class="no">[mode] [options]</span>
+</code></pre></div>
+<ul>
+<li><code>&lt;name&gt;</code> — Test app name (e.g., <code>triangle</code>, <code>sieve</code>, <code>ttt</code>)</li>
+<li><code>[mode]</code> — Build mode: <code>full</code> (both builds, default), <code>fast</code> (optimized), or
+  <code>nopeep</code> (unoptimized)</li>
+</ul>
+<h3 id="build-driver-examples">Build Driver Examples<a class="headerlink" href="#build-driver-examples" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">ma</span><span class="p">.</span><span class="n">ps1</span> <span class="n">triangle</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">ma</span><span class="p">.</span><span class="n">ps1</span> <span class="n">sieve</span> <span class="n">nopeep</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">ma</span><span class="p">.</span><span class="n">ps1</span> <span class="n">cobint</span> <span class="n">-Mode</span> <span class="n">fast</span> <span class="n">-BuildDir</span> <span class="n">mybuild</span>
+</code></pre></div>
+<h3 id="build-driver-parameters">Build Driver Parameters<a class="headerlink" href="#build-driver-parameters" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-Name</code></td>
+<td>(required)</td>
+<td>App name without <code>.c</code> extension</td>
+</tr>
+<tr>
+<td><code>-Mode</code></td>
+<td><code>full</code></td>
+<td>Build mode: <code>full</code>, <code>fast</code>, or <code>nopeep</code></td>
+</tr>
+<tr>
+<td><code>-BuildDir</code></td>
+<td><code>build</code></td>
+<td>Build directory for artifacts</td>
+</tr>
+<tr>
+<td><code>-Emulator</code></td>
+<td><code>ntvcm</code></td>
+<td>Emulator command for CP/M tools</td>
+</tr>
+</tbody>
+</table>
+<h3 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">¶</a></h3>
+<ul>
+<li><code>DCC_STACK_SIZE</code> — C stack reserve in bytes (default: 512)</li>
+<li><code>DCC_FORCE_STACK_CHECK</code> — Force <code>-fstack-check</code> on all builds</li>
+<li><code>DCC</code>, <code>DCCPEEP</code>, <code>DCCRTLSTRIP</code>, <code>NTVCM</code>, <code>M80</code>, <code>L80</code> — Tool paths</li>
+</ul>
+<h2 id="test-suite-runner-runallps1">Test Suite Runner (<code>runall.ps1</code>)<a class="headerlink" href="#test-suite-runner-runallps1" title="Permanent link">¶</a></h2>
+<p>Builds and runs the test suite against per-app baselines in <code>tests/baselines/</code>.
+It uses <code>ma.ps1</code> for builds and <code>tests/_test_overrides.json</code> for test-specific
+arguments and stack sizes.</p>
+<p>Runs in parallel by default:</p>
+<ul>
+<li>Each app builds in its own <code>build/&lt;app&gt;/</code> subdirectory so concurrent builds
+  don't clobber shared artifacts.</li>
+<li>A live <code>[ n/total] PASS/FAIL</code> status prints as each app completes.</li>
+<li>Use <code>-Serial</code> to fall back to sequential builds in the shared <code>build/</code>
+  directory.</li>
+<li>The lightweight stack-overflow guard (<code>-fstack-check</code>) is <strong>on by default</strong>;
+  pass <code>-NoStackCheck</code> to build without it.</li>
+<li>Pass <code>-Report</code> to append per-app run time and <code>.COM</code> size measurements to a
+  CSV report. Report mode implies <code>-NoStackCheck</code>.</li>
+</ul>
+<h3 id="test-runner-usage">Test Runner Usage<a class="headerlink" href="#test-runner-usage" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="no">[options]</span>
+</code></pre></div>
+<p>With no options, the suite runs in parallel, enables <code>-fstack-check</code>, and uses
+<code>-Mode fast</code>. Use <code>-Mode full</code> to run both optimized and unoptimized builds.</p>
+<h3 id="test-runner-examples">Test Runner Examples<a class="headerlink" href="#test-runner-examples" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span>                       <span class="c"># quick optimized-only default</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Help</span>                 <span class="c"># show help and exit</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Serial</span>               <span class="c"># sequential fallback</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-NoStackCheck</span>         <span class="c"># build without the stack guard</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-ThrottleLimit</span> <span class="n">8</span>      <span class="c"># cap concurrency</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Emulator</span> <span class="n">altair</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Mode</span> <span class="n">fast</span>            <span class="c"># optimized build only</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Mode</span> <span class="n">nopeep</span>          <span class="c"># unoptimized build only</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Report</span>               <span class="c"># also append perf_results.csv</span>
+</code></pre></div>
+<h3 id="build-modes">Build Modes<a class="headerlink" href="#build-modes" title="Permanent link">¶</a></h3>
+<p>The <code>-Mode</code> parameter selects which optimization pass(es) to build and verify.
+<strong>The default is <code>fast</code>.</strong></p>
+<ul>
+<li><strong><code>fast</code></strong> — optimized: runs the <code>dccpeep</code> peephole optimizer after compiling.
+  This produces the optimized CP/M Z80 binary.</li>
+<li><strong><code>nopeep</code></strong> — unoptimized: skips <code>dccpeep</code>. This produces the unoptimized
+  CP/M Z80 binary.</li>
+<li><strong><code>full</code></strong> — builds and verifies each app <strong>twice</strong>, once in each mode,
+  against the same baseline. This catches optimizer bugs that change a program's
+  output.</li>
+</ul>
+<h3 id="test-runner-parameters">Test Runner Parameters<a class="headerlink" href="#test-runner-parameters" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-Emulator</code></td>
+<td><code>ntvcm</code></td>
+<td>Emulator command for running .COM files</td>
+</tr>
+<tr>
+<td><code>-NoStackCheck</code></td>
+<td>(off)</td>
+<td>Disable <code>-fstack-check</code> (the guard is ON by default)</td>
+</tr>
+<tr>
+<td><code>-BuildDir</code></td>
+<td><code>build</code></td>
+<td>Build directory for artifacts</td>
+</tr>
+<tr>
+<td><code>-BaselineDir</code></td>
+<td><code>tests/baselines</code></td>
+<td>Directory of per-app <code>&lt;app&gt;.txt</code> baselines</td>
+</tr>
+<tr>
+<td><code>-Mode</code></td>
+<td><code>fast</code></td>
+<td>Build mode: <code>fast</code> (optimized), <code>nopeep</code> (unoptimized), or <code>full</code></td>
+</tr>
+<tr>
+<td><code>-Help</code></td>
+<td>(off)</td>
+<td>Show help text and exit without building or running tests</td>
+</tr>
+<tr>
+<td><code>-Serial</code></td>
+<td>(off)</td>
+<td>Run sequentially instead of the default parallel mode</td>
+</tr>
+<tr>
+<td><code>-ThrottleLimit</code></td>
+<td>CPU core count</td>
+<td>Max concurrent apps in parallel mode</td>
+</tr>
+<tr>
+<td><code>-Report</code></td>
+<td>(off)</td>
+<td>Append per-app execution time and <code>.COM</code> size metrics to a CSV report; implies <code>-NoStackCheck</code></td>
+</tr>
+<tr>
+<td><code>-ReportFile</code></td>
+<td><code>perf_results.csv</code></td>
+<td>CSV path used by <code>-Report</code></td>
+</tr>
+<tr>
+<td><code>-ReportClockHz</code></td>
+<td><code>1000000000</code></td>
+<td>ntvcm clock speed used for measured app runs in report mode; set to <code>0</code> for full-speed report runs</td>
+</tr>
+</tbody>
+</table>
+<h3 id="output">Output<a class="headerlink" href="#output" title="Permanent link">¶</a></h3>
+<p>Reports:</p>
+<ul>
+<li>Total apps discovered</li>
+<li>Passed/failed/skipped counts</li>
+<li>Per-app build and execution status (live in parallel mode)</li>
+<li>Output verification against baseline</li>
+<li>Optional CSV performance report when <code>-Report</code> is passed</li>
+<li>Exit code 0 on success, 1 on failure</li>
+</ul>
+<h2 id="host-unit-test-validator-validate-unit-testps1">Host Unit Test Validator (<code>validate-unit-test.ps1</code>)<a class="headerlink" href="#host-unit-test-validator-validate-unit-testps1" title="Permanent link">¶</a></h2>
+<p>Compiles each <code>tests/*.c</code> program with a native host C compiler, runs the host
+executable, and compares stdout with <code>tests/baselines/&lt;app&gt;.txt</code>. This is a
+read-only baseline check: it never rewrites baseline files. It is useful for
+checking that the unit-test sources and expected output still make sense on a
+normal C implementation before comparing them with dcc's CP/M/Z80 output.</p>
+<p>Host compiler selection follows <code>scripts/build-dcc.ps1</code>:</p>
+<ul>
+<li>Windows uses MSVC <code>cl.exe</code> after locating the Visual Studio C++ build tools.
+  On Windows ARM64, it uses the native ARM64 MSVC tools.</li>
+<li>macOS uses <code>clang</code> by default.</li>
+<li>Linux uses <code>gcc</code> by default.</li>
+<li>Unix-like hosts can override the compiler with <code>-CC</code> or the <code>CC</code> environment
+  variable, for example <code>-CC clang</code> or <code>CC=clang</code>.</li>
+</ul>
+<p>Tests that need CP/M or Z80-only behavior, such as BDOS calls, direct port I/O,
+<code>getch</code>/<code>kbhit</code>, inline <code>#asm</code>, or CP/M vector reads, are skipped because a host
+compiler cannot run those semantics. The script also honors
+<code>tests/_test_overrides.json</code> for app arguments, stdin, ignored apps, and
+host-only skip settings.</p>
+<h3 id="host-validator-usage">Host Validator Usage<a class="headerlink" href="#host-validator-usage" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">validate-unit-test</span><span class="p">.</span><span class="n">ps1</span> <span class="no">[options]</span>
+</code></pre></div>
+<h3 id="host-validator-examples">Host Validator Examples<a class="headerlink" href="#host-validator-examples" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">validate-unit-test</span><span class="p">.</span><span class="n">ps1</span>              <span class="c"># validate every runnable test</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">validate-unit-test</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-App</span> <span class="n">tprintf</span> <span class="c"># validate one test app</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">validate-unit-test</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-CC</span> <span class="n">clang</span>    <span class="c"># use clang on Linux/macOS</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">validate-unit-test</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Help</span>        <span class="c"># show help and exit</span>
+</code></pre></div>
+<h3 id="host-validator-parameters">Host Validator Parameters<a class="headerlink" href="#host-validator-parameters" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-BuildDir</code></td>
+<td><code>build/host-validate</code></td>
+<td>Directory for host compiler outputs</td>
+</tr>
+<tr>
+<td><code>-BaselineDir</code></td>
+<td><code>tests/baselines</code></td>
+<td>Directory of per-app <code>&lt;app&gt;.txt</code> baselines</td>
+</tr>
+<tr>
+<td><code>-CC</code></td>
+<td>platform default</td>
+<td>C compiler override on macOS/Linux; ignored on Windows</td>
+</tr>
+<tr>
+<td><code>-App</code></td>
+<td>all tests</td>
+<td>Validate one test app, without the <code>.c</code> extension</td>
+</tr>
+<tr>
+<td><code>-RunTimeout</code></td>
+<td><code>10</code></td>
+<td>Seconds to allow each host executable to run</td>
+</tr>
+<tr>
+<td><code>-Help</code></td>
+<td>(off)</td>
+<td>Show help text and exit without building or running tests</td>
+</tr>
+</tbody>
+</table>
+<h3 id="linux-32-bit-validation">Linux 32-bit Validation<a class="headerlink" href="#linux-32-bit-validation" title="Permanent link">¶</a></h3>
+<p>On Linux, the validator can extend coverage by using GCC's <code>-m32</code> mode when the
+compiler can build and link 32-bit executables. The script probes this
+automatically: if the probe succeeds, Linux GCC host validations run with
+<code>-m32</code>; if it fails, the script keeps using the normal compiler mode.</p>
+<p>This matters because dcc has 16-bit pointers and 32-bit <code>long</code>, so a 32-bit host
+build can run a few host-only tests that are skipped on a normal 64-bit Linux
+compiler. Install the normal C build tools plus the 32-bit development libraries
+for your distribution, then rerun the validator.</p>
+<p>Common Linux packages:</p>
+<table>
+<thead>
+<tr>
+<th>Distribution</th>
+<th>Command</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Debian/Ubuntu</td>
+<td><code>sudo apt update &amp;&amp; sudo apt install build-essential gcc-multilib libc6-dev-i386</code></td>
+</tr>
+<tr>
+<td>Fedora</td>
+<td><code>sudo dnf groupinstall "Development Tools" &amp;&amp; sudo dnf install glibc-devel.i686 libgcc.i686</code></td>
+</tr>
+<tr>
+<td>RHEL/CentOS</td>
+<td><code>sudo dnf groupinstall "Development Tools" &amp;&amp; sudo dnf install glibc-devel.i686 libgcc.i686</code></td>
+</tr>
+<tr>
+<td>Arch</td>
+<td>Enable the <code>multilib</code> repository, then <code>sudo pacman -S base-devel lib32-glibc</code></td>
+</tr>
+<tr>
+<td>openSUSE</td>
+<td><code>sudo zypper install -t pattern devel_C_C++ &amp;&amp; sudo zypper install gcc-32bit glibc-devel-32bit</code></td>
+</tr>
+</tbody>
+</table>
+<p>After installation, this should be enough to enable the extended path:</p>
+<div class="highlight"><pre><span></span><code><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">validate-unit-test</span><span class="p">.</span><span class="n">ps1</span>
+</code></pre></div>
+<p>The script prints the selected compiler line near the start of the run. When the
+32-bit probe succeeds on Linux GCC, that line includes <code>(-m32)</code>.</p>
+<h2 id="test-overrides-tests_test_overridesjson">Test Overrides (<code>tests/_test_overrides.json</code>)<a class="headerlink" href="#test-overrides-tests_test_overridesjson" title="Permanent link">¶</a></h2>
+<p>Per-test run configuration used by <code>runall.ps1</code>.
+It lives in the <code>tests/</code> folder (alongside the test sources it configures) and
+is named with a leading underscore so it sorts to the top of the directory.</p>
+<p>Most tests need no entry — they compile cleanly, take no arguments, and use the
+default 512-byte stack. This file only lists the exceptions.</p>
+<h3 id="schema">Schema<a class="headerlink" href="#schema" title="Permanent link">¶</a></h3>
+<p>The file is a single JSON object with an <code>apps</code> array. Each element configures
+one test, keyed by <code>name</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"apps"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;app&gt;"</span><span class="p">,</span><span class="w"> </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;string&gt;"</span><span class="p">,</span><span class="w"> </span><span class="nt">"stdin"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;string&gt;"</span><span class="p">,</span><span class="w"> </span><span class="nt">"stack_size"</span><span class="p">:</span><span class="w"> </span><span class="err">&lt;i</span><span class="kc">nt</span><span class="err">&gt;</span><span class="p">,</span><span class="w"> </span><span class="nt">"ignore"</span><span class="p">:</span><span class="w"> </span><span class="err">&lt;bool&gt;</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Type</th>
+<th>Required</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>Test name, without the <code>.c</code> extension (e.g. <code>ttt</code>, <code>cobint</code>)</td>
+</tr>
+<tr>
+<td><code>args</code></td>
+<td>string</td>
+<td>no</td>
+<td><code>""</code></td>
+<td>Command-line arguments passed to the program when run. Multi-token strings are split on whitespace (e.g. <code>"a bb ccc"</code>)</td>
+</tr>
+<tr>
+<td><code>stdin</code></td>
+<td>string</td>
+<td>no</td>
+<td><code>""</code></td>
+<td>Text piped to the program's standard input during execution (for keyboard/input-driven tests)</td>
+</tr>
+<tr>
+<td><code>stack_size</code></td>
+<td>integer</td>
+<td>no</td>
+<td><code>512</code></td>
+<td>C stack reserve in bytes, passed to <code>dcc</code> as <code>-stack</code>. Used by recursive apps that need more headroom</td>
+</tr>
+<tr>
+<td><code>ignore</code></td>
+<td>boolean</td>
+<td>no</td>
+<td><code>false</code></td>
+<td>When <code>true</code>, the test is skipped entirely (not built or run)</td>
+</tr>
+</tbody>
+</table>
+<p>Entries with none of the optional properties have no effect, so an app only
+appears here if it overrides at least one default.</p>
+<h3 id="example">Example<a class="headerlink" href="#example" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"apps"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ttt"</span><span class="p">,</span><span class="w"> </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10"</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"pint"</span><span class="p">,</span><span class="w"> </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="s2">"e.pas"</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"tkbd"</span><span class="p">,</span><span class="w"> </span><span class="nt">"stdin"</span><span class="p">:</span><span class="w"> </span><span class="s2">"x"</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"cobint"</span><span class="p">,</span><span class="w"> </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="s2">"e.cob"</span><span class="p">,</span><span class="w"> </span><span class="nt">"stack_size"</span><span class="p">:</span><span class="w"> </span><span class="mi">1536</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"triangle"</span><span class="p">,</span><span class="w"> </span><span class="nt">"stack_size"</span><span class="p">:</span><span class="w"> </span><span class="mi">768</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"na"</span><span class="p">,</span><span class="w"> </span><span class="nt">"ignore"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"tc89fltb"</span><span class="p">,</span><span class="w"> </span><span class="nt">"ignore"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"spsmash"</span><span class="p">,</span><span class="w"> </span><span class="nt">"ignore"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="common-reasons-to-add-an-entry">Common reasons to add an entry<a class="headerlink" href="#common-reasons-to-add-an-entry" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Program reads a data file</strong> — interpreters like <code>pint</code>, <code>cobint</code>, <code>forint</code>
+  take a fixture filename as <code>args</code> (e.g. <code>e.pas</code>, <code>e.cob</code>).</li>
+<li><strong>Program reads from stdin</strong> — set <code>stdin</code> for tests that require scripted
+  keyboard/input text (for example, <code>tkbd</code> expects <code>x</code>).</li>
+<li><strong>Deep recursion</strong> — apps such as <code>triangle</code> (768) and <code>cobint</code> (1536) need a
+  larger <code>stack_size</code> than the 512-byte default, especially under
+  <code>-fstack-check</code>.</li>
+<li><strong>Cannot be auto-tested</strong> — set <code>ignore: true</code> for interactive programs
+  (<code>na</code>, an editor that waits for keystrokes), tests that intentionally fail to
+  compile (<code>tc89fltb</code>), or deliberate stack-smashers (<code>spsmash</code>).</li>
+</ul>
+<p>To change a test's run behavior, edit <code>tests/_test_overrides.json</code> and re-run
+the suite. See also <code>tests/README.md</code> in the repository for how tests,
+baselines, and this file relate.</p>
+<h2 id="performance-reporting-runallps1-report">Performance Reporting (<code>runall.ps1 -Report</code>)<a class="headerlink" href="#performance-reporting-runallps1-report" title="Permanent link">¶</a></h2>
+<p><code>runall.ps1 -Report</code> collects performance data during the normal verified test
+suite. It appends per-app execution time and <code>.COM</code> size metrics to a CSV report,
+while still checking output against the usual baselines.</p>
+<p>Report mode implies <code>-NoStackCheck</code> so timings reflect normal builds. When using
+<code>ntvcm</code>, measured app runs use a fixed 1 GHz emulator clock by default; set
+<code>-ReportClockHz 0</code> for full-speed report runs.</p>
+<div class="highlight"><pre><span></span><code><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Report</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Report</span> <span class="n">-ReportFile</span> <span class="n">results</span><span class="p">.</span><span class="n">csv</span>
+<span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">runall</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Report</span> <span class="n">-ReportClockHz</span> <span class="n">0</span>
+</code></pre></div>
+<p>Results are written to <code>perf_results.csv</code> by default. <strong>Results append to the
+file</strong>, so each report run adds a new row per app:</p>
+<div class="highlight"><pre><span></span><code>machine,utc-timestamp,app,peep_ms,peep_size,nopeep_ms,nopeep_size
+mycomputer,2026-06-16T07:18:39Z,tstring,17000,6400,19000,6912
+mycomputer,2026-06-16T07:18:39Z,sieve,1000,2176,3000,2304
+mycomputer,2026-06-16T07:24:21Z,tstring,17000,6400,17000,6912
+mycomputer,2026-06-16T07:24:21Z,sieve,1000,2176,3000,2304
+</code></pre></div>
+<p><strong>Columns:</strong></p>
+<ul>
+<li><code>machine</code> — Name of the machine running the benchmark</li>
+<li><code>utc-timestamp</code> — UTC timestamp (ISO 8601 format, e.g., <code>2026-06-16T07:18:39Z</code>)</li>
+<li><code>app</code> — Application name</li>
+<li><code>peep_ms</code> — Execution time in milliseconds (optimized with dccpeep)</li>
+<li><code>peep_size</code> — Binary size in bytes (optimized)</li>
+<li><code>nopeep_ms</code> — Execution time in milliseconds (unoptimized)</li>
+<li><code>nopeep_size</code> — Binary size in bytes (unoptimized)</li>
+</ul>
+<p>The <code>-ReportFile</code> parameter controls the output path. The <code>-Mode</code> parameter
+controls which CSV columns are populated: <code>-Mode full</code> fills both <code>peep_*</code> and
+<code>nopeep_*</code>; single-mode runs fill only the selected mode's columns. In the CSV,
+<code>peep_*</code> columns hold optimized-build measurements.</p>
+<h2 id="stack-size-measurement-stacksizesh-stacksizebat">Stack Size Measurement (<code>stacksize.sh</code> / <code>stacksize.bat</code>)<a class="headerlink" href="#stack-size-measurement-stacksizesh-stacksizebat" title="Permanent link">¶</a></h2>
+<p>Finds the minimum C stack reserve an app needs under dcc's lightweight
+stack-overflow guard (<code>-fstack-check</code>). See the
+<a href="../../02-build-and-link/#measuring-the-stack-an-app-needs">Building and linking</a>
+section for full documentation, or run <code>scripts/stacksize.sh --help</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer">
+        
+          
+          <a href="../02-runtime-sizes/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Runtime function sizes">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Runtime function sizes
+              </div>
+            </div>
+          </a>
+        
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright © 2026 David Lee
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.footer", "content.code.copy", "navigation.tabs.sticky", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  
+<script id="init-glightbox">const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});
+document$.subscribe(()=>{ lightbox.reload(); });
+</script></body></html>

@@ -2473,6 +2473,7 @@ static int pass_mulu_const(void)
         long de_val;
         int has_extrn;
         int n_delete;
+        int shift_count;
         char tmp[MAX_LINE];
         char *endp;
 
@@ -2506,6 +2507,27 @@ static int pass_mulu_const(void)
                     }
                 }
             }
+        }
+
+        if (de_val == 0 || de_val == 1 ||
+            (de_val > 0 && de_val <= 32768 && (de_val & (de_val - 1)) == 0)) {
+            delete_n(i, n_delete);
+
+            if (de_val == 0) {
+                insert_line_tagged(i, "ld hl,0", "mulu0");
+            } else {
+                shift_count = 0;
+                while (de_val > 1) {
+                    de_val >>= 1;
+                    shift_count++;
+                }
+                while (shift_count-- > 0)
+                    insert_line_tagged(i, "add hl,hl", "mulu_pow2");
+            }
+
+            changed = 1;
+            if (i > 0) i--;
+            continue;
         }
 
         /* Inline expansion for specific multiplier constants.

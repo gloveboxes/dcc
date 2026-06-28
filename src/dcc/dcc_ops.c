@@ -706,10 +706,10 @@ void emit_and_hl_const(unsigned int mask);
 static const char *long_mul_widen_helper(int lhs_w, int rhs_w)
 {
     /* 5-char names: L80 only treats the first 6 characters of a public symbol
-     * as significant, so __lmuls/__lmulu would alias __lmul.  __m16s/__m16u
+     * as significant, so __lmuls/__lmulu would alias __lmul.  __m1s/__m1u
      * stay distinct. */
-    if (lhs_w == 1 && rhs_w == 1) return "__m16s";
-    if (lhs_w == 2 && rhs_w == 2) return "__m16u";
+    if (lhs_w == 1 && rhs_w == 1) return "__m1s";
+    if (lhs_w == 2 && rhs_w == 2) return "__m1u";
     return 0;
 }
 
@@ -982,14 +982,11 @@ void gen_mul(void)
 
                 mulhelp = (op == '*') ? long_mul_widen_helper(lhs_w, rhs_w) : 0;
                 if (mulhelp) {
-                    /* Same 8-byte stack convention as gen_binop32's l32call,
-                     * but the 16x16 helper reads only the two pushed low
-                     * words. */
-                    emit("\tpush de\n\tpush hl\n");
+                    /* LHS is already stacked as high,low and RHS is in DE:HL.
+                     * The widened-16 multiply only needs the low words, so use
+                     * a register ABI helper: BC=LHS low, HL=RHS low -> DE:HL. */
+                    emit("\tpop bc\n\tpop af\n");
                     emit_runtime_call(mulhelp);
-                    emit("\tld b,d\n\tld c,e\n\tex de,hl\n");
-                    emit("\tld hl,8\n\tadd hl,sp\n\tld sp,hl\n");
-                    emit("\tex de,hl\n\tld d,b\n\tld e,c\n");
                 } else {
                     gen_binop32(op, common_type);
                 }

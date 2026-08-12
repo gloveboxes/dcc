@@ -389,10 +389,9 @@ struct Sym {
     int is_volatile; /* object declared with the volatile qualifier: access-
                       * contracting fast paths must decline for it */
     int pointee_is_volatile; /* immediate pointed-to type is volatile */
-    int is_register; /* object declared with the register qualifier: a
-                      * signal dcc_loop_regalloc.c uses to decline promoting
-                      * anything ELSE in a loop that also contains one - see
-                      * loop_regalloc_sym_eligible's comment for why. */
+    int is_register; /* object declared with the register qualifier: an MIR
+                      * allocation hint and a signal dcc_loop_regalloc.c uses
+                      * to decline promoting anything ELSE in the same loop. */
     int is_inline;   /* function declared with inline specifier */
     int is_noreturn; /* function declared with _Noreturn: licm_scan_modified
                       * (dcc_licm.c) tolerates a call to it in an otherwise-

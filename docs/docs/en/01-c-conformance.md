@@ -59,6 +59,30 @@ portability surprises when code is moved from a hosted desktop compiler.
 | String literals and adjacent string literal concatenation | Supported |
 | Global and automatic initializers | Supported |
 
+### The `register` storage class
+
+`register` is an optimization hint for automatic objects and function
+parameters. DCC preserves the hint through declaration parsing and MIR object
+promotion. The MIR allocator gives profitable register-backed values priority,
+but it can still choose a stack home when calls, interference, value width,
+fixed operands, or transfer costs make that choice better. The keyword does not
+guarantee a particular Z80 register.
+
+Taking the address of a register-qualified object is a constraint violation:
+
+```c
+void example(void)
+{
+	register int value;
+	int *pointer = &value; /* error DCC-E0921 */
+}
+```
+
+The same rule applies in an unevaluated expression such as `sizeof &value` and
+to register-qualified function parameters. Arrays, aggregates, wide values,
+and values live across calls may remain in memory while still retaining these
+language semantics.
+
 ## Missing from C89
 
 | Language or environment feature | Status |
@@ -70,7 +94,6 @@ portability surprises when code is moved from a hosted desktop compiler.
 | Wide-character library behavior | Outside the CP/M 2.2 target model |
 | Read-only storage for `const` objects | Outside the CP/M 2.2 memory model |
 | Strict `volatile` memory/device access semantics | Outside the CP/M 2.2 memory model |
-| Forced register allocation from `register` | Not implemented |
 
 ## C99 additions
 

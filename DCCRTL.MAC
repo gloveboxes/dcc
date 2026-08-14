@@ -8169,6 +8169,82 @@ __m8u:
 
 ; __m1s: signed 16x16 -> 32 multiply, register ABI.
 ;   Entry: BC = LHS low word, HL = RHS low word.  Exit: DE:HL = product.
+; __m1q has the same ABI and uses a shorter 8-bit multiply when |RHS| <= 255.
+; Fixed-point selectors use it when bounded Q8 values commonly reach the RHS;
+; all other signed multiplies retain the smaller shared __m1s implementation.
+        public  __m1q
+__m1q:
+        ld      a,h
+        or      a
+        jr      z,lm1q_byte
+        inc     a
+        jr      nz,lm1q_try_left
+        ld      a,l
+        or      a
+        jr      nz,lm1q_byte
+lm1q_try_left:
+        ld      a,b
+        or      a
+        jr      z,lm1q_swap
+        inc     a
+        jp      nz,__m1s
+        ld      a,c
+        or      a
+        jp      z,__m1s                 ; -256 does not fit an 8-bit magnitude
+lm1q_swap:
+        ld      d,h
+        ld      e,l
+        ld      h,b
+        ld      l,c
+        ld      b,d
+        ld      c,e
+lm1q_byte:
+        ld      a,b
+        xor     h
+        push    af
+        bit     7,b
+        jr      z,lm1q_ap
+        xor     a
+        sub     c
+        ld      c,a
+        sbc     a,a
+        sub     b
+        ld      b,a
+lm1q_ap:
+        bit     7,h
+        jr      z,lm1q_bp
+        xor     a
+        sub     l
+        ld      l,a
+        ld      h,0
+lm1q_bp:
+        ld      e,l                     ; 8-bit multiplier / low accumulator
+        ld      hl,0                    ; 24-bit accumulator is HL:E
+        ld      a,4                     ; 4 groups of 2 bits = 8 iterations
+lm1q_b:
+        or      a
+        bit     0,e
+        jr      z,$+3
+        add     hl,bc
+        rr      h
+        rr      l
+        rr      e
+        or      a
+        bit     0,e
+        jr      z,$+3
+        add     hl,bc
+        rr      h
+        rr      l
+        rr      e
+        dec     a
+        jr      nz,lm1q_b
+        ld      d,h                     ; repack 24-bit HL:E as 32-bit DE:HL
+        ld      h,l
+        ld      l,e
+        ld      e,d
+        ld      d,0
+        jp      lm1s_sign
+
         public  __m1s
 __m1s:
         ld      a,b
@@ -8234,6 +8310,7 @@ lm1s_b:
         dec     a
         jr      nz,lm1s_b
         ex      de,hl                   ; HL = low, DE = high
+lm1s_sign:
         pop     af
         bit     7,a
         ret     z

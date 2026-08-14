@@ -105,6 +105,46 @@ static unsigned long ret_ubig2(unsigned long first, unsigned int second)
     return 131072UL;
 }
 
+static long mul_s8_s16(signed char left, int right)
+{
+    return (long)left * right;
+}
+
+static long mul_u8_s16(unsigned char left, int right)
+{
+    return (long)left * right;
+}
+
+static long mul_mask_s16(int left, int right)
+{
+    return (long)(left & 255) * right;
+}
+
+static long mul_mod_s16(int left, int right)
+{
+    return (long)(left % 256) * right;
+}
+
+static long mul_shift_s16(int left, int right)
+{
+    return (long)(left >> 8) * right;
+}
+
+static long mul_phi_s16(signed char left, signed char alternate,
+                        int choose_left, int right)
+{
+    return (long)(choose_left ? left : alternate) * right;
+}
+
+static long mul_s8_loop(signed char left, int right, int count)
+{
+    long total = 0;
+
+    while (count-- > 0)
+        total += (long)left * right;
+    return total;
+}
+
 static void test_widen_mul_edges(void)
 {
     int a, b, cond;
@@ -138,6 +178,15 @@ static void test_widen_mul_edges(void)
     ua = 40000U;
     ub = 40000U;
     chku((unsigned long)ua * ub, 1600000000UL, "u16mul 40000");
+
+    chk(mul_s8_s16(-128, -32768), 4194304L, "s8s16 minneg");
+    chk(mul_s8_s16(127, 32767), 4161409L, "s8s16 maxpos");
+    chk(mul_u8_s16(255, -32768), -8355840L, "u8s16 signed rhs");
+    chk(mul_mask_s16(0x12ff, -30000), -7650000L, "mask s16");
+    chk(mul_mod_s16(-511, 30000), -7650000L, "mod s16");
+    chk(mul_shift_s16(-32768, 30000), -3840000L, "shift s16");
+    chk(mul_phi_s16(-128, 127, 0, 32767), 4161409L, "phi s16");
+    chk(mul_s8_loop(-17, 30000, 7), -3570000L, "s8 loop");
 
     a = 1;
     b = 2;

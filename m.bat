@@ -1,8 +1,32 @@
 @echo off
 setlocal
 
-rem call "c:\program files\microsoft visual studio\18\community\vc\auxiliary\build\vcvars64.bat"
-call "c:\program files\microsoft visual studio\2022\community\vc\auxiliary\build\vcvars64.bat"
+where cl >nul 2>nul
+if errorlevel 1 (
+	set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+	if exist "%VSWHERE%" (
+		for /f "usebackq delims=" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find VC\Auxiliary\Build\vcvars64.bat`) do (
+			call "%%I"
+		)
+	)
+)
+
+where cl >nul 2>nul
+if errorlevel 1 (
+	for %%Y in (2022 2019) do (
+		for %%E in (BuildTools Community Professional Enterprise) do (
+			if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\%%Y\%%E\VC\Auxiliary\Build\vcvars64.bat" (
+				call "%ProgramFiles(x86)%\Microsoft Visual Studio\%%Y\%%E\VC\Auxiliary\Build\vcvars64.bat"
+			)
+		)
+	)
+)
+
+where cl >nul 2>nul
+if errorlevel 1 (
+	echo cl.exe is not available. Run from a Visual Studio Developer Command Prompt or install the Visual Studio C++ build tools. 1>&2
+	exit /b 1
+)
 
 if exist dcc del /q dcc
 if exist dcc.exe del /q dcc.exe
